@@ -790,3 +790,116 @@
         display: none;
     }
 }
+
+/* 智能操作样式 */
+.ai-assistant-context-section {
+    background-color: var(--background-secondary);
+    padding: 12px;
+    border-radius: 6px;
+    margin: 8px 0;
+    border: 1px solid var(--background-modifier-border);
+}
+
+.context-info-grid {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 6px;
+    margin-top: 8px;
+}
+
+.context-info-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 4px 0;
+}
+
+.context-label {
+    font-weight: 500;
+    color: var(--text-muted);
+    font-size: var(--font-ui-small);
+}
+
+.context-value {
+    color: var(--text-normal);
+    font-size: var(--font-ui-small);
+}
+
+.context-highlight {
+    color: var(--interactive-accent);
+    font-weight: 500;
+}
+
+.context-suggestions {
+    color: var(--text-accent);
+    font-style: italic;
+    font-size: var(--font-ui-smaller);
+}
+
+.smart-action-result {
+    background-color: var(--background-primary);
+    padding: 16px;
+    border-radius: 8px;
+    border-left: 4px solid var(--interactive-accent);
+    line-height: 1.6;
+    margin: 12px 0;
+    font-size: var(--font-text-size);
+}
+
+.original-content {
+    background-color: var(--background-modifier-border);
+    padding: 12px;
+    border-radius: 6px;
+    font-size: var(--font-ui-small);
+    color: var(--text-muted);
+    font-style: italic;
+    margin: 8px 0;
+    border-left: 3px solid var(--text-muted);
+    max-height: 120px;
+    overflow-y: auto;
+}
+
+
+
+
+
+/* 性能监控样式 */
+.performance-stats-grid {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 8px;
+    margin: 16px 0;
+}
+
+.performance-stat-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px 12px;
+    background-color: var(--background-primary);
+    border-radius: 6px;
+    border: 1px solid var(--background-modifier-border);
+}
+
+.performance-suggestions {
+    margin: 16px 0;
+    padding: 12px;
+    background-color: var(--background-secondary);
+    border-radius: 6px;
+    border-left: 3px solid var(--color-yellow);
+}
+
+.performance-suggestions h4 {
+    margin: 0 0 8px 0;
+    color: var(--text-normal);
+}
+
+.performance-suggestion {
+    margin: 4px 0;
+    color: var(--text-muted);
+    font-size: var(--font-ui-small);
+}
+
+
+
+

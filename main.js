@@ -152,6 +152,8 @@ const DEFAULT_SETTINGS = {
   },
 
 
+
+
 };
 
 class AssistantView extends ItemView {
@@ -360,6 +362,7 @@ class AssistantView extends ItemView {
                 case 'folder-batch-confirm':
                     this.renderFolderBatchConfirmTask(card, task);
                     break;
+
                 case 'error':
                 case 'success':
                     this.renderMessageTask(card, task);
@@ -903,6 +906,14 @@ class AssistantView extends ItemView {
         closeButton.addEventListener("click", () => this.removeTask(task.id));
     }
 
+
+
+
+
+
+
+
+
     // 渲染快速操作区域
     renderQuickActions(container) {
         const section = container.createDiv({ cls: "ai-assistant-section" });
@@ -1349,72 +1360,11 @@ class PromptEditModal extends Modal {
 }
 
 
-class CheckboxModal extends Modal {
-    constructor(app, tags, onChoose) {
-        super(app);
-        this.tags = tags;
-        this.onChoose = onChoose;
-        this.selectedTags = [];
-    }
 
-    onOpen() {
-        const { contentEl } = this;
-        contentEl.createEl('h2', { text: '选择要添加的标签' });
 
-        this.tags.forEach(tag => {
-            new Setting(contentEl)
-                .setName(tag.display)
-                .addToggle(toggle => 
-                    toggle.onChange(value => {
-                        if (value) {
-                            this.selectedTags.push(tag.final);
-                        } else {
-                            const index = this.selectedTags.indexOf(tag.final);
-                            if (index > -1) {
-                                this.selectedTags.splice(index, 1);
-                            }
-                        }
-                    })
-                );
-        });
 
-        new Setting(contentEl)
-            .addButton(btn => 
-                btn
-                .setButtonText('添加选中标签')
-                .setCta()
-                .onClick(() => {
-                    this.onChoose(this.selectedTags);
-                    this.close();
-                })
-            );
-    }
 
-    onClose() {
-        const { contentEl } = this;
-        contentEl.empty();
-    }
-}
 
-class SuggestionModal extends FuzzySuggestModal {
-    constructor(app, items, onChoose) {
-        super(app);
-        this.items = items;
-        this.onChoose = onChoose;
-    }
-
-    getItems() {
-        return this.items;
-    }
-
-    getItemText(item) {
-        return item.is_new ? `(创建新文件夹) ${item.path}` : item.path;
-    }
-
-    onChooseItem(item) {
-        this.onChoose(item);
-    }
-}
 
 // 批量文件选择模态框
 class BatchFileSelectionModal extends Modal {
@@ -1519,24 +1469,8 @@ class AiAssistantSuite extends Plugin {
         this.activateView();
     });
 
-    // --- Ribbon Icon 1: Structurizer ---
-    this.addRibbonIcon('brain-circuit', 'AI Structurizer - 优化笔记结构', () => {
-      this.runAiStructurizer();
-    });
-
-    // --- Ribbon Icon 2: Mover ---
-    this.addRibbonIcon('folder-input', 'AI Mover - 移动当前笔记', () => {
-      this.runAiMover();
-    });
-
-    // --- Ribbon Icon 3: Tagger ---
-    this.addRibbonIcon('tags', 'AI Tagger - 智能生成标签', () => {
-      this.runAiTagger();
-    });
-
-    // --- Ribbon Icon 4: Meta ---
-    this.addRibbonIcon('file-signature', 'AI Meta - 生成标题/摘要', () => {
-      this.runAiMeta();
+    this.addRibbonIcon('zap', 'AI 智能处理', () => {
+      this.runOneClickSmartProcess();
     });
 
     this.addCommand({
@@ -1615,6 +1549,25 @@ class AiAssistantSuite extends Plugin {
                 // 如果面板未打开，打开它
                 this.activateView();
             }
+        }
+    });
+
+    // 添加简化的智能命令
+    this.addCommand({
+        id: 'ai-smart-summarize',
+        name: 'AI Assistant: Quick Summarize (快速总结)',
+        hotkeys: [{ modifiers: ["Ctrl", "Shift"], key: "s" }],
+        callback: () => {
+            this.runSmartAction('summarize');
+        }
+    });
+
+    this.addCommand({
+        id: 'ai-smart-optimize',
+        name: 'AI Assistant: Quick Optimize (快速优化)',
+        hotkeys: [{ modifiers: ["Ctrl", "Shift"], key: "o" }],
+        callback: () => {
+            this.runSmartAction('optimize');
         }
     });
 
@@ -2633,6 +2586,157 @@ ${contextForPrompt}
     return this.settings.structurizerPrompt.replace('{{content}}', contentToProcess);
   }
 
+  // 简化的智能操作方法
+  async runSmartAction(action) {
+    if (!this.settings.apiKey || !this.settings.apiUrl) {
+        new Notice('请先在AI Assistant Suite插件设置中填写您的API Key和API URL。');
+        return;
+    }
+
+    const currentFile = this.app.workspace.getActiveFile();
+    if (!currentFile) {
+        new Notice("没有活动的笔记文件。");
+        return;
+    }
+
+    let progressNotice = new Notice(`正在执行${this.getActionName(action)}...`, 0);
+
+    try {
+        // 获取内容
+        let content = "";
+        const activeEditor = this.app.workspace.activeEditor?.editor;
+        if (activeEditor) {
+            const selection = activeEditor.getSelection();
+            if (selection && selection.trim()) {
+                content = selection.trim();
+                new Notice(`使用选中文本进行${this.getActionName(action)}...`);
+            } else {
+                content = await this.app.vault.read(currentFile);
+                // 移除frontmatter
+                const frontmatterMatch = content.match(/^---\n([\s\S]*?)\n---\n/);
+                if (frontmatterMatch) {
+                    content = content.substring(frontmatterMatch[0].length).trim();
+                }
+            }
+        } else {
+            content = await this.app.vault.read(currentFile);
+        }
+
+        if (!content || content.trim() === "") {
+            throw new Error("没有内容可以处理。");
+        }
+
+        // 构建提示词
+        const prompt = this.getSmartActionPrompt(action, content);
+
+        // 调用AI
+        progressNotice.setMessage(`正在执行AI${this.getActionName(action)}...`);
+        const response = await fetch(this.settings.apiUrl, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                "Authorization": "Bearer " + this.settings.apiKey
+            },
+            body: JSON.stringify({
+                model: this.settings.auxiliaryModelName || this.settings.modelName,
+                messages: [{ role: "user", content: prompt }],
+            })
+        });
+
+        if (!response.ok) {
+            const errorData = await response.json().catch(() => ({}));
+            throw new Error(`AI请求失败: ${response.status}. ${errorData.error?.message || ''}`);
+        }
+
+        const data = await response.json();
+        const result = data.choices[0]?.message?.content;
+        if (!result) {
+            throw new Error("AI未能返回有效内容。");
+        }
+
+        progressNotice.hide();
+
+        // 显示结果
+        await this.activateView();
+        const taskId = `smart-action-${Date.now()}`;
+        this.view.addTask({
+            id: taskId,
+            type: 'quick-action',
+            status: 'displaying',
+            title: `${this.getActionIcon(action)} ${this.getActionName(action)}结果`,
+            content: {
+                action: action,
+                result: result,
+                originalContent: content.length > 200 ? content.substring(0, 200) + "..." : content
+            }
+        });
+
+        // 添加到历史记录
+        this.view.addToHistory(
+            currentFile.basename,
+            currentFile.path,
+            `${this.getActionName(action)}`,
+            this.view.generateFileId(currentFile)
+        );
+
+    } catch (error) {
+        progressNotice?.hide();
+        new Notice(`${this.getActionName(action)}失败: ${error.message}`, 0);
+        console.error("Smart Action Error:", error);
+    }
+  }
+
+  // 获取操作名称
+  getActionName(action) {
+    const actionNames = {
+        'summarize': '总结',
+        'optimize': '优化',
+        'explain': '解释',
+        'analyze': '分析'
+    };
+    return actionNames[action] || action;
+  }
+
+  // 获取操作图标
+  getActionIcon(action) {
+    const actionIcons = {
+        'summarize': '📝',
+        'optimize': '✨',
+        'explain': '💡',
+        'analyze': '🔍'
+    };
+    return actionIcons[action] || '🤖';
+  }
+
+  // 获取智能操作的提示词
+  getSmartActionPrompt(action, content) {
+    const prompts = {
+        'summarize': `请对以下内容进行智能总结。根据内容类型和长度，自动调整总结的详细程度和结构：
+
+${content}`,
+
+        'optimize': `请优化以下内容的表达方式，使其更加清晰、准确和易读。保持原意不变，提升表达质量：
+
+${content}`,
+
+        'explain': `请详细解释以下内容，包括背景、含义、相关概念和实际应用。根据内容复杂度调整解释深度：
+
+${content}`,
+
+        'analyze': `请对以下内容进行综合分析，包括主要观点、逻辑结构、优缺点和改进建议：
+
+${content}`
+    };
+
+    return prompts[action] || `请处理以下内容：\n\n${content}`;
+  }
+
+
+
+
+
+
+
   async loadSettings() {
     this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
   }
@@ -2640,6 +2744,63 @@ ${contextForPrompt}
   async saveSettings() {
     await this.saveData(this.settings);
   }
+
+
+
+
+
+  // 导出处理结果
+  async exportProcessingResults() {
+    if (!this.view || !this.view.history || this.view.history.length === 0) {
+        new Notice('没有可导出的处理结果');
+        return;
+    }
+
+    const exportData = {
+        exportTime: new Date().toISOString(),
+        version: this.manifest.version,
+        history: this.view.history,
+        settings: {
+            modelName: this.settings.modelName,
+            auxiliaryModelName: this.settings.auxiliaryModelName
+        }
+    };
+
+    const exportContent = JSON.stringify(exportData, null, 2);
+    const fileName = `ai-assistant-export-${new Date().toISOString().split('T')[0]}.json`;
+
+    try {
+        await this.app.vault.create(fileName, exportContent);
+        new Notice(`处理结果已导出到 ${fileName}`);
+    } catch (error) {
+        new Notice(`导出失败: ${error.message}`);
+    }
+  }
+
+  // 显示性能监控
+  async showPerformanceMonitor() {
+    const stats = {
+        totalProcessed: this.view?.history?.length || 0,
+        cacheHits: this.contextAwareSystem?.contextCache?.size || 0,
+        memoryUsage: performance.memory ? {
+            used: Math.round(performance.memory.usedJSHeapSize / 1024 / 1024),
+            total: Math.round(performance.memory.totalJSHeapSize / 1024 / 1024)
+        } : null
+    };
+
+    await this.activateView();
+    if (this.view) {
+        this.view.addTask({
+            id: `performance-${Date.now()}`,
+            type: 'performance',
+            status: 'displaying',
+            title: '📊 性能监控',
+            content: { stats }
+        });
+    }
+  }
+
+
 }
 
 class AiAssistantSettingTab extends PluginSettingTab {
@@ -3148,6 +3309,10 @@ class FolderSelectionModal extends FuzzySuggestModal {
         this.onChoose(folder);
     }
 }
+
+
+
+
 
 
 
