@@ -360,9 +360,6 @@ class AssistantView extends ItemView {
                 case 'folder-batch-confirm':
                     this.renderFolderBatchConfirmTask(card, task);
                     break;
-                case 'quick-action':
-                    this.renderQuickActionTask(card, task);
-                    break;
                 case 'error':
                 case 'success':
                     this.renderMessageTask(card, task);
@@ -903,65 +900,6 @@ class AssistantView extends ItemView {
 
         const buttonContainer = card.createDiv({ cls: "ai-assistant-button-container" });
         const closeButton = buttonContainer.createEl("button", { text: "确定", cls: "mod-cta" });
-        closeButton.addEventListener("click", () => this.removeTask(task.id));
-    }
-
-    // 渲染快速操作任务
-    renderQuickActionTask(card, task) {
-        const { action, result, originalContent } = task.content;
-
-        // 显示原始内容（如果有）
-        if (originalContent) {
-            const originalSection = card.createDiv({ cls: "ai-assistant-meta-section" });
-            originalSection.createEl("h4", { text: "原始内容" });
-            const originalEl = originalSection.createEl("p", { text: originalContent });
-            originalEl.style.cssText = `
-                background-color: var(--background-modifier-border);
-                padding: 8px;
-                border-radius: 4px;
-                font-size: var(--font-ui-small);
-                color: var(--text-muted);
-                font-style: italic;
-            `;
-        }
-
-        // 显示AI处理结果
-        const resultSection = card.createDiv({ cls: "ai-assistant-meta-section" });
-        resultSection.createEl("h4", { text: `${action}结果` });
-        const resultEl = resultSection.createEl("div");
-        resultEl.innerHTML = result.replace(/\n/g, '<br>');
-        resultEl.style.cssText = `
-            background-color: var(--background-primary);
-            padding: 12px;
-            border-radius: 6px;
-            border-left: 3px solid var(--interactive-accent);
-            line-height: 1.5;
-        `;
-
-        const buttonContainer = card.createDiv({ cls: "ai-assistant-button-container" });
-
-        // 复制结果按钮
-        const copyButton = buttonContainer.createEl("button", { text: "📋 复制结果", cls: "mod-cta" });
-        copyButton.addEventListener("click", async () => {
-            await navigator.clipboard.writeText(result);
-            new Notice("结果已复制到剪贴板", 2000);
-        });
-
-        // 插入到编辑器按钮
-        const insertButton = buttonContainer.createEl("button", { text: "📝 插入到编辑器" });
-        insertButton.addEventListener("click", () => {
-            const activeEditor = this.plugin.app.workspace.activeEditor?.editor;
-            if (activeEditor) {
-                const cursor = activeEditor.getCursor();
-                activeEditor.replaceRange(result, cursor);
-                new Notice("结果已插入到编辑器", 2000);
-            } else {
-                new Notice("没有活动的编辑器", 3000);
-            }
-        });
-
-        // 关闭按钮
-        const closeButton = buttonContainer.createEl("button", { text: "关闭" });
         closeButton.addEventListener("click", () => this.removeTask(task.id));
     }
 
@@ -1570,9 +1508,6 @@ class AiAssistantSuite extends Plugin {
     console.log('Loading AI Assistant Suite...');
     await this.loadSettings();
 
-    // 初始化快速操作面板
-    this.quickActionsPanel = new QuickActionsPanel(this);
-
 
 
     this.registerView(
@@ -1682,50 +1617,6 @@ class AiAssistantSuite extends Plugin {
             }
         }
     });
-
-    // 添加快速操作命令
-    this.addCommand({
-        id: 'ai-quick-summarize',
-        name: 'AI Quick: Summarize (快速总结)',
-        hotkeys: [{ modifiers: ["Ctrl"], key: "1" }],
-        callback: () => {
-            this.runQuickAction('summarize');
-        }
-    });
-
-    this.addCommand({
-        id: 'ai-quick-improve',
-        name: 'AI Quick: Improve (快速优化)',
-        hotkeys: [{ modifiers: ["Ctrl"], key: "2" }],
-        callback: () => {
-            this.runQuickAction('improve');
-        }
-    });
-
-    this.addCommand({
-        id: 'ai-quick-translate',
-        name: 'AI Quick: Translate (快速翻译)',
-        hotkeys: [{ modifiers: ["Ctrl"], key: "3" }],
-        callback: () => {
-            this.runQuickAction('translate');
-        }
-    });
-
-    this.addCommand({
-        id: 'ai-quick-explain',
-        name: 'AI Quick: Explain (快速解释)',
-        hotkeys: [{ modifiers: ["Ctrl"], key: "4" }],
-        callback: () => {
-            this.runQuickAction('explain');
-        }
-    });
-
-    // 注册右键菜单
-    this.registerEvent(
-        this.app.workspace.on('editor-menu', (menu, editor, view) => {
-            this.addQuickActionsToMenu(menu, editor, view);
-        })
-    );
 
     // This adds a settings tab so the user can configure various aspects of the plugin
     this.addSettingTab(new AiAssistantSettingTab(this.app, this));
@@ -2698,123 +2589,6 @@ ${contextForPrompt}
     }
   }
 
-  // 快速操作方法
-  async runQuickAction(actionId) {
-    const currentFile = this.app.workspace.getActiveFile();
-    if (!currentFile) {
-        new Notice("没有活动的笔记文件。");
-        return;
-    }
-
-    // 获取选中的文本或整个文件内容
-    let content = "";
-    const activeEditor = this.app.workspace.activeEditor?.editor;
-    if (activeEditor) {
-        const selection = activeEditor.getSelection();
-        if (selection) {
-            content = selection;
-        } else {
-            content = activeEditor.getValue();
-        }
-    } else {
-        content = await this.app.vault.read(currentFile);
-    }
-
-    if (!content || content.trim() === "") {
-        new Notice("没有内容可以处理。");
-        return;
-    }
-
-    await this.runQuickActionWithText(actionId, content);
-  }
-
-  async runQuickActionWithText(actionId, content) {
-    if (!this.settings.apiKey || !this.settings.apiUrl) {
-        new Notice('请先在AI Assistant Suite插件设置中填写您的API Key和API URL。');
-        return;
-    }
-
-    const action = this.quickActionsPanel.quickActions.find(a => a.id === actionId);
-    if (!action) {
-        new Notice(`未找到操作: ${actionId}`);
-        return;
-    }
-
-    const prompt = action.prompt.replace('{{content}}', content);
-    let progressNotice = new Notice(`正在执行${action.name}...`, 0);
-
-    try {
-        const response = await fetch(this.settings.apiUrl, {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-                "Authorization": "Bearer " + this.settings.apiKey
-            },
-            body: JSON.stringify({
-                model: this.settings.auxiliaryModelName || this.settings.modelName,
-                messages: [{ role: "user", content: prompt }],
-            })
-        });
-
-        if (!response.ok) {
-            const errorData = await response.json().catch(() => ({}));
-            throw new Error(`AI请求失败: ${response.status}. ${errorData.error?.message || ''}`);
-        }
-
-        const data = await response.json();
-        const result = data.choices[0]?.message?.content;
-        if (!result) {
-            throw new Error("AI未能返回有效内容。");
-        }
-
-        progressNotice.hide();
-
-        // 显示结果
-        await this.activateView();
-        const taskId = `quick-action-${Date.now()}`;
-        this.view.addTask({
-            id: taskId,
-            type: 'quick-action',
-            status: 'displaying',
-            title: `${action.icon} ${action.name}结果`,
-            content: {
-                action: action.name,
-                result: result,
-                originalContent: content.length > 200 ? content.substring(0, 200) + "..." : content
-            }
-        });
-
-    } catch (error) {
-        progressNotice?.hide();
-        new Notice(`${action.name}失败: ${error.message}`, 0);
-        console.error("Quick Action Error:", error);
-    }
-  }
-
-  // 添加快速操作到右键菜单
-  addQuickActionsToMenu(menu, editor, view) {
-    const selection = editor.getSelection();
-    if (!selection) return;
-
-    // 添加分隔符
-    menu.addSeparator();
-
-    // 添加快速操作子菜单
-    const quickActionsSubmenu = menu.addItem((item) => {
-        item.setTitle("🚀 AI快速操作")
-            .setIcon("zap");
-    });
-
-    this.quickActionsPanel.quickActions.forEach(action => {
-        quickActionsSubmenu.addItem((item) => {
-            item.setTitle(`${action.icon} ${action.name}`)
-                .onClick(() => {
-                    this.runQuickActionWithText(action.id, selection);
-                });
-        });
-    });
-  }
-
   async updateFrontmatter(file, title, summary, tldr) {
       let progressNotice = new Notice("正在更新笔记元数据...", 0);
       try {
@@ -3375,123 +3149,6 @@ class FolderSelectionModal extends FuzzySuggestModal {
     }
 }
 
-// 快速操作面板类
-class QuickActionsPanel {
-    constructor(plugin) {
-        this.plugin = plugin;
-        this.quickActions = [
-            {
-                id: 'summarize',
-                name: '总结',
-                icon: '📝',
-                hotkey: 'Ctrl+1',
-                prompt: '请对以下内容进行简洁的总结，突出主要观点和关键信息：\n\n{{content}}'
-            },
-            {
-                id: 'improve',
-                name: '优化',
-                icon: '✨',
-                hotkey: 'Ctrl+2',
-                prompt: '请优化以下内容的表达方式，使其更加清晰、准确和易读：\n\n{{content}}'
-            },
-            {
-                id: 'translate',
-                name: '翻译',
-                icon: '🌐',
-                hotkey: 'Ctrl+3',
-                prompt: '请将以下内容翻译成中文（如果原文是中文则翻译成英文）：\n\n{{content}}'
-            },
-            {
-                id: 'explain',
-                name: '解释',
-                icon: '💡',
-                hotkey: 'Ctrl+4',
-                prompt: '请详细解释以下内容，包括背景、含义和相关概念：\n\n{{content}}'
-            }
-        ];
-    }
 
-    // 创建浮动快速操作面板
-    createFloatingPanel(x, y, selectedText) {
-        // 移除已存在的面板
-        this.removeExistingPanel();
-
-        const panel = document.createElement('div');
-        panel.className = 'ai-quick-actions-panel';
-        panel.style.cssText = `
-            position: fixed;
-            top: ${y}px;
-            left: ${x}px;
-            background: var(--background-primary);
-            border: 1px solid var(--background-modifier-border);
-            border-radius: 8px;
-            padding: 8px;
-            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-            z-index: 1000;
-            display: flex;
-            gap: 4px;
-            max-width: 300px;
-            flex-wrap: wrap;
-        `;
-
-        this.quickActions.forEach(action => {
-            const button = document.createElement('button');
-            button.className = 'ai-quick-action-btn';
-            button.innerHTML = `${action.icon} ${action.name}`;
-            button.title = `${action.name} (${action.hotkey})`;
-            button.style.cssText = `
-                padding: 6px 12px;
-                border: 1px solid var(--background-modifier-border);
-                border-radius: 4px;
-                background: var(--background-secondary);
-                color: var(--text-normal);
-                cursor: pointer;
-                font-size: 12px;
-                transition: all 0.2s ease;
-                white-space: nowrap;
-            `;
-
-            button.addEventListener('mouseenter', () => {
-                button.style.background = 'var(--interactive-accent)';
-                button.style.color = 'var(--text-on-accent)';
-            });
-
-            button.addEventListener('mouseleave', () => {
-                button.style.background = 'var(--background-secondary)';
-                button.style.color = 'var(--text-normal)';
-            });
-
-            button.addEventListener('click', () => {
-                this.removeExistingPanel();
-                this.plugin.runQuickActionWithText(action.id, selectedText);
-            });
-
-            panel.appendChild(button);
-        });
-
-        document.body.appendChild(panel);
-
-        // 点击其他地方关闭面板
-        setTimeout(() => {
-            const closeHandler = (e) => {
-                if (!panel.contains(e.target)) {
-                    this.removeExistingPanel();
-                    document.removeEventListener('click', closeHandler);
-                }
-            };
-            document.addEventListener('click', closeHandler);
-        }, 100);
-
-        return panel;
-    }
-
-    // 移除已存在的面板
-    removeExistingPanel() {
-        const existingPanel = document.querySelector('.ai-quick-actions-panel');
-        if (existingPanel) {
-            existingPanel.remove();
-        }
-    }
-}
 
 module.exports = AiAssistantSuite;
