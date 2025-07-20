@@ -43,6 +43,36 @@
     margin-bottom: 4px;
 }
 
+/* 自定义位置选择样式 */
+.ai-assistant-custom-mover {
+    border-top: 1px solid var(--background-modifier-border);
+    margin-top: 8px;
+    padding-top: 8px;
+}
+
+.custom-location-text {
+    color: var(--text-muted);
+    font-style: italic;
+    font-size: var(--font-ui-small);
+}
+
+.ai-assistant-custom-mover:hover .custom-location-text {
+    color: var(--text-normal);
+}
+
+.ai-assistant-custom-mover button.mod-secondary {
+    background-color: var(--background-modifier-border);
+    color: var(--text-normal);
+    border: 1px solid var(--background-modifier-border);
+    transition: all 0.2s ease-in-out;
+}
+
+.ai-assistant-custom-mover button.mod-secondary:hover {
+    background-color: var(--interactive-accent);
+    color: var(--text-on-accent);
+    border-color: var(--interactive-accent);
+}
+
 /* Card Content for Tagger */
 .ai-assistant-tagger-list {
     display: flex;
@@ -88,6 +118,58 @@
     background-color: var(--background-primary);
     padding: 8px;
     border-radius: 6px;
+}
+
+/* 可编辑元数据字段样式 */
+.meta-field-section {
+    margin-bottom: 12px;
+}
+
+.meta-field-label {
+    display: block;
+    font-size: var(--font-ui-small);
+    font-weight: 500;
+    color: var(--text-normal);
+    margin-bottom: 4px;
+}
+
+.meta-field-input {
+    width: 100%;
+    padding: 8px 12px;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 6px;
+    background-color: var(--background-primary);
+    color: var(--text-normal);
+    font-size: var(--font-ui-small);
+    font-family: var(--font-interface);
+    transition: border-color 0.2s ease-in-out;
+}
+
+.meta-field-input:focus {
+    outline: none;
+    border-color: var(--interactive-accent);
+    box-shadow: 0 0 0 2px rgba(var(--interactive-accent-rgb), 0.2);
+}
+
+.meta-field-textarea {
+    width: 100%;
+    min-height: 60px;
+    max-height: 120px;
+    padding: 8px 12px;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 6px;
+    background-color: var(--background-primary);
+    color: var(--text-normal);
+    font-size: var(--font-ui-small);
+    font-family: var(--font-interface);
+    resize: vertical;
+    transition: border-color 0.2s ease-in-out;
+}
+
+.meta-field-textarea:focus {
+    outline: none;
+    border-color: var(--interactive-accent);
+    box-shadow: 0 0 0 2px rgba(var(--interactive-accent-rgb), 0.2);
 }
 
 

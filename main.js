@@ -424,69 +424,118 @@ class AssistantView extends ItemView {
     renderOneClickMetaSection(container, task) {
         container.addClass('ai-assistant-meta-section');
         const { title, summary, tldr } = task.meta;
-        
-        container.createEl("p", { text: `标题: ${title}` });
-        container.createEl("p", { text: `摘要: ${summary}` });
-        container.createEl("p", { text: `一句话总结: ${tldr}` });
 
-        const sanitizedTitle = title.trim().replace(/[/\\:?*"<>|]/g, '-');
-        const finalFilename = sanitizedTitle.substring(0, this.plugin.settings.metaFileNameMaxLength);
-        const newPath = `${task.content.file.parent.path}/${finalFilename}.md`;
-        const canRename = task.content.file.path !== newPath && !this.plugin.app.vault.getAbstractFileByPath(newPath);
+
+
+        // 创建可编辑的元数据字段
+        const editableData = {
+            title: title || '',
+            summary: summary || '',
+            tldr: tldr || ''
+        };
+
+        // 标题编辑区域
+        const titleSection = container.createDiv({ cls: "meta-field-section" });
+        titleSection.createEl("label", { text: "标题:", cls: "meta-field-label" });
+        const titleInput = titleSection.createEl("input", {
+            type: "text",
+            value: title,
+            cls: "meta-field-input"
+        });
+        titleInput.addEventListener("input", (e) => {
+            editableData.title = e.target.value;
+        });
+
+        // 摘要编辑区域
+        const summarySection = container.createDiv({ cls: "meta-field-section" });
+        summarySection.createEl("label", { text: "摘要:", cls: "meta-field-label" });
+        const summaryTextarea = summarySection.createEl("textarea", {
+            cls: "meta-field-textarea"
+        });
+        summaryTextarea.value = summary || '';
+        summaryTextarea.placeholder = "请输入摘要...";
+        summaryTextarea.addEventListener("input", (e) => {
+            editableData.summary = e.target.value;
+        });
+
+        // 一句话总结编辑区域
+        const tldrSection = container.createDiv({ cls: "meta-field-section" });
+        tldrSection.createEl("label", { text: "一句话总结:", cls: "meta-field-label" });
+        const tldrInput = tldrSection.createEl("input", {
+            type: "text",
+            value: tldr,
+            cls: "meta-field-input"
+        });
+        tldrInput.addEventListener("input", (e) => {
+            editableData.tldr = e.target.value;
+        });
+
+        // 动态计算文件名和路径
+        const getUpdatedPaths = () => {
+            const sanitizedTitle = editableData.title.trim().replace(/[/\\:?*"<>|]/g, '-');
+            const finalFilename = sanitizedTitle.substring(0, this.plugin.settings.metaFileNameMaxLength);
+            const newPath = `${task.content.file.parent.path}/${finalFilename}.md`;
+            const canRename = task.content.file.path !== newPath && !this.plugin.app.vault.getAbstractFileByPath(newPath);
+            return { sanitizedTitle, finalFilename, newPath, canRename };
+        };
 
         const buttonContainer = container.createDiv({ cls: "ai-assistant-button-container" });
 
-        if (canRename) {
-            const renameButton = buttonContainer.createEl("button", { text: "重命名文件", cls: "mod-cta" });
-            renameButton.setAttribute('title', `重命名为 "${finalFilename}.md"`);
-            renameButton.addEventListener("click", async () => {
-                let notice = new Notice("正在重命名并更新元数据...", 0);
-                try {
-                    // 使用安全重命名方法
-                    const newFile = await this.plugin.safeRenameFile(task.content.file, newPath);
+        // 重命名文件按钮
+        const renameButton = buttonContainer.createEl("button", { text: "重命名文件", cls: "mod-cta" });
+        renameButton.addEventListener("click", async () => {
+            const paths = getUpdatedPaths();
+            if (!paths.canRename) {
+                new Notice("无法重命名：目标文件已存在或路径相同");
+                return;
+            }
 
-                    // 更新元数据
-                    await this.plugin.updateFrontmatter(newFile, title, summary, tldr);
-                    notice.hide();
-                    new Notice(`文件已重命名为: ${finalFilename}.md`, 4000);
+            let notice = new Notice("正在重命名并更新元数据...", 0);
+            try {
+                // 使用安全重命名方法
+                const newFile = await this.plugin.safeRenameFile(task.content.file, paths.newPath);
 
-                    // 添加到历史记录
-                    this.addToHistory(finalFilename, newFile.path, "重命名+元数据", this.generateFileId(newFile));
+                // 更新元数据
+                await this.plugin.updateFrontmatter(newFile, editableData.title, editableData.summary, editableData.tldr);
+                notice.hide();
+                new Notice(`文件已重命名为: ${paths.finalFilename}.md`, 4000);
 
-                    // 更新任务内容
-                    const newContent = { ...task.content, file: newFile };
-                    delete newContent.suggestions.meta;
-                    this.updateTask(task.id, { content: newContent });
-                } catch (err) {
-                    notice.hide();
-                    console.error("重命名错误详情:", err);
+                // 添加到历史记录
+                this.addToHistory(paths.finalFilename, newFile.path, "重命名+元数据", this.generateFileId(newFile));
 
-                    // 提供更详细的错误信息和建议
-                    let errorMessage = `重命名文件时出错: ${err.message}`;
-                    let suggestions = [];
+                // 更新任务内容
+                const newContent = { ...task.content, file: newFile };
+                delete newContent.suggestions.meta;
+                this.updateTask(task.id, { content: newContent });
+            } catch (err) {
+                notice.hide();
+                console.error("重命名错误详情:", err);
 
-                    if (err.message.includes('已存在')) {
-                        suggestions.push('请尝试使用不同的文件名');
-                    } else if (err.message.includes('非法字符')) {
-                        suggestions.push('请移除文件名中的特殊字符');
-                    } else if (err.message.includes('过长')) {
-                        suggestions.push('请使用更短的文件名');
-                    } else if (err.message.includes('找不到文件')) {
-                        suggestions.push('请稍后重试，或手动重命名文件');
-                    }
+                // 提供更详细的错误信息和建议
+                let errorMessage = `重命名文件时出错: ${err.message}`;
+                let suggestions = [];
 
-                    if (suggestions.length > 0) {
-                        errorMessage += `\n建议: ${suggestions.join(', ')}`;
-                    }
-
-                    new Notice(errorMessage, 8000);
+                if (err.message.includes('已存在')) {
+                    suggestions.push('请尝试使用不同的文件名');
+                } else if (err.message.includes('非法字符')) {
+                    suggestions.push('请移除文件名中的特殊字符');
+                } else if (err.message.includes('过长')) {
+                    suggestions.push('请使用更短的文件名');
+                } else if (err.message.includes('找不到文件')) {
+                    suggestions.push('请稍后重试，或手动重命名文件');
                 }
-            });
-        }
+
+                if (suggestions.length > 0) {
+                    errorMessage += `\n建议: ${suggestions.join(', ')}`;
+                }
+
+                new Notice(errorMessage, 8000);
+            }
+        });
 
         const noRenameButton = buttonContainer.createEl("button", { text: "仅更新元数据" });
         noRenameButton.addEventListener("click", async () => {
-            await this.plugin.updateFrontmatter(task.content.file, title, summary, tldr, false);
+            await this.plugin.updateFrontmatter(task.content.file, editableData.title, editableData.summary, editableData.tldr, false);
             new Notice("元数据已更新，文件名保持不变。");
 
             // 添加到历史记录
@@ -562,50 +611,83 @@ class AssistantView extends ItemView {
                 pathSpan.style.color = "var(--text-accent)";
                 pathSpan.setAttribute('title', '将创建新文件夹');
             }
-            
+
             const button = moverItem.createEl("button", { text: "移动", cls: "mod-cta" });
             button.addEventListener("click", async () => {
-                const destinationFolder = suggestion.path;
-                const newPath = `${destinationFolder}/${task.content.file.name}`;
-
-                if (task.content.file.path === newPath) {
-                    new Notice("文件已在目标文件夹中。");
-                    return;
-                }
-                if (this.app.vault.getAbstractFileByPath(newPath)) {
-                    new Notice(`目标位置已存在同名文件，无法移动。`);
-                    return;
-                }
-                let notice = new Notice(`正在移动文件...`, 0);
-                try {
-                    if (suggestion.is_new && !await this.app.vault.adapter.exists(destinationFolder)) {
-                        await this.app.vault.createFolder(destinationFolder);
-                        new Notice(`已创建新文件夹: ${destinationFolder}`, 4000);
-                    }
-                    await this.app.fileManager.renameFile(task.content.file, newPath);
-                    notice.hide();
-                    new Notice(`笔记已成功移动到: ${destinationFolder}`, 5000);
-
-                    const newFile = this.plugin.app.vault.getAbstractFileByPath(newPath);
-
-                    // 添加到历史记录
-                    this.addToHistory(newFile.basename, newFile.path, "移动文件", this.generateFileId(newFile));
-
-                    const newContent = { ...task.content, file: newFile };
-                    delete newContent.suggestions.mover;
-                    this.updateTask(task.id, { content: newContent });
-
-                } catch(err) {
-                    notice.hide();
-                    new Notice(`移动文件时出错: ${err.message}`, 0);
-                }
+                await this.moveFileToFolder(task, suggestion.path, suggestion.is_new);
             });
         });
+
+        // 添加"选择其他位置"按钮
+        const customMoverItem = container.createDiv({ cls: "ai-assistant-mover-item ai-assistant-custom-mover" });
+        const customPathDiv = customMoverItem.createDiv({ cls: "ai-assistant-mover-path" });
+        customPathDiv.createEl("span", {
+            text: "选择其他位置...",
+            cls: "custom-location-text"
+        });
+
+        const customButton = customMoverItem.createEl("button", { text: "浏览", cls: "mod-secondary" });
+        customButton.addEventListener("click", () => {
+            this.showFolderSelectionForMove(task);
+        });
+    }
+
+    // 提取移动文件的通用逻辑
+    async moveFileToFolder(task, destinationFolder, isNew = false) {
+        const newPath = `${destinationFolder}/${task.content.file.name}`;
+
+        if (task.content.file.path === newPath) {
+            new Notice("文件已在目标文件夹中。");
+            return;
+        }
+        if (this.app.vault.getAbstractFileByPath(newPath)) {
+            new Notice(`目标位置已存在同名文件，无法移动。`);
+            return;
+        }
+
+        let notice = new Notice(`正在移动文件...`, 0);
+        try {
+            if (isNew && !await this.app.vault.adapter.exists(destinationFolder)) {
+                await this.app.vault.createFolder(destinationFolder);
+                new Notice(`已创建新文件夹: ${destinationFolder}`, 4000);
+            }
+            await this.app.fileManager.renameFile(task.content.file, newPath);
+            notice.hide();
+            new Notice(`笔记已成功移动到: ${destinationFolder}`, 5000);
+
+            const newFile = this.plugin.app.vault.getAbstractFileByPath(newPath);
+
+            // 添加到历史记录
+            this.addToHistory(newFile.basename, newFile.path, "移动文件", this.generateFileId(newFile));
+
+            const newContent = { ...task.content, file: newFile };
+            delete newContent.suggestions.mover;
+            this.updateTask(task.id, { content: newContent });
+
+        } catch(err) {
+            notice.hide();
+            new Notice(`移动文件时出错: ${err.message}`, 0);
+        }
+    }
+
+    // 显示文件夹选择器用于移动文件
+    showFolderSelectionForMove(task) {
+        const folders = this.plugin.app.vault.getAllLoadedFiles()
+            .filter(file => file.children)
+            .map(folder => folder.path)
+            .filter(path => path !== '/'); // 排除根目录
+
+        const modal = new FolderSelectionModal(this.plugin.app, folders, (selectedFolder) => {
+            if (selectedFolder) {
+                this.moveFileToFolder(task, selectedFolder, false);
+            }
+        });
+        modal.open();
     }
 
     renderMoverTask(card, task) {
         const { suggestions, file } = task.content;
-        
+
         suggestions.forEach(suggestion => {
             const moverItem = card.createDiv({ cls: "ai-assistant-mover-item" });
             const pathDiv = moverItem.createDiv({ cls: "ai-assistant-mover-path" });
@@ -615,40 +697,80 @@ class AssistantView extends ItemView {
                 pathSpan.style.color = "var(--text-accent)";
                 pathSpan.setAttribute('title', '将创建新文件夹');
             }
-            
+
             const button = moverItem.createEl("button", { text: "移动", cls: "mod-cta" });
             button.addEventListener("click", async () => {
-                const destinationFolder = suggestion.path;
-                const newPath = `${destinationFolder}/${file.name}`;
-
-                if (file.path === newPath) {
-                    new Notice("文件已在目标文件夹中。");
-                    return;
-                }
-                if (this.app.vault.getAbstractFileByPath(newPath)) {
-                    new Notice(`目标位置已存在同名文件，无法移动。`);
-                    return;
-                }
-                let moveNotice = new Notice(`正在移动文件...`, 0);
-                try {
-                    if (suggestion.is_new && !await this.app.vault.adapter.exists(destinationFolder)) {
-                        await this.app.vault.createFolder(destinationFolder);
-                        new Notice(`已创建新文件夹: ${destinationFolder}`, 4000);
-                    }
-                    await this.app.fileManager.renameFile(file, newPath);
-                    moveNotice.hide();
-                    new Notice(`笔记已成功移动到: ${destinationFolder}`, 5000);
-                    this.removeTask(task.id);
-                } catch(err) {
-                    moveNotice.hide();
-                    new Notice(`移动文件时出错: ${err.message}`, 0);
-                }
+                await this.moveFileToFolderStandalone(file, suggestion.path, suggestion.is_new, task.id);
             });
+        });
+
+        // 添加"选择其他位置"按钮
+        const customMoverItem = card.createDiv({ cls: "ai-assistant-mover-item ai-assistant-custom-mover" });
+        const customPathDiv = customMoverItem.createDiv({ cls: "ai-assistant-mover-path" });
+        customPathDiv.createEl("span", {
+            text: "选择其他位置...",
+            cls: "custom-location-text"
+        });
+
+        const customButton = customMoverItem.createEl("button", { text: "浏览", cls: "mod-secondary" });
+        customButton.addEventListener("click", () => {
+            this.showFolderSelectionForMoveStandalone(file, task.id);
         });
 
         const buttonContainer = card.createDiv({ cls: "ai-assistant-button-container" });
         const cancelButton = buttonContainer.createEl("button", { text: "取消" });
         cancelButton.addEventListener("click", () => this.removeTask(task.id));
+    }
+
+    // 独立Mover任务的移动文件逻辑
+    async moveFileToFolderStandalone(file, destinationFolder, isNew = false, taskId) {
+        const newPath = `${destinationFolder}/${file.name}`;
+
+        if (file.path === newPath) {
+            new Notice("文件已在目标文件夹中。");
+            return;
+        }
+        if (this.app.vault.getAbstractFileByPath(newPath)) {
+            new Notice(`目标位置已存在同名文件，无法移动。`);
+            return;
+        }
+
+        let moveNotice = new Notice(`正在移动文件...`, 0);
+        try {
+            if (isNew && !await this.app.vault.adapter.exists(destinationFolder)) {
+                await this.app.vault.createFolder(destinationFolder);
+                new Notice(`已创建新文件夹: ${destinationFolder}`, 4000);
+            }
+            await this.app.fileManager.renameFile(file, newPath);
+            moveNotice.hide();
+            new Notice(`笔记已成功移动到: ${destinationFolder}`, 5000);
+
+            // 添加到历史记录
+            const newFile = this.plugin.app.vault.getAbstractFileByPath(newPath);
+            if (newFile) {
+                this.addToHistory(newFile.basename, newFile.path, "移动文件", this.generateFileId(newFile));
+            }
+
+            this.removeTask(taskId);
+        } catch(err) {
+            moveNotice.hide();
+            new Notice(`移动文件时出错: ${err.message}`, 0);
+        }
+    }
+
+    // 独立Mover任务的文件夹选择器
+    showFolderSelectionForMoveStandalone(file, taskId) {
+        const folders = this.plugin.app.vault.getAllLoadedFiles()
+            .filter(f => f.children)
+            .map(folder => folder.path)
+            .filter(path => path !== '/'); // 排除根目录
+
+        const modal = new FolderSelectionModal(this.plugin.app, folders, (selectedFolder) => {
+            if (selectedFolder) {
+                this.moveFileToFolderStandalone(file, selectedFolder, false, taskId);
+            }
+        });
+        modal.open();
     }
 
     renderTaggerTask(card, task) {
@@ -705,65 +827,116 @@ class AssistantView extends ItemView {
     }
 
     renderMetaTask(card, task) {
-        const { title, summary, tldr, finalFilename, newPath, file } = task.content;
+        const { title, summary, tldr, file } = task.content;
 
-        let section = card.createDiv({cls: "ai-assistant-meta-section"});
-        section.createEl("h4", { text: "建议标题" });
-        section.createEl("p", { text: title });
-        section = card.createDiv({cls: "ai-assistant-meta-section"});
-        section.createEl("h4", { text: "摘要" });
-        section.createEl("p", { text: summary });
-        section = card.createDiv({cls: "ai-assistant-meta-section"});
-        section.createEl("h4", { text: "一句话总结" });
-        section.createEl("p", { text: tldr });
 
-        const canRename = file.path !== newPath && !this.plugin.app.vault.getAbstractFileByPath(newPath);
+
+        // 创建可编辑的元数据字段
+        const editableData = {
+            title: title || '',
+            summary: summary || '',
+            tldr: tldr || ''
+        };
+
+        // 标题编辑区域
+        const titleSection = card.createDiv({ cls: "meta-field-section" });
+        titleSection.createEl("label", { text: "建议标题:", cls: "meta-field-label" });
+        const titleInput = titleSection.createEl("input", {
+            type: "text",
+            value: title,
+            cls: "meta-field-input"
+        });
+        titleInput.addEventListener("input", (e) => {
+            editableData.title = e.target.value;
+        });
+
+        // 摘要编辑区域
+        const summarySection = card.createDiv({ cls: "meta-field-section" });
+        summarySection.createEl("label", { text: "摘要:", cls: "meta-field-label" });
+        const summaryTextarea = summarySection.createEl("textarea", {
+            cls: "meta-field-textarea"
+        });
+        summaryTextarea.value = summary || '';
+        summaryTextarea.placeholder = "请输入摘要...";
+        summaryTextarea.addEventListener("input", (e) => {
+            editableData.summary = e.target.value;
+        });
+
+        // 一句话总结编辑区域
+        const tldrSection = card.createDiv({ cls: "meta-field-section" });
+        tldrSection.createEl("label", { text: "一句话总结:", cls: "meta-field-label" });
+        const tldrInput = tldrSection.createEl("input", {
+            type: "text",
+            value: tldr,
+            cls: "meta-field-input"
+        });
+        tldrInput.addEventListener("input", (e) => {
+            editableData.tldr = e.target.value;
+        });
+
+        // 动态计算文件名和路径
+        const getUpdatedPaths = () => {
+            const sanitizedTitle = editableData.title.trim().replace(/[/\\:?*"<>|]/g, '-');
+            const finalFilename = sanitizedTitle.substring(0, this.plugin.settings.metaFileNameMaxLength);
+            const newPath = `${file.parent.path}/${finalFilename}.md`;
+            const canRename = file.path !== newPath && !this.plugin.app.vault.getAbstractFileByPath(newPath);
+            return { sanitizedTitle, finalFilename, newPath, canRename };
+        };
+
         const buttonContainer = card.createDiv({ cls: "ai-assistant-button-container" });
 
-        if (canRename) {
-            const renameButton = buttonContainer.createEl("button", { text: "重命名文件", cls: "mod-cta" });
-            renameButton.setAttribute('title', `重命名为 "${finalFilename}.md"`);
-            renameButton.addEventListener("click", async () => {
-                let renameNotice = new Notice("正在重命名并更新元数据...", 0);
-                try {
-                    // 使用安全重命名方法
-                    const newFile = await this.plugin.safeRenameFile(file, newPath);
+        // 重命名文件按钮
+        const renameButton = buttonContainer.createEl("button", { text: "重命名文件", cls: "mod-cta" });
+        renameButton.addEventListener("click", async () => {
+            const paths = getUpdatedPaths();
+            if (!paths.canRename) {
+                new Notice("无法重命名：目标文件已存在或路径相同");
+                return;
+            }
 
-                    // 更新元数据
-                    await this.plugin.updateFrontmatter(newFile, title, summary, tldr);
-                    renameNotice.hide();
-                    new Notice(`文件已重命名为: ${finalFilename}.md`, 4000);
-                    this.removeTask(task.id);
-                } catch (err) {
-                    renameNotice.hide();
-                    console.error("重命名错误详情:", err);
+            let renameNotice = new Notice("正在重命名并更新元数据...", 0);
+            try {
+                // 使用安全重命名方法
+                const newFile = await this.plugin.safeRenameFile(file, paths.newPath);
 
-                    // 提供更详细的错误信息和建议
-                    let errorMessage = `重命名文件时出错: ${err.message}`;
-                    let suggestions = [];
+                // 更新元数据
+                await this.plugin.updateFrontmatter(newFile, editableData.title, editableData.summary, editableData.tldr);
+                renameNotice.hide();
+                new Notice(`文件已重命名为: ${paths.finalFilename}.md`, 4000);
 
-                    if (err.message.includes('已存在')) {
-                        suggestions.push('请尝试使用不同的文件名');
-                    } else if (err.message.includes('非法字符')) {
-                        suggestions.push('请移除文件名中的特殊字符');
-                    } else if (err.message.includes('过长')) {
-                        suggestions.push('请使用更短的文件名');
-                    } else if (err.message.includes('找不到文件')) {
-                        suggestions.push('请稍后重试，或手动重命名文件');
-                    }
+                // 添加到历史记录
+                this.addToHistory(paths.finalFilename, newFile.path, "重命名+元数据", this.generateFileId(newFile));
 
-                    if (suggestions.length > 0) {
-                        errorMessage += `\n建议: ${suggestions.join(', ')}`;
-                    }
+                this.removeTask(task.id);
+            } catch (err) {
+                renameNotice.hide();
+                console.error("重命名错误详情:", err);
 
-                    new Notice(errorMessage, 8000);
+                // 提供更详细的错误信息和建议
+                let errorMessage = `重命名文件时出错: ${err.message}`;
+                let suggestions = [];
+
+                if (err.message.includes('已存在')) {
+                    suggestions.push('请尝试使用不同的文件名');
+                } else if (err.message.includes('非法字符')) {
+                    suggestions.push('请移除文件名中的特殊字符');
+                } else if (err.message.includes('过长')) {
+                    suggestions.push('请使用更短的文件名');
+                } else if (err.message.includes('找不到文件')) {
+                    suggestions.push('请稍后重试，或手动重命名文件');
                 }
-            });
-        }
+
+                if (suggestions.length > 0) {
+                    errorMessage += `\n建议: ${suggestions.join(', ')}`;
+                }
+
+                new Notice(errorMessage, 8000);
+            }
+        });
 
         const noRenameButton = buttonContainer.createEl("button", { text: "仅更新元数据" });
         noRenameButton.addEventListener("click", async () => {
-            await this.plugin.updateFrontmatter(file, title, summary, tldr);
+            await this.plugin.updateFrontmatter(file, editableData.title, editableData.summary, editableData.tldr);
             new Notice("元数据已更新，文件名保持不变。");
 
             // 添加到历史记录
@@ -2252,6 +2425,12 @@ class AiAssistantSuite extends Plugin {
         let fileText = await app.vault.read(currentFile);
         const fileCache = app.metadataCache.getFileCache(currentFile);
         let content = fileText;
+
+        // 检查现有的frontmatter
+        const existingFrontmatter = fileCache?.frontmatter || {};
+        const hasExistingSummary = existingFrontmatter.summary && existingFrontmatter.summary.trim();
+        const hasExistingTldr = existingFrontmatter.tldr && existingFrontmatter.tldr.trim();
+
         if (fileCache && fileCache.frontmatter && fileCache.frontmatter.position) {
             content = fileText.substring(fileCache.frontmatter.position.end.offset).trim();
         }
@@ -2269,39 +2448,88 @@ class AiAssistantSuite extends Plugin {
             throw new Error("笔记内容为空，无法生成元数据。");
         }
 
-        progressNotice.setMessage("正在请求 AI 生成标题和摘要...");
-        const prompt = this.getMetaPrompt(content);
-        const response = await fetch(this.settings.apiUrl, {
-            method: "POST",
-            headers: { "Content-Type": "application/json", "Authorization": `Bearer ${this.settings.apiKey}` },
-            body: JSON.stringify({
-                model: this.settings.modelName,
-                messages: [{ role: "user", content: prompt }],
-                response_format: { type: "json_object" },
-            })
-        });
+        // 根据已有字段调整AI请求
+        let aiGeneratedData = {};
 
-        if (!response.ok) {
-          const errorText = await response.text();
-          throw new Error(`API 请求失败: ${response.status}. ${errorText}`);
+        if (hasExistingSummary && hasExistingTldr) {
+            // 如果summary和tldr都存在，只生成title
+            progressNotice.setMessage("检测到已有摘要和总结，仅生成标题...");
+            const titleOnlyPrompt = this.getTitleOnlyPrompt(content);
+            const response = await fetch(this.settings.apiUrl, {
+                method: "POST",
+                headers: { "Content-Type": "application/json", "Authorization": `Bearer ${this.settings.apiKey}` },
+                body: JSON.stringify({
+                    model: this.settings.modelName,
+                    messages: [{ role: "user", content: titleOnlyPrompt }],
+                    response_format: { type: "json_object" },
+                })
+            });
+
+            if (!response.ok) {
+                const errorText = await response.text();
+                throw new Error(`API 请求失败: ${response.status}. ${errorText}`);
+            }
+
+            const data = await response.json();
+            const messageContent = data.choices[0]?.message?.content;
+            if (!messageContent) throw new Error("AI未能返回有效内容。");
+
+            let parsedContent;
+            try {
+                const jsonMatch = messageContent.match(/```json\n([\s\S]*?)\n```/);
+                parsedContent = JSON.parse(jsonMatch ? jsonMatch[1] : messageContent);
+            } catch (e) {
+                throw new Error(`无法解析AI返回的JSON: ${e.message}`);
+            }
+
+            aiGeneratedData = {
+                title: parsedContent.title || "未命名标题",
+                summary: existingFrontmatter.summary,
+                tldr: existingFrontmatter.tldr
+            };
+        } else {
+            // 正常生成所有字段，但会在后面使用已有的字段
+            progressNotice.setMessage("正在请求 AI 生成元数据...");
+            const prompt = this.getMetaPrompt(content, hasExistingSummary, hasExistingTldr);
+            const response = await fetch(this.settings.apiUrl, {
+                method: "POST",
+                headers: { "Content-Type": "application/json", "Authorization": `Bearer ${this.settings.apiKey}` },
+                body: JSON.stringify({
+                    model: this.settings.modelName,
+                    messages: [{ role: "user", content: prompt }],
+                    response_format: { type: "json_object" },
+                })
+            });
+
+            if (!response.ok) {
+                const errorText = await response.text();
+                throw new Error(`API 请求失败: ${response.status}. ${errorText}`);
+            }
+
+            const data = await response.json();
+            const messageContent = data.choices[0]?.message?.content;
+            if (!messageContent) throw new Error("AI未能返回有效内容。");
+
+            let parsedContent;
+            try {
+                const jsonMatch = messageContent.match(/```json\n([\s\S]*?)\n```/);
+                parsedContent = JSON.parse(jsonMatch ? jsonMatch[1] : messageContent);
+            } catch (e) {
+                throw new Error(`无法解析AI返回的JSON: ${e.message}`);
+            }
+
+            let { title, summary, tldr } = parsedContent;
+
+            // 使用已有字段或AI生成的字段
+            aiGeneratedData = {
+                title: title || "未命名标题",
+                summary: hasExistingSummary ? existingFrontmatter.summary : (summary || "暂无摘要，请手动添加"),
+                tldr: hasExistingTldr ? existingFrontmatter.tldr : (tldr || "暂无总结")
+            };
         }
 
-        const data = await response.json();
-        const messageContent = data.choices[0]?.message?.content;
-        if (!messageContent) throw new Error("AI未能返回有效内容。");
-
-        let parsedContent;
-        try {
-            const jsonMatch = messageContent.match(/```json\n([\s\S]*?)\n```/);
-            parsedContent = JSON.parse(jsonMatch ? jsonMatch[1] : messageContent);
-        } catch (e) {
-            throw new Error(`无法解析AI返回的JSON: ${e.message}`);
-        }
-
-        const { title, summary, tldr } = parsedContent;
-        if (!title || !summary || !tldr) {
-            throw new Error("AI返回的JSON中缺少必要字段。");
-        }
+        // 使用最终的数据
+        const { title, summary, tldr } = aiGeneratedData;
 
         progressNotice.hide();
 
@@ -2369,6 +2597,12 @@ class AiAssistantSuite extends Plugin {
         progressNotice.setMessage("正在准备组合式 AI 请求...");
         let contentToProcess = await app.vault.read(currentFile);
         const fileCache = app.metadataCache.getFileCache(currentFile);
+
+        // 检查现有的frontmatter
+        const existingFrontmatter = fileCache?.frontmatter || {};
+        const hasExistingSummary = existingFrontmatter.summary && existingFrontmatter.summary.trim();
+        const hasExistingTldr = existingFrontmatter.tldr && existingFrontmatter.tldr.trim();
+
         if (fileCache && fileCache.frontmatter && fileCache.frontmatter.position) {
             contentToProcess = contentToProcess.substring(fileCache.frontmatter.position.end.offset).trim();
         }
@@ -2393,7 +2627,11 @@ class AiAssistantSuite extends Plugin {
             jsonStructure.mover_suggestions = [{ path: "path/to/folder", is_new: false }];
         }
         if (oneClickProcessActions.meta) {
-            jsonStructure.meta = { title: "string", summary: "string", tldr: "string" };
+            // 根据已有字段调整JSON结构
+            let metaFields = { title: "string" };
+            if (!hasExistingSummary) metaFields.summary = "string";
+            if (!hasExistingTldr) metaFields.tldr = "string";
+            jsonStructure.meta = metaFields;
         }
 
         let prompt = `你是一个强大的多任务AI助手。请基于以下提供的文本，执行所有请求的任务。
@@ -2403,7 +2641,7 @@ class AiAssistantSuite extends Plugin {
 2. 你的回答必须是一个严格遵守以下结构的JSON对象。
 
 **任务列表:**
-${oneClickProcessActions.meta ? `- **生成元数据**: 生成一个极其简洁的标题（14个字以内）、一段简短摘要（3-4句话）、以及一个一句话总结（25个字以内）。\n` : ''}${oneClickProcessActions.tagger ? `- **生成标签**: 提供约 ${this.settings.taggerSuggestionsCount} 个标签。优先使用"现有标签列表"中的标签，新标签必须是层级格式 (如 a/b/c)。\n` : ''}${oneClickProcessActions.mover ? `- **建议文件夹**: 提供 ${this.settings.moverSuggestionsCount} 个最合适的存放路径建议，可以从"现有文件夹列表"中选择或创造新的。\n` : ''}
+${oneClickProcessActions.meta ? this.getMetaTaskDescription(hasExistingSummary, hasExistingTldr) : ''}${oneClickProcessActions.tagger ? `- **生成标签**: 提供约 ${this.settings.taggerSuggestionsCount} 个标签。优先使用"现有标签列表"中的标签，新标签必须是层级格式 (如 a/b/c)。\n` : ''}${oneClickProcessActions.mover ? `- **建议文件夹**: 提供 ${this.settings.moverSuggestionsCount} 个最合适的存放路径建议，可以从"现有文件夹列表"中选择或创造新的。\n` : ''}
 **JSON 输出格式:**
 \`\`\`json
 ${JSON.stringify(jsonStructure, null, 2)}
@@ -2447,6 +2685,25 @@ ${contextForPrompt}
             const jsonMatch = messageContent.match(/```json\n([\s\S]*?)\n```/);
             const contentToParse = jsonMatch ? jsonMatch[1] : messageContent;
             parsedContent = JSON.parse(contentToParse);
+
+            // 确保meta字段的完整性，使用已有字段或AI生成的字段
+            if (parsedContent.meta) {
+                // 如果某些字段为空，提供默认值
+                if (!parsedContent.meta.title) parsedContent.meta.title = "未命名标题";
+
+                // 使用已有字段或AI生成的字段
+                if (hasExistingSummary) {
+                    parsedContent.meta.summary = existingFrontmatter.summary;
+                } else if (!parsedContent.meta.summary) {
+                    parsedContent.meta.summary = "暂无摘要，请手动添加";
+                }
+
+                if (hasExistingTldr) {
+                    parsedContent.meta.tldr = existingFrontmatter.tldr;
+                } else if (!parsedContent.meta.tldr) {
+                    parsedContent.meta.tldr = "暂无总结";
+                }
+            }
         } catch (e) {
             console.error("解析AI返回的JSON时出错:", e, "原始返回内容:", messageContent);
             throw new Error("无法解析AI返回的JSON。");
@@ -2558,8 +2815,61 @@ ${contextForPrompt}
       }
   }
 
-  getMetaPrompt(content) {
-    return this.settings.metaPrompt.replace('{{content}}', content);
+  getMetaPrompt(content, hasExistingSummary = false, hasExistingTldr = false) {
+    let prompt = this.settings.metaPrompt;
+
+    // 如果已有某些字段，修改提示词
+    if (hasExistingSummary || hasExistingTldr) {
+      let skipInstructions = [];
+      if (hasExistingSummary) skipInstructions.push("摘要");
+      if (hasExistingTldr) skipInstructions.push("一句话总结");
+
+      prompt += `\n\n**注意**: 文件已有${skipInstructions.join("和")}字段，请跳过生成这些字段，只返回需要生成的字段。`;
+    }
+
+    return prompt.replace('{{content}}', content);
+  }
+
+  getTitleOnlyPrompt(content) {
+    return `请为以下文本内容生成一个简洁有力的标题：
+
+${content}
+
+要求：
+1. 标题应该准确反映文本的主要内容
+2. 长度不超过50字符
+3. 避免使用特殊符号和标点
+4. 适合作为文件名使用
+
+请返回JSON格式：
+{
+  "title": "你生成的标题"
+}
+
+确保返回的是有效的JSON格式。`;
+  }
+
+  getMetaTaskDescription(hasExistingSummary, hasExistingTldr) {
+    let tasks = ["生成一个极其简洁的标题（14个字以内）"];
+
+    if (!hasExistingSummary) {
+      tasks.push("一段简短摘要（3-4句话）");
+    }
+
+    if (!hasExistingTldr) {
+      tasks.push("一个一句话总结（25个字以内）");
+    }
+
+    let description = `- **生成元数据**: ${tasks.join("、")}。`;
+
+    if (hasExistingSummary || hasExistingTldr) {
+      let skipFields = [];
+      if (hasExistingSummary) skipFields.push("摘要");
+      if (hasExistingTldr) skipFields.push("一句话总结");
+      description += ` 注意：文件已有${skipFields.join("和")}字段，请跳过生成这些字段。`;
+    }
+
+    return description + "\n";
   }
 
   getTaggerPrompt(existingTags, content) {
