@@ -137,6 +137,9 @@ const DEFAULT_SETTINGS = {
   taggerTranslationTargetLanguage: '中文',
   taggerTranslationMinLength: 16,
   taggerPrompt: TAGGER_DEFAULT_PROMPT,
+
+  // Processing History (persistent storage)
+  processingHistory: [],
   translationPrompt: TRANSLATION_DEFAULT_PROMPT,
 
   // Meta Settings
@@ -1322,27 +1325,53 @@ class AssistantView extends ItemView {
             cls: "ai-assistant-clear-history-btn"
         });
         clearBtn.addEventListener("click", () => {
-            localStorage.removeItem('ai-assistant-history');
-            this.render();
-            // 在助手面板中显示成功信息
-            this.addTask({
-                id: Date.now().toString(),
-                type: 'success',
-                title: '历史记录已清理',
-                status: 'displaying',
-                content: {
-                    message: '所有历史记录已成功清理',
-                    type: 'success'
-                }
-            });
+            // 确认对话框
+            const confirmed = confirm('确定要清理所有处理历史记录吗？此操作不可撤销。');
+            if (confirmed) {
+                // 清理插件设置中的历史记录
+                this.plugin.settings.processingHistory = [];
+                this.plugin.saveSettings();
+
+                // 同时清理可能存在的localStorage数据
+                localStorage.removeItem('ai-assistant-history');
+
+                this.render();
+                // 在助手面板中显示成功信息
+                this.addTask({
+                    id: Date.now().toString(),
+                    type: 'success',
+                    title: '历史记录已清理',
+                    status: 'displaying',
+                    content: {
+                        message: '所有历史记录已成功清理',
+                        type: 'success'
+                    }
+                });
+            }
         });
     }
 
     // 获取最近处理历史
     getRecentHistory() {
         try {
+            // 优先从插件数据文件读取
+            if (this.plugin.settings.processingHistory) {
+                return this.plugin.settings.processingHistory;
+            }
+
+            // 兼容旧版本：从localStorage读取并迁移到插件设置
             const history = localStorage.getItem('ai-assistant-history');
-            return history ? JSON.parse(history) : [];
+            if (history) {
+                const parsedHistory = JSON.parse(history);
+                // 迁移到插件设置
+                this.plugin.settings.processingHistory = parsedHistory;
+                this.plugin.saveSettings();
+                // 清理localStorage中的旧数据
+                localStorage.removeItem('ai-assistant-history');
+                return parsedHistory;
+            }
+
+            return [];
         } catch {
             return [];
         }
@@ -1375,9 +1404,11 @@ class AssistantView extends ItemView {
         filtered.unshift(newItem);
 
         // 限制历史记录数量
-        const limited = filtered.slice(0, 20);
+        const limited = filtered.slice(0, 100); // 增加到100条记录
 
-        localStorage.setItem('ai-assistant-history', JSON.stringify(limited));
+        // 保存到插件设置中，确保数据持久化
+        this.plugin.settings.processingHistory = limited;
+        this.plugin.saveSettings();
     }
 
     // 生成文件唯一标识
@@ -1500,35 +1531,132 @@ class PromptEditModal extends Modal {
         this.settingName = settingName;
         this.title = title;
         this.saved = false;
+        this.isPreviewMode = false;
     }
 
     onOpen() {
         const { contentEl } = this;
-        contentEl.createEl('h2', { text: this.title });
+        contentEl.addClass('prompt-edit-modal');
 
-        new Setting(contentEl)
-            .addTextArea(text => {
-                text.setValue(this.plugin.settings[this.settingName])
-                    .onChange(value => {
-                        this.plugin.settings[this.settingName] = value;
-                        this.saved = true; 
-                    });
-                text.inputEl.style.width = '100%';
-                text.inputEl.style.height = '300px';
-                text.inputEl.style.minHeight = '150px';
-            });
-            
-        new Setting(contentEl)
-            .addButton(btn => btn
-                .setButtonText('保存')
-                .setCta()
-                .onClick(async () => {
-                    if (this.saved) {
-                       await this.plugin.saveSettings();
-                       new Notice('Prompt 已保存!');
+        // 标题和模式切换按钮
+        const headerContainer = contentEl.createDiv({ cls: 'prompt-modal-header' });
+        headerContainer.createEl('h2', { text: this.title });
+
+        const modeToggle = headerContainer.createEl('button', {
+            text: '预览模式',
+            cls: 'prompt-mode-toggle'
+        });
+
+        // 内容容器
+        this.contentContainer = contentEl.createDiv({ cls: 'prompt-content-container' });
+
+        // 创建编辑区域
+        this.createEditArea();
+
+        // 创建预览区域（初始隐藏）
+        this.createPreviewArea();
+
+        // 模式切换逻辑
+        modeToggle.addEventListener('click', () => {
+            this.isPreviewMode = !this.isPreviewMode;
+            if (this.isPreviewMode) {
+                modeToggle.textContent = '编辑模式';
+                this.showPreview();
+            } else {
+                modeToggle.textContent = '预览模式';
+                this.showEdit();
+            }
+        });
+
+        // 底部按钮
+        const buttonContainer = contentEl.createDiv({ cls: 'prompt-modal-buttons' });
+
+        const saveBtn = buttonContainer.createEl('button', {
+            text: '保存',
+            cls: 'mod-cta'
+        });
+        saveBtn.addEventListener('click', async () => {
+            if (this.saved) {
+                await this.plugin.saveSettings();
+                new Notice('Prompt 已保存!');
+            }
+            this.close();
+        });
+
+        const cancelBtn = buttonContainer.createEl('button', { text: '取消' });
+        cancelBtn.addEventListener('click', () => this.close());
+    }
+
+    createEditArea() {
+        this.editContainer = this.contentContainer.createDiv({ cls: 'prompt-edit-area' });
+
+        const setting = new Setting(this.editContainer);
+        setting.addTextArea(text => {
+            this.textArea = text;
+            text.setValue(this.plugin.settings[this.settingName])
+                .onChange(value => {
+                    this.plugin.settings[this.settingName] = value;
+                    this.saved = true;
+                    // 如果在预览模式，实时更新预览
+                    if (this.isPreviewMode) {
+                        this.updatePreview(value);
                     }
-                    this.close();
-                }));
+                });
+            text.inputEl.style.width = '100%';
+            text.inputEl.style.height = '400px';
+            text.inputEl.style.minHeight = '200px';
+            text.inputEl.style.fontFamily = 'var(--font-monospace)';
+            text.inputEl.style.fontSize = '14px';
+            text.inputEl.style.lineHeight = '1.5';
+        });
+    }
+
+    createPreviewArea() {
+        this.previewContainer = this.contentContainer.createDiv({
+            cls: 'prompt-preview-area'
+        });
+        this.previewContainer.style.display = 'none';
+
+        this.previewContent = this.previewContainer.createDiv({
+            cls: 'prompt-preview-content'
+        });
+    }
+
+    showPreview() {
+        this.editContainer.style.display = 'none';
+        this.previewContainer.style.display = 'block';
+        this.updatePreview(this.plugin.settings[this.settingName]);
+    }
+
+    showEdit() {
+        this.previewContainer.style.display = 'none';
+        this.editContainer.style.display = 'block';
+    }
+
+    updatePreview(content) {
+        // 使用Obsidian的MarkdownRenderer来渲染Markdown
+        this.previewContent.empty();
+
+        // 处理占位符，让它们在预览中更明显
+        const processedContent = content
+            .replace(/\{\{(\w+)\}\}/g, '<span class="prompt-placeholder">{{$1}}</span>')
+            .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+            .replace(/\*(.*?)\*/g, '<em>$1</em>')
+            .replace(/`(.*?)`/g, '<code>$1</code>')
+            .replace(/\n\n/g, '</p><p>')
+            .replace(/\n/g, '<br>');
+
+        this.previewContent.innerHTML = `<p>${processedContent}</p>`;
+
+        // 添加一些基本的样式处理
+        this.previewContent.querySelectorAll('.prompt-placeholder').forEach(el => {
+            el.style.backgroundColor = 'var(--interactive-accent)';
+            el.style.color = 'var(--text-on-accent)';
+            el.style.padding = '2px 6px';
+            el.style.borderRadius = '4px';
+            el.style.fontFamily = 'var(--font-monospace)';
+            el.style.fontSize = '0.9em';
+        });
     }
 }
 
@@ -3496,8 +3624,7 @@ class BatchProcessingModal extends Modal {
     }
 
     showFileSelector() {
-        const files = this.app.vault.getMarkdownFiles();
-        const modal = new FileSelectionModal(this.app, files, (selectedFiles) => {
+        const modal = new SimpleFileSelectionModal(this.app, (selectedFiles) => {
             this.onChoose('files', selectedFiles);
         });
         modal.open();
@@ -3512,6 +3639,348 @@ class BatchProcessingModal extends Modal {
             this.onChoose('folder', selectedFolder);
         });
         modal.open();
+    }
+
+    onClose() {
+        const { contentEl } = this;
+        contentEl.empty();
+    }
+}
+
+// 简洁的文件选择模态框 - 使用Obsidian原生样式
+class SimpleFileSelectionModal extends Modal {
+    constructor(app, onChoose) {
+        super(app);
+        this.onChoose = onChoose;
+        this.selectedFiles = new Set();
+        this.allFiles = this.app.vault.getMarkdownFiles();
+
+        // 获取当前文件所在文件夹
+        const activeFile = this.app.workspace.getActiveFile();
+        this.currentFolder = activeFile?.parent;
+
+        // 按文件夹分组
+        this.filesByFolder = new Map();
+        this.allFiles.forEach(file => {
+            const folderPath = file.parent?.path || '/';
+            if (!this.filesByFolder.has(folderPath)) {
+                this.filesByFolder.set(folderPath, []);
+            }
+            this.filesByFolder.get(folderPath).push(file);
+        });
+    }
+
+    onOpen() {
+        const { contentEl } = this;
+        contentEl.createEl("h2", { text: "选择要批量处理的文件" });
+
+        // 当前文件夹优先显示
+        if (this.currentFolder) {
+            this.renderFolderSection(contentEl, this.currentFolder.path || '/', '📁 当前文件夹', true);
+        }
+
+        // 其他文件夹
+        const otherFolders = Array.from(this.filesByFolder.keys())
+            .filter(path => path !== (this.currentFolder?.path || '/'))
+            .sort();
+
+        if (otherFolders.length > 0) {
+            const otherSection = contentEl.createDiv({ cls: "ai-assistant-other-folders-section" });
+            otherSection.createEl("h3", { text: "其他文件夹" });
+
+            // 搜索框
+            const searchContainer = otherSection.createDiv({ cls: "ai-assistant-search-container" });
+            const searchInput = searchContainer.createEl("input", {
+                type: "text",
+                placeholder: "搜索文件夹或文件...",
+                cls: "ai-assistant-search-input"
+            });
+
+            const foldersContainer = otherSection.createDiv({ cls: "ai-assistant-folders-container" });
+
+            // 初始显示所有文件夹
+            this.renderOtherFolders(foldersContainer, otherFolders);
+
+            // 搜索功能
+            searchInput.addEventListener('input', (e) => {
+                const searchTerm = e.target.value.toLowerCase().trim();
+                if (searchTerm === '') {
+                    this.renderOtherFolders(foldersContainer, otherFolders);
+                } else {
+                    this.searchAndRender(foldersContainer, searchTerm);
+                }
+            });
+        }
+
+        // 底部信息和按钮
+        this.renderBottom(contentEl);
+    }
+
+    renderFolderSection(container, folderPath, title, isExpanded = false) {
+        const files = this.filesByFolder.get(folderPath) || [];
+        if (files.length === 0) return;
+
+        const section = container.createDiv({ cls: "ai-assistant-folder-section" });
+
+        const header = section.createDiv({ cls: "ai-assistant-folder-header" });
+
+        // 创建标题和文件数量
+        const titleContainer = header.createDiv({ cls: "ai-assistant-folder-title-container" });
+        titleContainer.innerHTML = `
+            <span class="ai-assistant-folder-title">${title}</span>
+            <span class="ai-assistant-file-count">${files.length} 个文件</span>
+        `;
+
+        // 创建全选复选框
+        const selectAllCheckbox = header.createEl("input", {
+            type: "checkbox",
+            cls: "ai-assistant-folder-select-all-checkbox"
+        });
+
+        selectAllCheckbox.addEventListener('change', (e) => {
+            e.stopPropagation(); // 防止触发文件夹展开/收起
+            if (selectAllCheckbox.checked) {
+                files.forEach(file => this.selectedFiles.add(file));
+            } else {
+                files.forEach(file => this.selectedFiles.delete(file));
+            }
+            this.updateCheckboxes();
+        });
+
+        const fileList = section.createDiv({ cls: "ai-assistant-file-list" });
+        if (isExpanded) {
+            fileList.style.display = 'block';
+        }
+
+        files.forEach(file => {
+            const fileItem = fileList.createDiv({ cls: "ai-assistant-file-item" });
+
+            const checkbox = fileItem.createEl("input", { type: "checkbox" });
+            checkbox.addEventListener('change', () => {
+                if (checkbox.checked) {
+                    this.selectedFiles.add(file);
+                } else {
+                    this.selectedFiles.delete(file);
+                }
+                this.updateSelectedCount();
+                this.updateFolderSelectAllState(section, files);
+            });
+
+            const fileInfo = fileItem.createDiv({ cls: "ai-assistant-file-info" });
+
+            const label = fileInfo.createEl("label", { text: file.basename });
+            label.addEventListener('click', () => {
+                checkbox.checked = !checkbox.checked;
+                checkbox.dispatchEvent(new Event('change'));
+            });
+
+            const path = fileInfo.createEl("div", {
+                text: file.path,
+                cls: "ai-assistant-file-path"
+            });
+        });
+
+        // 点击标题容器展开/收起（不包括复选框）
+        titleContainer.addEventListener('click', () => {
+            const isVisible = fileList.style.display !== 'none';
+            fileList.style.display = isVisible ? 'none' : 'block';
+            header.classList.toggle('expanded', !isVisible);
+        });
+
+        if (isExpanded) {
+            header.classList.add('expanded');
+        }
+
+        // 初始化全选复选框状态
+        this.updateFolderSelectAllState(section, files);
+    }
+
+    renderOtherFolders(container, folderPaths) {
+        container.empty();
+        folderPaths.forEach(folderPath => {
+            const displayName = folderPath === '/' ? '📁 根目录' : `📁 ${folderPath}`;
+            this.renderFolderSection(container, folderPath, displayName);
+        });
+    }
+
+    searchAndRender(container, searchTerm) {
+        container.empty();
+
+        let hasResults = false;
+        this.filesByFolder.forEach((files, folderPath) => {
+            const matchingFiles = files.filter(file =>
+                file.basename.toLowerCase().includes(searchTerm) ||
+                file.path.toLowerCase().includes(searchTerm)
+            );
+
+            if (matchingFiles.length > 0) {
+                hasResults = true;
+                const section = container.createDiv({ cls: "ai-assistant-folder-section" });
+
+                const header = section.createDiv({ cls: "ai-assistant-folder-header expanded" });
+
+                // 创建标题和文件数量
+                const titleContainer = header.createDiv({ cls: "ai-assistant-folder-title-container" });
+                const displayName = folderPath === '/' ? '📁 根目录' : `📁 ${folderPath}`;
+                titleContainer.innerHTML = `
+                    <span class="ai-assistant-folder-title">${displayName}</span>
+                    <span class="ai-assistant-file-count">${matchingFiles.length} 个匹配文件</span>
+                `;
+
+                // 创建全选复选框
+                const selectAllCheckbox = header.createEl("input", {
+                    type: "checkbox",
+                    cls: "ai-assistant-folder-select-all-checkbox"
+                });
+
+                selectAllCheckbox.addEventListener('change', (e) => {
+                    e.stopPropagation();
+                    if (selectAllCheckbox.checked) {
+                        matchingFiles.forEach(file => this.selectedFiles.add(file));
+                    } else {
+                        matchingFiles.forEach(file => this.selectedFiles.delete(file));
+                    }
+                    this.updateCheckboxes();
+                });
+
+                const fileList = section.createDiv({ cls: "ai-assistant-file-list" });
+                fileList.style.display = 'block';
+
+                matchingFiles.forEach(file => {
+                    const fileItem = fileList.createDiv({ cls: "ai-assistant-file-item" });
+
+                    const checkbox = fileItem.createEl("input", { type: "checkbox" });
+                    checkbox.addEventListener('change', () => {
+                        if (checkbox.checked) {
+                            this.selectedFiles.add(file);
+                        } else {
+                            this.selectedFiles.delete(file);
+                        }
+                        this.updateSelectedCount();
+                        this.updateFolderSelectAllState(section, matchingFiles);
+                    });
+
+                    const fileInfo = fileItem.createDiv({ cls: "ai-assistant-file-info" });
+
+                    const label = fileInfo.createEl("label", { text: file.basename });
+                    label.addEventListener('click', () => {
+                        checkbox.checked = !checkbox.checked;
+                        checkbox.dispatchEvent(new Event('change'));
+                    });
+
+                    const path = fileInfo.createEl("div", {
+                        text: file.path,
+                        cls: "ai-assistant-file-path"
+                    });
+                });
+
+                // 初始化全选复选框状态
+                this.updateFolderSelectAllState(section, matchingFiles);
+            }
+        });
+
+        if (!hasResults) {
+            const noResults = container.createDiv({ cls: "ai-assistant-no-results" });
+            noResults.innerHTML = `
+                <div class="ai-assistant-no-results-icon">🔍</div>
+                <div class="ai-assistant-no-results-text">没有找到匹配的文件</div>
+            `;
+        }
+    }
+
+    renderBottom(container) {
+        // 选中计数
+        this.selectedCountEl = container.createDiv({ cls: "ai-assistant-selected-count" });
+        this.updateSelectedCount();
+
+        // 按钮
+        const buttonContainer = container.createDiv({ cls: "modal-button-container" });
+
+        const confirmBtn = buttonContainer.createEl("button", {
+            text: "开始批量处理",
+            cls: "mod-cta"
+        });
+        confirmBtn.addEventListener('click', () => {
+            if (this.selectedFiles.size > 0) {
+                this.onChoose(Array.from(this.selectedFiles));
+                this.close();
+            } else {
+                new Notice("请至少选择一个文件");
+            }
+        });
+
+        const cancelBtn = buttonContainer.createEl("button", { text: "取消" });
+        cancelBtn.addEventListener('click', () => this.close());
+    }
+
+    updateSelectedCount() {
+        if (this.selectedCountEl) {
+            this.selectedCountEl.textContent = `已选择 ${this.selectedFiles.size} 个文件`;
+        }
+    }
+
+    updateCheckboxes() {
+        // 更新文件复选框
+        const fileCheckboxes = this.contentEl.querySelectorAll('.ai-assistant-file-item input[type="checkbox"]');
+        fileCheckboxes.forEach((checkbox) => {
+            const fileItem = checkbox.closest('.ai-assistant-file-item');
+            if (fileItem) {
+                const label = fileItem.querySelector('label');
+                if (label) {
+                    const fileName = label.textContent;
+                    const file = this.allFiles.find(f => f.basename === fileName);
+                    if (file) {
+                        checkbox.checked = this.selectedFiles.has(file);
+                    }
+                }
+            }
+        });
+
+        // 更新所有文件夹的全选复选框状态
+        const folderSections = this.contentEl.querySelectorAll('.ai-assistant-folder-section');
+        folderSections.forEach(section => {
+            const folderSelectAllCheckbox = section.querySelector('.ai-assistant-folder-select-all-checkbox');
+            if (folderSelectAllCheckbox) {
+                const titleElement = section.querySelector('.ai-assistant-folder-title');
+                if (titleElement) {
+                    const folderTitle = titleElement.textContent;
+                    // 根据标题找到对应的文件夹路径
+                    let folderPath = '/';
+                    if (folderTitle.includes('当前文件夹')) {
+                        folderPath = this.currentFolder?.path || '/';
+                    } else {
+                        // 从标题中提取文件夹路径
+                        const pathMatch = folderTitle.match(/📁\s*(.+)/);
+                        if (pathMatch) {
+                            folderPath = pathMatch[1] === '根目录' ? '/' : pathMatch[1];
+                        }
+                    }
+
+                    const files = this.filesByFolder.get(folderPath) || [];
+                    this.updateFolderSelectAllState(section, files);
+                }
+            }
+        });
+
+        this.updateSelectedCount();
+    }
+
+    updateFolderSelectAllState(section, files) {
+        const folderSelectAllCheckbox = section.querySelector('.ai-assistant-folder-select-all-checkbox');
+        if (!folderSelectAllCheckbox || files.length === 0) return;
+
+        const selectedFilesInFolder = files.filter(file => this.selectedFiles.has(file));
+
+        if (selectedFilesInFolder.length === 0) {
+            folderSelectAllCheckbox.checked = false;
+            folderSelectAllCheckbox.indeterminate = false;
+        } else if (selectedFilesInFolder.length === files.length) {
+            folderSelectAllCheckbox.checked = true;
+            folderSelectAllCheckbox.indeterminate = false;
+        } else {
+            folderSelectAllCheckbox.checked = false;
+            folderSelectAllCheckbox.indeterminate = true;
+        }
     }
 
     onClose() {
@@ -3551,11 +4020,11 @@ class FileSelectionModal extends Modal {
         });
 
         // 文件列表
-        const fileList = contentEl.createDiv({ cls: "file-list" });
+        const fileList = contentEl.createDiv({ cls: "ai-assistant-modal-file-list" });
         this.fileList = fileList;
 
         this.files.forEach(file => {
-            const fileItem = fileList.createDiv({ cls: "file-item" });
+            const fileItem = fileList.createDiv({ cls: "ai-assistant-modal-file-item" });
 
             const checkbox = fileItem.createEl("input", { type: "checkbox" });
             checkbox.addEventListener('change', () => {

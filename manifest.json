@@ -1,7 +1,7 @@
 {
   "id": "ai-assistant-suite",
   "name": "AI Assistant Suite",
-  "version": "1.2.3",
+  "version": "1.3.6",
   "minAppVersion": "1.2.0",
   "description": "A comprehensive AI-powered suite for note processing with caching, batch processing, and enhanced performance features. (一个全面的AI驱动的笔记处理套件，具有缓存、批量处理和增强性能功能。)",
   "author": "Roronoa Zoro",
