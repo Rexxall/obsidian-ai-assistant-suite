@@ -15,10 +15,26 @@
     display: flex;
     flex-direction: column;
     transition: all 0.2s ease-in-out;
+    position: relative;
 }
 
 .ai-assistant-card:hover {
     border-color: var(--interactive-accent);
+}
+
+.ai-assistant-card-close {
+    background: transparent;
+    border: none;
+    color: var(--text-muted);
+    font-size: 18px;
+    cursor: pointer;
+    padding: 0 4px;
+    line-height: 1;
+}
+
+.ai-assistant-card-close:hover {
+    color: var(--text-normal);
+    transform: scale(1.1);
 }
 
 /* Card Content for Mover */
@@ -1063,6 +1079,55 @@
     font-family: var(--font-monospace);
 }
 
+.stat-subtitle {
+    font-size: var(--font-ui-small);
+    color: var(--text-muted);
+    font-weight: 600;
+    margin-bottom: 6px;
+}
+
+.usage-chart {
+    margin-top: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.usage-chart-row {
+    display: grid;
+    grid-template-columns: 120px 1fr 40px;
+    align-items: center;
+    gap: 8px;
+}
+
+.usage-chart-label {
+    font-size: var(--font-ui-small);
+    color: var(--text-normal);
+    font-weight: 500;
+}
+
+.usage-chart-bar {
+    background: var(--background-modifier-border);
+    border-radius: 999px;
+    overflow: hidden;
+    height: 10px;
+    position: relative;
+}
+
+.usage-chart-bar-fill {
+    background: linear-gradient(90deg, var(--interactive-accent), var(--interactive-accent-hover));
+    height: 100%;
+    border-radius: 999px;
+    transition: width 0.3s ease;
+}
+
+.usage-chart-count {
+    font-size: var(--font-ui-small);
+    color: var(--text-normal);
+    font-family: var(--font-monospace);
+    text-align: right;
+}
+
 /* 改进快速操作按钮在小屏幕上的显示 */
 @media (max-width: 400px) {
     .ai-assistant-action-grid {
@@ -1353,4 +1418,335 @@
 
 .prompt-modal-buttons button.mod-cta:hover {
     background: var(--interactive-accent-hover);
+}
+
+/* 高级文件选择器样式 - 紧凑版 */
+.ai-assistant-advanced-file-selector-compact {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    min-height: 400px;
+    max-height: 80vh;
+}
+
+/* 筛选栏样式 */
+.ai-assistant-filter-bar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 14px;
+    background-color: var(--background-secondary);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 8px;
+    flex-wrap: wrap;
+}
+
+.ai-assistant-filter-type-select {
+    min-width: 120px;
+    padding: 6px 10px;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 4px;
+    background-color: var(--background-primary);
+    color: var(--text-normal);
+    font-size: 13px;
+    cursor: pointer;
+}
+
+.ai-assistant-filter-type-select:focus {
+    outline: none;
+    border-color: var(--interactive-accent);
+    box-shadow: 0 0 0 2px var(--interactive-accent-alpha);
+}
+
+.ai-assistant-filter-value-container {
+    flex: 1;
+    min-width: 180px;
+    position: relative;
+    display: flex;
+    flex-direction: column;
+}
+
+.ai-assistant-filter-value-input {
+    width: 100%;
+    padding: 6px 10px;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 4px;
+    background-color: var(--background-primary);
+    color: var(--text-normal);
+    font-size: 13px;
+    transition: border-color 0.2s ease;
+}
+
+.ai-assistant-filter-dropdown-container {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    z-index: 1000;
+    margin-top: 2px;
+    background-color: var(--background-primary);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 4px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.ai-assistant-filter-dropdown {
+    width: 100%;
+    border: none;
+    background-color: transparent;
+    color: var(--text-normal);
+    font-size: 13px;
+    cursor: pointer;
+    max-height: 300px;
+    min-height: 200px;
+    overflow-y: auto;
+}
+
+.ai-assistant-filter-dropdown option {
+    padding: 6px 10px;
+    background-color: var(--background-primary);
+    color: var(--text-normal);
+    font-size: 13px;
+    line-height: 1.4;
+}
+
+.ai-assistant-filter-dropdown option:hover {
+    background-color: var(--background-modifier-hover);
+}
+
+.ai-assistant-filter-dropdown:focus {
+    outline: none;
+    border-color: var(--interactive-accent);
+    box-shadow: 0 0 0 2px var(--interactive-accent-alpha);
+}
+
+.ai-assistant-filter-value-input:focus {
+    outline: none;
+    border-color: var(--interactive-accent);
+    box-shadow: 0 0 0 2px var(--interactive-accent-alpha);
+}
+
+.ai-assistant-clear-filter-btn {
+    padding: 6px 12px;
+    background-color: var(--background-modifier-border);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 4px;
+    color: var(--text-normal);
+    font-size: 13px;
+    cursor: pointer;
+    transition: background-color 0.2s ease;
+    white-space: nowrap;
+}
+
+.ai-assistant-clear-filter-btn:hover {
+    background-color: var(--background-modifier-hover);
+}
+
+/* 快速筛选按钮组 */
+.ai-assistant-quick-filters {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+    margin-top: 6px;
+    width: 100%;
+}
+
+.ai-assistant-quick-filter-btn {
+    padding: 5px 10px;
+    background-color: var(--background-primary);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 4px;
+    color: var(--text-normal);
+    font-size: 11px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    white-space: nowrap;
+}
+
+.ai-assistant-quick-filter-btn:hover {
+    background-color: var(--background-modifier-hover);
+    border-color: var(--interactive-accent);
+}
+
+.ai-assistant-quick-filter-btn.active {
+    background-color: var(--interactive-accent);
+    color: white;
+    border-color: var(--interactive-accent);
+}
+
+.ai-assistant-file-panel {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    background-color: var(--background-primary);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 8px;
+    overflow: hidden;
+    min-height: 300px;
+    max-height: 60vh;
+}
+
+.ai-assistant-file-stats {
+    padding: 12px 16px;
+    background-color: var(--background-secondary);
+    border-bottom: 1px solid var(--background-modifier-border);
+    font-size: 14px;
+    color: var(--text-muted);
+}
+
+.ai-assistant-select-all-container {
+    padding: 12px 16px;
+    background-color: var(--background-secondary);
+    border-bottom: 1px solid var(--background-modifier-border);
+    display: flex;
+    gap: 8px;
+}
+
+.ai-assistant-select-all-container button {
+    padding: 6px 12px;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 4px;
+    background-color: var(--background-primary);
+    color: var(--text-normal);
+    font-size: 12px;
+    cursor: pointer;
+    transition: background-color 0.2s ease;
+}
+
+.ai-assistant-select-all-container button:hover {
+    background-color: var(--background-modifier-hover);
+}
+
+.ai-assistant-file-list-container {
+    flex: 1;
+    overflow-y: auto;
+    padding: 8px;
+}
+
+.ai-assistant-no-files-message {
+    text-align: center;
+    color: var(--text-muted);
+    font-style: italic;
+    padding: 40px 20px;
+}
+
+.ai-assistant-folder-section {
+    margin-bottom: 16px;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 6px;
+    overflow: hidden;
+}
+
+.ai-assistant-folder-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 16px;
+    background-color: var(--background-secondary);
+    border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.ai-assistant-folder-name {
+    font-weight: 500;
+    color: var(--text-normal);
+    font-size: 14px;
+}
+
+.ai-assistant-folder-count {
+    font-size: 12px;
+    color: var(--text-muted);
+}
+
+.ai-assistant-folder-select-all {
+    margin-left: 8px;
+}
+
+.ai-assistant-file-list {
+    background-color: var(--background-primary);
+}
+
+.ai-assistant-file-item {
+    display: flex;
+    align-items: center;
+    padding: 8px 16px;
+    border-bottom: 1px solid var(--background-modifier-border);
+    transition: background-color 0.2s ease;
+}
+
+.ai-assistant-file-item:last-child {
+    border-bottom: none;
+}
+
+.ai-assistant-file-item:hover {
+    background-color: var(--background-modifier-hover);
+}
+
+.ai-assistant-file-item input[type="checkbox"] {
+    margin-right: 12px;
+}
+
+.ai-assistant-file-info {
+    flex: 1;
+}
+
+.ai-assistant-file-name {
+    font-weight: 500;
+    color: var(--text-normal);
+    font-size: 14px;
+    margin-bottom: 2px;
+}
+
+.ai-assistant-file-meta {
+    display: flex;
+    gap: 12px;
+    font-size: 12px;
+    color: var(--text-muted);
+}
+
+.ai-assistant-file-size,
+.ai-assistant-file-date {
+    font-size: 12px;
+}
+
+.ai-assistant-bottom-actions {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 16px;
+    background-color: var(--background-secondary);
+    border-top: 1px solid var(--background-modifier-border);
+}
+
+.ai-assistant-selected-count {
+    font-size: 14px;
+    color: var(--text-muted);
+}
+
+.ai-assistant-bottom-actions button {
+    padding: 8px 16px;
+    border-radius: 4px;
+    font-size: 14px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.ai-assistant-bottom-actions .mod-cta {
+    background-color: var(--interactive-accent);
+    color: white;
+    border: none;
+}
+
+.ai-assistant-bottom-actions .mod-cta:hover {
+    background-color: var(--interactive-accent-hover);
+}
+
+.ai-assistant-bottom-actions .mod-cancel {
+    background-color: var(--background-primary);
+    color: var(--text-normal);
+    border: 1px solid var(--background-modifier-border);
+    margin-left: 8px;
+}
+
+.ai-assistant-bottom-actions .mod-cancel:hover {
+    background-color: var(--background-modifier-hover);
 }

@@ -115,6 +115,54 @@ const META_DEFAULT_PROMPT = `你是一个内容分析和总结专家。请基于
 const TRANSLATION_DEFAULT_PROMPT = `请将以下英文短语分别翻译成极其简洁且高度切题的 {{target_language}} 标签（最好是2-4个字）。每个翻译占一行，并与输入短语的顺序严格对应。请直接输出翻译结果，不要添加任何其他文字：
 {{phrases_to_translate}}`;
 
+const FURIGANA_DEFAULT_PROMPT = `你是一位专业的日文假名标注专家。你的任务是为文本中的日文汉字添加假名注音（振り仮名/ルビ）。
+
+**核心指令：**
+
+1. **识别日文汉字**：找出文本中所有的日文汉字（包括汉字、汉字与假名的混合词）。
+2. **添加假名注音**：为每个日文汉字词添加正确的假名注音。根据上下文确定正确的读音。
+3. **格式规则（重要）**：
+   - **代码块外的日文**：使用HTML的\`<ruby>\`标签，格式为：
+     \`<ruby>漢字<rt>かんじ</rt></ruby>\`
+     对于多个汉字组成的词：\`<ruby>日本語<rt>にほんご</rt></ruby>\`
+   
+   - **代码块内的日文**（包括inline code和code block）：
+     - 使用括号格式：\`漢字(かんじ)\` 或 \`漢字【かんじ】\`
+     - 对于多个汉字：\`日本語(にほんご)\` 或 \`日本語【にほんご】\`
+     - 优先使用圆括号格式：\`漢字(かんじ)\`
+     - 只为纯日文字串添加注音，保持变量名中的英文、符号、空格完全不变
+     - 如果无法 100% 确认读音或无法判断是否为日文，请保持原样
+   
+4. **识别代码块**：
+   - 被单个反引号（\`）包裹的是 inline code
+   - 被三个反引号（\`\`\`）包裹的是 code block
+   - 代码块内的日文必须使用括号格式，不要使用HTML标签
+5. **保留其他内容**：
+   - 保留所有非日文内容（中文、英文、数字等）不变
+   - 保留所有Markdown语法（链接、图片等）不变
+   - 保留所有格式和结构不变
+6. **只标注汉字**：已经只有假名的词（如"です"、"ます"）不需要标注。
+7. **直接输出结果**：你的输出必须且只能是添加了假名注音后的完整文本，不要包含任何额外的说明或对话。
+
+**示例：**
+*输入：*
+\`\`\`
+私は\`コード内の日本語\`を勉強しています。
+\`\`\`
+*输出：*
+\`\`\`
+<ruby>私<rt>わたし</rt></ruby>は\`コード内(コードない)の日本語(にほんご)\`を<ruby>勉強<rt>べんきょう</rt></ruby>しています。
+\`\`\`
+
+注意：
+- 代码块外的"私"和"勉強"使用\`<ruby>\`标签
+- 代码块内的"コード内"和"日本語"使用括号格式\`コード内(コードない)\`和\`日本語(にほんご)\`
+
+**需要添加假名注音的文本如下：**
+
+---
+{{content}}
+---`;
 
 const DEFAULT_SETTINGS = {
   // General API Settings
@@ -141,14 +189,21 @@ const DEFAULT_SETTINGS = {
   // Processing History (persistent storage)
   processingHistory: [],
   translationPrompt: TRANSLATION_DEFAULT_PROMPT,
+  totalProcessedCount: 0,
+  actionUsageCounts: {},
+  dailyProcessedCounts: {},
 
   // Meta Settings
   metaFileNameMaxLength: 100,
   metaPrompt: META_DEFAULT_PROMPT,
 
+  // Furigana Settings
+  furiganaPrompt: FURIGANA_DEFAULT_PROMPT,
+
   // One-Click Process Settings
   oneClickProcessActions: {
       structurizer: true,
+      furigana: false,
       meta: true,
       tagger: true,
       mover: true,
@@ -242,7 +297,8 @@ class AssistantView extends ItemView {
         buttonGroup.style.marginBottom = '1em';
 
         const actions = [
-            { name: '优化结构', key: 'structurizer' },
+            { name: '结构', key: 'structurizer' },
+            { name: '假名', key: 'furigana' },
             { name: '元数据', key: 'meta' },
             { name: '标签', key: 'tagger' },
             { name: '移动', key: 'mover' }
@@ -266,7 +322,7 @@ class AssistantView extends ItemView {
         });
 
         const runButton = buttonGroup.createEl('button');
-        runButton.setText('🚀 运行');
+        runButton.setText('🚀');
         runButton.setAttribute('title', '对当前笔记执行已选的一键处理流程');
         runButton.addEventListener('click', () => {
             this.plugin.runOneClickSmartProcess();
@@ -330,14 +386,28 @@ class AssistantView extends ItemView {
         header.style.alignItems = 'center';
         
         // Add title to header
-        header.createEl("h3", { text: task.title });
+        header.createEl("h3", { text: task.title || 'AI 处理结果' });
+
+        const headerActions = header.createDiv();
+        headerActions.style.display = 'flex';
+        headerActions.style.gap = '6px';
+        headerActions.style.alignItems = 'center';
         
         // Add navigation button to header if file exists
         if (task.content && task.content.file) {
-            const navButton = header.createEl("button", { text: "定位笔记" });
+            const navButton = headerActions.createEl("button", { text: "定位笔记" });
             navButton.addEventListener("click", () => {
                 this.plugin.app.workspace.getLeaf().openFile(task.content.file);
             });
+        }
+
+        if (task.status !== 'loading' && task.canClose !== false) {
+            const closeButton = headerActions.createEl("button", {
+                cls: "ai-assistant-card-close",
+                text: "×"
+            });
+            closeButton.setAttr("aria-label", "关闭卡片");
+            closeButton.addEventListener("click", () => this.removeTask(task.id));
         }
 
         if (task.status === 'loading') {
@@ -1356,6 +1426,7 @@ class AssistantView extends ItemView {
         try {
             // 优先从插件数据文件读取
             if (this.plugin.settings.processingHistory) {
+                this.plugin.initializeUsageStatsFromHistory?.(this.plugin.settings.processingHistory);
                 return this.plugin.settings.processingHistory;
             }
 
@@ -1366,6 +1437,7 @@ class AssistantView extends ItemView {
                 // 迁移到插件设置
                 this.plugin.settings.processingHistory = parsedHistory;
                 this.plugin.saveSettings();
+                this.plugin.initializeUsageStatsFromHistory?.(parsedHistory);
                 // 清理localStorage中的旧数据
                 localStorage.removeItem('ai-assistant-history');
                 return parsedHistory;
@@ -1408,6 +1480,33 @@ class AssistantView extends ItemView {
 
         // 保存到插件设置中，确保数据持久化
         this.plugin.settings.processingHistory = limited;
+
+        // 累计全局使用统计
+        if (typeof this.plugin.settings.totalProcessedCount !== 'number') {
+            this.plugin.settings.totalProcessedCount = 0;
+        }
+        this.plugin.settings.totalProcessedCount += 1;
+
+        if (!this.plugin.settings.actionUsageCounts) {
+            this.plugin.settings.actionUsageCounts = {};
+        }
+        const normalizedAction = this.plugin.normalizeActionName
+            ? this.plugin.normalizeActionName(action)
+            : action;
+        this.plugin.settings.actionUsageCounts[normalizedAction] =
+            (this.plugin.settings.actionUsageCounts[normalizedAction] || 0) + 1;
+
+        if (!this.plugin.settings.dailyProcessedCounts) {
+            this.plugin.settings.dailyProcessedCounts = {};
+        }
+        const todayKey = new Date().toISOString().split('T')[0];
+        this.plugin.settings.dailyProcessedCounts[todayKey] =
+            (this.plugin.settings.dailyProcessedCounts[todayKey] || 0) + 1;
+
+        if (this.plugin.pruneDailyProcessedCounts) {
+            this.plugin.pruneDailyProcessedCounts();
+        }
+
         this.plugin.saveSettings();
     }
 
@@ -1467,35 +1566,24 @@ class AssistantView extends ItemView {
 
         const statsGrid = section.createDiv({ cls: "ai-assistant-stats-grid" });
 
-        // 标准化action名称的映射
-        const actionMapping = {
-            "重命名+元数据": "重命名+元数据",
-            "更新元数据": "重命名+元数据",
-            "结构优化": "优化结构",
-            "添加标签": "标签",
-            "移动": "移动"
-        };
+        const persistentCounts = this.plugin.settings.actionUsageCounts || {};
+        let actionCounts = { ...persistentCounts };
 
-        // 统计各种操作的次数，使用标准化的action名称
-        const actionCounts = {};
-        history.forEach(item => {
-            // 标准化action名称
-            let normalizedAction = item.action;
-
-            // 处理包含数字的标签操作
-            if (item.action.includes("标签")) {
-                normalizedAction = "标签";
-            } else if (actionMapping[item.action]) {
-                normalizedAction = actionMapping[item.action];
-            }
-
-            actionCounts[normalizedAction] = (actionCounts[normalizedAction] || 0) + 1;
-        });
+        // 如果还没有持久化数据，使用最近历史作为回退
+        if (Object.keys(actionCounts).length === 0) {
+            history.forEach(item => {
+                const normalizedAction = this.plugin.normalizeActionName
+                    ? this.plugin.normalizeActionName(item.action)
+                    : item.action;
+                actionCounts[normalizedAction] = (actionCounts[normalizedAction] || 0) + 1;
+            });
+        }
 
         // 总处理次数
+        const totalCount = this.plugin.settings.totalProcessedCount || history.length;
         const totalStat = statsGrid.createDiv({ cls: "stat-item" });
         totalStat.createEl("span", { text: "总处理次数:", cls: "stat-label" });
-        totalStat.createEl("span", { text: history.length.toString(), cls: "stat-value" });
+        totalStat.createEl("span", { text: totalCount.toString(), cls: "stat-value" });
 
         // 最常用功能
         const mostUsed = Object.entries(actionCounts)
@@ -1511,14 +1599,39 @@ class AssistantView extends ItemView {
         }
 
         // 今日处理次数
-        const today = new Date().toDateString();
-        const todayCount = history.filter(item =>
-            new Date(item.timestamp).toDateString() === today
-        ).length;
+        const todayKey = new Date().toISOString().split('T')[0];
+        const todayCount = this.plugin.settings.dailyProcessedCounts?.[todayKey] ??
+            history.filter(item =>
+                new Date(item.timestamp).toISOString().split('T')[0] === todayKey
+            ).length;
 
         const todayStat = statsGrid.createDiv({ cls: "stat-item" });
         todayStat.createEl("span", { text: "今日处理:", cls: "stat-label" });
         todayStat.createEl("span", { text: todayCount.toString(), cls: "stat-value" });
+
+        if (Object.keys(actionCounts).length > 0) {
+            const chartTitle = section.createEl("h4", { text: "各功能累计次数", cls: "stat-subtitle" });
+            chartTitle.style.marginTop = "12px";
+
+            const chartContainer = section.createDiv({ cls: "usage-chart" });
+            const sortedActions = Object.entries(actionCounts)
+                .sort(([,a], [,b]) => b - a);
+            const maxCount = sortedActions[0]?.[1] || 1;
+
+            sortedActions.forEach(([action, count]) => {
+                const row = chartContainer.createDiv({ cls: "usage-chart-row" });
+                const label = row.createDiv({ cls: "usage-chart-label" });
+                label.setText(`${action}`);
+
+                const barWrapper = row.createDiv({ cls: "usage-chart-bar" });
+                const barFill = barWrapper.createDiv({ cls: "usage-chart-bar-fill" });
+                barFill.style.width = `${Math.max((count / maxCount) * 100, 5)}%`;
+                barFill.setAttr('aria-label', `${action}: ${count}`);
+
+                const countLabel = row.createDiv({ cls: "usage-chart-count" });
+                countLabel.setText(`${count}`);
+            });
+        }
 
 
     }
@@ -1755,6 +1868,74 @@ class AiAssistantSuite extends Plugin {
 
   debounceTimers = new Map(); // 添加防抖定时器
 
+  normalizeActionName(action) {
+    if (!action) return '其他';
+    if (action.includes('标签')) return '标签';
+    const mapping = {
+        '结构优化': '结构',
+        '优化结构': '结构',
+        '结构': '结构',
+        '重命名+元数据': '元数据',
+        '更新元数据': '元数据',
+        '元数据': '元数据',
+        '移动笔记': '移动',
+        '移动': '移动',
+        '智能移动': '移动',
+        '日文假名标注': '假名',
+        '假名标注': '假名',
+        '假名': '假名',
+        '一键智能处理': '一键处理'
+    };
+    return mapping[action] || action;
+  }
+
+  pruneDailyProcessedCounts(maxDays = 90) {
+    if (!this.settings.dailyProcessedCounts) return;
+    const keys = Object.keys(this.settings.dailyProcessedCounts).sort();
+    while (keys.length > maxDays) {
+        const key = keys.shift();
+        delete this.settings.dailyProcessedCounts[key];
+    }
+  }
+
+  initializeUsageStatsFromHistory(history) {
+    if (!Array.isArray(history) || history.length === 0) return;
+    let updated = false;
+
+    if (typeof this.settings.totalProcessedCount !== 'number' ||
+        this.settings.totalProcessedCount < history.length) {
+        this.settings.totalProcessedCount = history.length;
+        updated = true;
+    }
+
+    if (!this.settings.actionUsageCounts ||
+        Object.keys(this.settings.actionUsageCounts).length === 0) {
+        const counts = {};
+        history.forEach(item => {
+            const normalizedAction = this.normalizeActionName(item.action);
+            counts[normalizedAction] = (counts[normalizedAction] || 0) + 1;
+        });
+        this.settings.actionUsageCounts = counts;
+        updated = true;
+    }
+
+    if (!this.settings.dailyProcessedCounts ||
+        Object.keys(this.settings.dailyProcessedCounts).length === 0) {
+        const dailyCounts = {};
+        history.forEach(item => {
+            const dayKey = new Date(item.timestamp).toISOString().split('T')[0];
+            dailyCounts[dayKey] = (dailyCounts[dayKey] || 0) + 1;
+        });
+        this.settings.dailyProcessedCounts = dailyCounts;
+        this.pruneDailyProcessedCounts();
+        updated = true;
+    }
+
+    if (updated) {
+        this.saveSettings();
+    }
+  }
+
   async onload() {
     console.log('Loading AI Assistant Suite...');
     await this.loadSettings();
@@ -1815,6 +1996,15 @@ class AiAssistantSuite extends Plugin {
         name: 'Run AI Suite: Generate Metadata (生成元数据)',
         callback: () => {
             this.runAiMeta();
+        }
+    });
+
+    // --- Command 5: Furigana ---
+    this.addCommand({
+        id: 'run-ai-furigana',
+        name: 'Run AI Suite: Add Furigana to Japanese (日文假名标注)',
+        callback: () => {
+            this.runAiFurigana();
         }
     });
 
@@ -2108,10 +2298,10 @@ class AiAssistantSuite extends Plugin {
         });
 
         // 设置当前文件为活动文件
-        await this.app.workspace.getLeaf().openFile(file);
+        // await this.app.workspace.getLeaf().openFile(file); // 注释掉自动跳转功能
 
         // 运行一键处理
-        await this.runOneClickSmartProcess();
+        await this.runOneClickSmartProcess(file);
 
         processedCount++;
 
@@ -2180,7 +2370,7 @@ class AiAssistantSuite extends Plugin {
     });
   }
 
-  async runAiStructurizer(showCompletionCard = true) {
+  async runAiStructurizer(showCompletionCard = true, targetFile = null) {
     const app = this.app;
 
     if (!this.settings.apiKey || !this.settings.apiUrl) {
@@ -2188,7 +2378,7 @@ class AiAssistantSuite extends Plugin {
       return;
     }
     
-    const currentFile = app.workspace.getActiveFile();
+    const currentFile = targetFile || app.workspace.getActiveFile();
     if (!currentFile) {
       new Notice("没有活动的笔记文件。");
       return;
@@ -2280,6 +2470,125 @@ class AiAssistantSuite extends Plugin {
       progressNotice?.hide();
       new Notice(`处理失败: ${error.message}`, 0);
       console.error("AI Structurizer Error:", error);
+    }
+  }
+
+  async runAiFurigana(showCompletionCard = true, targetFile = null, showProgressNotice = true) {
+    const app = this.app;
+
+    if (!this.settings.apiKey || !this.settings.apiUrl) {
+      new Notice('请先在AI Assistant Suite插件设置中填写您的API Key和API URL。');
+      return;
+    }
+    
+    const currentFile = targetFile || app.workspace.getActiveFile();
+    if (!currentFile) {
+      new Notice("没有活动的笔记文件。");
+      return;
+    }
+
+    let contentToProcess = "";
+    const activeEditor = app.workspace.activeEditor?.editor;
+    let isSelection = false;
+    let originalFrontmatter = "";
+
+    if (!targetFile && activeEditor && activeEditor.getSelection()) {
+      contentToProcess = activeEditor.getSelection();
+      isSelection = true;
+    } else {
+      const fullFileContent = await app.vault.read(currentFile);
+      const fileCache = app.metadataCache.getFileCache(currentFile);
+      
+      let fmFoundByAPI = false;
+      if (fileCache && fileCache.frontmatter && fileCache.frontmatter.position && fileCache.frontmatter.position.end.offset) {
+        const fmEndOffset = fileCache.frontmatter.position.end.offset;
+        originalFrontmatter = fullFileContent.substring(0, fmEndOffset);
+        contentToProcess = fullFileContent.substring(fmEndOffset);
+        fmFoundByAPI = true;
+      }
+
+      if (!fmFoundByAPI && fullFileContent.trim().startsWith('---')) {
+          const match = fullFileContent.match(/^(---[\s\S]*?---\s*)/);
+          if (match) {
+              originalFrontmatter = match[1];
+              contentToProcess = fullFileContent.substring(originalFrontmatter.length);
+          } else {
+              contentToProcess = fullFileContent;
+          }
+      } else if (!fmFoundByAPI) {
+          contentToProcess = fullFileContent;
+      }
+    }
+
+    if (!contentToProcess || contentToProcess.trim() === "") {
+      new Notice("笔记或选中内容为空，无需处理。");
+      return;
+    }
+
+    let progressNotice = showProgressNotice ? new Notice("AI 正在为日文汉字添加假名注音...", 0) : null;
+    try {
+      const prompt = this.getFuriganaPrompt(contentToProcess);
+      
+      const response = await fetch(this.settings.apiUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Authorization": "Bearer " + this.settings.apiKey },
+        body: JSON.stringify({ model: this.settings.modelName, messages: [{ role: "user", content: prompt }] })
+      });
+
+      if (!response.ok) { throw new Error(`AI 请求失败: ${response.status} ${response.statusText}`); }
+      
+      const data = await response.json();
+      const newContent = data.choices[0]?.message?.content;
+      if (!newContent) { throw new Error("AI未能返回有效内容。"); }
+
+      // 清理可能的代码块标记
+      let cleanedContent = newContent.trim();
+      if (cleanedContent.startsWith('```')) {
+        const lines = cleanedContent.split('\n');
+        if (lines[0].match(/^```/)) {
+          lines.shift();
+        }
+        if (lines[lines.length - 1].match(/^```/)) {
+          lines.pop();
+        }
+        cleanedContent = lines.join('\n').trim();
+      }
+
+      // 修正 inline code 中错误的 ruby：强制改成 括号假名 形式
+      cleanedContent = this.convertRubyInInlineCode(cleanedContent);
+
+      if (isSelection) {
+        if(activeEditor) activeEditor.replaceSelection(cleanedContent);
+      } else {
+        const finalContent = originalFrontmatter + cleanedContent;
+        if (activeEditor) activeEditor.setValue(finalContent);
+        else await app.vault.modify(currentFile, finalContent);
+      }
+
+      progressNotice?.hide();
+      new Notice("日文假名注音已成功添加！", 5000);
+
+      // 添加到历史记录
+      if (this.view) {
+        this.view.addToHistory(currentFile.basename, currentFile.path, "日文假名标注", this.view.generateFileId(currentFile));
+      }
+
+      if (showCompletionCard) {
+        await this.activateView();
+        const taskId = `furigana-${Date.now()}`;
+        this.view.addTask({
+            id: taskId,
+            type: 'furigana',
+            status: 'displaying',
+            title: `假名标注完成: ${currentFile.basename}`,
+            content: { file: currentFile }
+        });
+      }
+
+    } catch (error) {
+      progressNotice?.hide();
+      new Notice(`处理失败: ${error.message}`, 0);
+      console.error("AI Furigana Error:", error);
     }
   }
 
@@ -2682,9 +2991,9 @@ class AiAssistantSuite extends Plugin {
     }
   }
 
-  async runOneClickSmartProcess() {
+  async runOneClickSmartProcess(targetFile = null) {
     const app = this.app;
-    let currentFile = app.workspace.getActiveFile();
+    let currentFile = targetFile || app.workspace.getActiveFile();
 
     if (!currentFile) {
         new Notice("没有活动的笔记文件。");
@@ -2709,15 +3018,21 @@ class AiAssistantSuite extends Plugin {
         // --- 1. Structurizer (if enabled) ---
         if (oneClickProcessActions.structurizer) {
             progressNotice.setMessage("正在优化笔记结构...");
-            await this.runAiStructurizer(false);
+            await this.runAiStructurizer(false, currentFile);
             // Re-read file content after potential modification
-            currentFile = app.workspace.getActiveFile(); 
+            currentFile = targetFile || app.workspace.getActiveFile(); 
         }
 
-        const interactiveActions = actions.filter(a => a !== 'structurizer');
+        if (oneClickProcessActions.furigana) {
+            progressNotice.setMessage("正在为笔记添加日文假名注音...");
+            await this.runAiFurigana(false, currentFile, false); // 复用一键处理的进度提示，不再额外弹窗
+            currentFile = targetFile || app.workspace.getActiveFile();
+        }
+
+        const interactiveActions = actions.filter(a => a !== 'structurizer' && a !== 'furigana');
         if (interactiveActions.length === 0) {
             progressNotice.hide();
-            new Notice("结构优化完成。没有其他已启用的处理步骤。");
+            new Notice("预处理步骤已完成。没有其他已启用的处理步骤。");
             return;
         }
 
@@ -3022,6 +3337,59 @@ ${content}
 
   getStructurizerPrompt(contentToProcess) {
     return this.settings.structurizerPrompt.replace('{{content}}', contentToProcess);
+  }
+
+  getFuriganaPrompt(contentToProcess) {
+    return this.settings.furiganaPrompt.replace('{{content}}', contentToProcess);
+  }
+
+  // 将 inline code (`...`) 里的 <ruby>...<rt>...</rt></ruby> 转成 括号假名：漢字(かな)
+  convertRubyInInlineCode(text) {
+    if (!text) return text;
+    return text.replace(/`([\s\S]*?)`/g, (match, inner) => {
+        // 只在 code span 内部替换 ruby，不动反引号本身
+        const converted = inner.replace(/<ruby>\s*([^<]+?)\s*<rt>\s*([^<]+?)\s*<\/rt>\s*<\/ruby>/g, (m, kanji, kana) => {
+            return `${kanji}(${kana})`;
+        });
+        return '`' + converted + '`';
+    });
+  }
+
+  // 提取代码块，用占位符替换，处理后再恢复
+  extractCodeBlocks(text) {
+    const codeBlocks = [];
+    const placeholders = [];
+    let placeholderIndex = 0;
+    
+    // 先提取代码块（三个反引号），避免行内代码匹配到代码块内的内容
+    let processedText = text.replace(/```[\s\S]*?```/g, (match) => {
+      const placeholder = `__CODE_BLOCK_${placeholderIndex}__`;
+      codeBlocks.push(match);
+      placeholders.push(placeholder);
+      placeholderIndex++;
+      return placeholder;
+    });
+    
+    // 再提取行内代码（单个反引号，但不在代码块内）
+    // 使用非贪婪匹配，避免匹配到多个行内代码
+    processedText = processedText.replace(/`[^`]+?`/g, (match) => {
+      const placeholder = `__INLINE_CODE_${placeholderIndex}__`;
+      codeBlocks.push(match);
+      placeholders.push(placeholder);
+      placeholderIndex++;
+      return placeholder;
+    });
+    
+    return { processedText, codeBlocks, placeholders };
+  }
+
+  // 恢复代码块
+  restoreCodeBlocks(text, codeBlocks, placeholders) {
+    let restoredText = text;
+    placeholders.forEach((placeholder, index) => {
+      restoredText = restoredText.replace(placeholder, codeBlocks[index]);
+    });
+    return restoredText;
   }
 
   // 简化的智能操作方法
@@ -3404,6 +3772,16 @@ class AiAssistantSettingTab extends PluginSettingTab {
                 }));
 
         new Setting(containerEl)
+            .setName('假名标注 (Furigana)')
+            .setDesc('为笔记中的日文添加假名注音，可与优化结构配合使用。')
+            .addToggle(toggle => toggle
+                .setValue(this.plugin.settings.oneClickProcessActions.furigana)
+                .onChange(async (value) => {
+                    this.plugin.settings.oneClickProcessActions.furigana = value;
+                    await this.plugin.saveSettings();
+                }));
+
+        new Setting(containerEl)
             .setName('生成元数据 (Meta)')
             .setDesc('在一个组合卡片中建议标题、摘要和TLDR。')
             .addToggle(toggle => toggle
@@ -3624,7 +4002,7 @@ class BatchProcessingModal extends Modal {
     }
 
     showFileSelector() {
-        const modal = new SimpleFileSelectionModal(this.app, (selectedFiles) => {
+        const modal = new AdvancedFileSelectionModal(this.app, (selectedFiles) => {
             this.onChoose('files', selectedFiles);
         });
         modal.open();
@@ -3641,6 +4019,814 @@ class BatchProcessingModal extends Modal {
         modal.open();
     }
 
+    onClose() {
+        const { contentEl } = this;
+        contentEl.empty();
+    }
+}
+
+// 高级文件选择模态框 - 支持多种筛选条件
+class AdvancedFileSelectionModal extends Modal {
+    constructor(app, onChoose) {
+        super(app);
+        this.onChoose = onChoose;
+        this.selectedFiles = new Set();
+        this.allFiles = this.app.vault.getMarkdownFiles();
+        this.filteredFiles = [...this.allFiles];
+        
+        // 筛选条件
+        this.filters = {
+            folder: '',
+            tags: '',
+            properties: '',
+            customQuery: '',
+            dateRange: { start: '', end: '' },
+            fileSize: { min: '', max: '' }
+        };
+        
+        // 按文件夹分组
+        this.filesByFolder = new Map();
+        this.allFiles.forEach(file => {
+            const folderPath = file.parent?.path || '/';
+            if (!this.filesByFolder.has(folderPath)) {
+                this.filesByFolder.set(folderPath, []);
+            }
+            this.filesByFolder.get(folderPath).push(file);
+        });
+    }
+
+    onOpen() {
+        const { contentEl } = this;
+        contentEl.empty();
+        
+        // 移除固定尺寸，让Obsidian自适应
+        contentEl.style.width = '';
+        contentEl.style.maxWidth = '';
+        contentEl.style.height = '';
+        
+        contentEl.createEl("h2", { text: "高级文件选择器" });
+        
+        // 创建主容器
+        const mainContainer = contentEl.createDiv({ cls: "ai-assistant-advanced-file-selector-compact" });
+        
+        // 顶部筛选栏
+        const filterBar = mainContainer.createDiv({ cls: "ai-assistant-filter-bar" });
+        this.renderFilterBar(filterBar);
+        
+        // 文件列表
+        const filePanel = mainContainer.createDiv({ cls: "ai-assistant-file-panel" });
+        this.renderFilePanel(filePanel);
+        
+        // 底部操作栏
+        this.renderBottomActions(contentEl);
+    }
+    
+    renderFilterBar(container) {
+        // 筛选类型选择器
+        const filterTypeSelect = container.createEl("select", { cls: "ai-assistant-filter-type-select" });
+        filterTypeSelect.innerHTML = `
+            <option value="">选择筛选类型</option>
+            <option value="folder">文件夹路径</option>
+            <option value="tags">标签</option>
+            <option value="properties">属性</option>
+            <option value="missing-properties">缺少属性</option>
+            <option value="query">查询语法</option>
+            <option value="date">修改日期</option>
+            <option value="size">文件大小</option>
+        `;
+        
+        // 筛选值容器
+        const filterValueContainer = container.createDiv({ cls: "ai-assistant-filter-value-container" });
+        
+        // 筛选值输入框
+        const filterInput = filterValueContainer.createEl("input", {
+            type: "text",
+            placeholder: "输入筛选条件...",
+            cls: "ai-assistant-filter-value-input"
+        });
+        
+        // 下拉选择器容器
+        const dropdownContainer = filterValueContainer.createDiv({ cls: "ai-assistant-filter-dropdown-container" });
+        dropdownContainer.style.display = 'none';
+        
+        // 当前筛选类型
+        let currentFilterType = '';
+        let currentDropdown = null;
+        
+        // 筛选类型变化处理
+        filterTypeSelect.addEventListener('change', (e) => {
+            currentFilterType = e.target.value;
+            filterInput.placeholder = this.getFilterPlaceholder(currentFilterType);
+            filterInput.value = '';
+            
+            // 显示/隐藏下拉选择器
+            this.updateFilterDropdown(dropdownContainer, currentFilterType, filterInput);
+            
+            this.clearFilters();
+        });
+        
+        // 筛选值输入处理
+        filterInput.addEventListener('input', (e) => {
+            const value = e.target.value;
+            this.applySingleFilter(currentFilterType, value);
+        });
+        
+        // 清除按钮
+        const clearButton = container.createEl("button", {
+            text: "清除",
+            cls: "ai-assistant-clear-filter-btn"
+        });
+        clearButton.addEventListener('click', () => {
+            filterTypeSelect.value = '';
+            filterInput.value = '';
+            dropdownContainer.style.display = 'none';
+            currentFilterType = '';
+            this.clearFilters();
+        });
+        
+        // 快速筛选按钮组
+        const quickFilters = container.createDiv({ cls: "ai-assistant-quick-filters" });
+        quickFilters.innerHTML = `
+            <button class="ai-assistant-quick-filter-btn" data-type="folder" data-value="">所有文件</button>
+            <button class="ai-assistant-quick-filter-btn" data-type="folder" data-value="current">当前文件夹</button>
+            <button class="ai-assistant-quick-filter-btn" data-type="properties" data-value="status: ❌">status: ❌</button>
+            <button class="ai-assistant-quick-filter-btn" data-type="missing-properties" data-value="status">缺少status属性</button>
+            <button class="ai-assistant-quick-filter-btn" data-type="missing-properties" data-value="tags">缺少tags属性</button>
+        `;
+        
+        // 快速筛选按钮事件
+        quickFilters.addEventListener('click', (e) => {
+            if (e.target.classList.contains('ai-assistant-quick-filter-btn')) {
+                const type = e.target.dataset.type;
+                let value = e.target.dataset.value;
+                
+                // 处理当前文件夹
+                if (type === 'folder' && value === 'current') {
+                    const activeFile = this.app.workspace.getActiveFile();
+                    if (activeFile && activeFile.parent) {
+                        value = activeFile.parent.path;
+                    } else {
+                        value = '';
+                    }
+                }
+                
+                filterTypeSelect.value = type;
+                currentFilterType = type;
+                filterInput.placeholder = this.getFilterPlaceholder(type);
+                filterInput.value = value;
+                
+                this.applySingleFilter(type, value);
+            }
+        });
+    }
+    
+    getFilterPlaceholder(type) {
+        const placeholders = {
+            'folder': '输入文件夹路径，支持通配符 * 和 ?',
+            'tags': '输入标签，多个标签用逗号分隔',
+            'properties': '格式: 属性名=值 或 属性名:值',
+            'missing-properties': '输入属性名，多个属性用逗号分隔',
+            'query': '使用查询语法，如: path:folder/ tag:#important',
+            'date': '格式: 2024-01-01 或 2024-01-01,2024-12-31',
+            'size': '格式: 10 或 10,100 (KB)'
+        };
+        return placeholders[type] || '输入筛选条件...';
+    }
+    
+    updateFilterDropdown(container, type, inputElement) {
+        container.empty();
+        
+        if (!type || !['folder', 'tags', 'properties', 'missing-properties'].includes(type)) {
+            container.style.display = 'none';
+            return;
+        }
+        
+        container.style.display = 'block';
+        
+        let options = [];
+        
+        switch (type) {
+            case 'folder':
+                options = this.getAllFolders();
+                break;
+            case 'tags':
+                options = this.getAllTags();
+                break;
+            case 'properties':
+                options = this.getAllProperties();
+                break;
+            case 'missing-properties':
+                options = this.getAllProperties();
+                break;
+        }
+        
+        if (options.length === 0) {
+            container.style.display = 'none';
+            return;
+        }
+        
+        // 创建可搜索的下拉选择器
+        const dropdown = container.createEl("select", { cls: "ai-assistant-filter-dropdown" });
+        dropdown.size = Math.min(options.length + 1, 15); // 显示最多15个选项
+        dropdown.innerHTML = '<option value="">选择现有值...</option>';
+        
+        options.forEach(option => {
+            const optionEl = dropdown.createEl("option", { 
+                text: option, 
+                value: option 
+            });
+        });
+        
+        // 下拉选择器变化处理
+        dropdown.addEventListener('change', (e) => {
+            if (e.target.value) {
+                inputElement.value = e.target.value;
+                // 触发筛选
+                this.applySingleFilter(type, e.target.value);
+            }
+        });
+        
+        // 输入框输入时过滤下拉选项
+        inputElement.addEventListener('input', (e) => {
+            const searchTerm = e.target.value.toLowerCase();
+            const dropdownOptions = dropdown.querySelectorAll('option');
+            
+            dropdownOptions.forEach(option => {
+                if (option.value === '') return; // 保留提示选项
+                
+                const optionText = option.text.toLowerCase();
+                if (optionText.includes(searchTerm)) {
+                    option.style.display = 'block';
+                } else {
+                    option.style.display = 'none';
+                }
+            });
+            
+            // 同时触发筛选
+            this.applySingleFilter(type, e.target.value);
+        });
+        
+        // 输入框聚焦时显示下拉选择器
+        inputElement.addEventListener('focus', () => {
+            container.style.display = 'block';
+        });
+        
+        // 下拉选择器聚焦时保持显示
+        dropdown.addEventListener('focus', () => {
+            container.style.display = 'block';
+        });
+        
+        // 点击外部时隐藏下拉选择器
+        const hideDropdown = (e) => {
+            if (!container.contains(e.target) && e.target !== inputElement) {
+                container.style.display = 'none';
+            }
+        };
+        
+        // 延迟添加事件监听器，避免立即触发
+        setTimeout(() => {
+            document.addEventListener('click', hideDropdown);
+        }, 100);
+    }
+    
+    getAllFolders() {
+        const folders = new Set();
+        this.allFiles.forEach(file => {
+            const folderPath = file.parent?.path || '/';
+            if (folderPath !== '/') {
+                folders.add(folderPath);
+            }
+        });
+        return Array.from(folders).sort();
+    }
+    
+    getAllTags() {
+        const tags = new Set();
+        this.allFiles.forEach(file => {
+            try {
+                const cache = this.app.metadataCache.getFileCache(file);
+                
+                // 从frontmatter中获取标签
+                const frontmatterTags = cache?.frontmatter?.tags || [];
+                if (Array.isArray(frontmatterTags)) {
+                    frontmatterTags.forEach(tag => {
+                        if (typeof tag === 'string') {
+                            tags.add(tag.startsWith('#') ? tag : '#' + tag);
+                        }
+                    });
+                }
+                
+                // 从文件内容中获取标签
+                const fileTags = cache?.tags?.map(tag => tag.tag) || [];
+                fileTags.forEach(tag => tags.add(tag));
+                
+                // 从文件内容中搜索标签模式
+                if (cache?.sections) {
+                    cache.sections.forEach(section => {
+                        if (section.type === 'paragraph' && section.text) {
+                            const tagMatches = section.text.match(/#[\w\u4e00-\u9fff-]+/g);
+                            if (tagMatches) {
+                                tagMatches.forEach(tag => tags.add(tag));
+                            }
+                        }
+                    });
+                }
+            } catch (e) {
+                // 忽略错误
+            }
+        });
+        return Array.from(tags).sort();
+    }
+    
+    getAllProperties() {
+        const properties = new Set();
+        this.allFiles.forEach(file => {
+            try {
+                const cache = this.app.metadataCache.getFileCache(file);
+                const frontmatter = cache?.frontmatter || {};
+                Object.keys(frontmatter).forEach(key => properties.add(key));
+            } catch (e) {
+                // 忽略错误
+            }
+        });
+        return Array.from(properties).sort();
+    }
+    
+    applySingleFilter(type, value) {
+        // 重置所有筛选条件
+        this.filters = {
+            folder: '',
+            tags: '',
+            properties: '',
+            missingProperties: '',
+            customQuery: '',
+            dateRange: { start: '', end: '' },
+            fileSize: { min: '', max: '' }
+        };
+        
+        if (!type || !value) {
+            this.filteredFiles = [...this.allFiles];
+            this.updateFileList();
+            return;
+        }
+        
+        switch (type) {
+            case 'folder':
+                this.filters.folder = value;
+                break;
+            case 'tags':
+                this.filters.tags = value;
+                // 调试标签筛选
+                if (value) {
+                    console.log('标签筛选:', value);
+                    this.debugTagFilter(value);
+                }
+                break;
+            case 'properties':
+                this.filters.properties = value;
+                break;
+            case 'missing-properties':
+                this.filters.missingProperties = value;
+                break;
+            case 'query':
+                this.filters.customQuery = value;
+                break;
+            case 'date':
+                this.parseDateFilter(value);
+                break;
+            case 'size':
+                this.parseSizeFilter(value);
+                break;
+        }
+        
+        this.applyFilters();
+    }
+    
+    debugTagFilter(searchTag) {
+        console.log('=== 标签筛选调试 ===');
+        console.log('搜索标签:', searchTag);
+        
+        const matchingFiles = [];
+        const allTags = new Set();
+        
+        this.allFiles.forEach(file => {
+            try {
+                const cache = this.app.metadataCache.getFileCache(file);
+                const fileTags = new Set();
+                
+                // 收集文件的所有标签
+                const frontmatterTags = cache?.frontmatter?.tags || [];
+                if (Array.isArray(frontmatterTags)) {
+                    frontmatterTags.forEach(tag => {
+                        if (typeof tag === 'string') {
+                            const formattedTag = tag.startsWith('#') ? tag : '#' + tag;
+                            fileTags.add(formattedTag);
+                            allTags.add(formattedTag);
+                        }
+                    });
+                }
+                
+                const contentTags = cache?.tags?.map(tag => tag.tag) || [];
+                contentTags.forEach(tag => {
+                    fileTags.add(tag);
+                    allTags.add(tag);
+                });
+                
+                // 检查是否匹配
+                const normalizedSearchTag = searchTag.toLowerCase();
+                const isMatch = Array.from(fileTags).some(fileTag => {
+                    const normalizedFileTag = fileTag.toLowerCase();
+                    return normalizedFileTag === normalizedSearchTag || 
+                           normalizedFileTag.includes(normalizedSearchTag) ||
+                           normalizedSearchTag.includes(normalizedFileTag);
+                });
+                
+                if (isMatch) {
+                    matchingFiles.push({
+                        file: file.basename,
+                        tags: Array.from(fileTags)
+                    });
+                }
+            } catch (e) {
+                // 忽略错误
+            }
+        });
+        
+        console.log('匹配的文件数量:', matchingFiles.length);
+        console.log('匹配的文件:', matchingFiles);
+        console.log('所有标签:', Array.from(allTags).sort());
+        console.log('==================');
+    }
+    
+    parseDateFilter(value) {
+        if (value.includes(',')) {
+            const [start, end] = value.split(',').map(s => s.trim());
+            this.filters.dateRange.start = start;
+            this.filters.dateRange.end = end;
+        } else {
+            this.filters.dateRange.start = value;
+        }
+    }
+    
+    parseSizeFilter(value) {
+        if (value.includes(',')) {
+            const [min, max] = value.split(',').map(s => s.trim());
+            this.filters.fileSize.min = min;
+            this.filters.fileSize.max = max;
+        } else {
+            this.filters.fileSize.min = value;
+        }
+    }
+    
+    renderFilePanel(container) {
+        // 文件统计信息
+        const statsContainer = container.createDiv({ cls: "ai-assistant-file-stats" });
+        this.statsText = statsContainer.createEl("span", { 
+            text: `显示 ${this.filteredFiles.length} / ${this.allFiles.length} 个文件` 
+        });
+        
+        // 全选/取消全选按钮
+        const selectAllContainer = container.createDiv({ cls: "ai-assistant-select-all-container" });
+        const selectAllBtn = selectAllContainer.createEl("button", { text: "全选当前结果" });
+        const deselectAllBtn = selectAllContainer.createEl("button", { text: "取消全选" });
+        
+        selectAllBtn.addEventListener('click', () => {
+            this.filteredFiles.forEach(file => this.selectedFiles.add(file));
+            this.updateFileList();
+        });
+        
+        deselectAllBtn.addEventListener('click', () => {
+            this.filteredFiles.forEach(file => this.selectedFiles.delete(file));
+            this.updateFileList();
+        });
+        
+        // 文件列表容器
+        this.fileListContainer = container.createDiv({ cls: "ai-assistant-file-list-container" });
+        this.updateFileList();
+    }
+    
+    updateFileList() {
+        if (!this.fileListContainer) return;
+        
+        this.fileListContainer.empty();
+        this.statsText.textContent = `显示 ${this.filteredFiles.length} / ${this.allFiles.length} 个文件，已选择 ${this.selectedFiles.size} 个`;
+        
+        if (this.filteredFiles.length === 0) {
+            this.fileListContainer.createEl("div", { 
+                text: "没有找到匹配的文件",
+                cls: "ai-assistant-no-files-message"
+            });
+            return;
+        }
+        
+        // 按文件夹分组显示
+        const groupedFiles = new Map();
+        this.filteredFiles.forEach(file => {
+            const folderPath = file.parent?.path || '/';
+            if (!groupedFiles.has(folderPath)) {
+                groupedFiles.set(folderPath, []);
+            }
+            groupedFiles.get(folderPath).push(file);
+        });
+        
+        // 按文件夹路径排序
+        const sortedFolders = Array.from(groupedFiles.keys()).sort();
+        
+        sortedFolders.forEach(folderPath => {
+            const files = groupedFiles.get(folderPath);
+            
+            const folderSection = this.fileListContainer.createDiv({ cls: "ai-assistant-folder-section" });
+            
+            // 文件夹标题
+            const folderHeader = folderSection.createDiv({ cls: "ai-assistant-folder-header" });
+            folderHeader.innerHTML = `
+                <span class="ai-assistant-folder-name">📁 ${folderPath}</span>
+                <span class="ai-assistant-folder-count">${files.length} 个文件</span>
+            `;
+            
+            // 文件夹全选复选框
+            const folderSelectAll = folderHeader.createEl("input", {
+                type: "checkbox",
+                cls: "ai-assistant-folder-select-all"
+            });
+            
+            const folderSelectedCount = files.filter(f => this.selectedFiles.has(f)).length;
+            folderSelectAll.checked = folderSelectedCount === files.length;
+            folderSelectAll.indeterminate = folderSelectedCount > 0 && folderSelectedCount < files.length;
+            
+            folderSelectAll.addEventListener('change', () => {
+                if (folderSelectAll.checked) {
+                    files.forEach(file => this.selectedFiles.add(file));
+                } else {
+                    files.forEach(file => this.selectedFiles.delete(file));
+                }
+                this.updateFileList();
+            });
+            
+            // 文件列表
+            const fileList = folderSection.createDiv({ cls: "ai-assistant-file-list" });
+            files.forEach(file => {
+                const fileItem = fileList.createDiv({ cls: "ai-assistant-file-item" });
+                
+                const checkbox = fileItem.createEl("input", {
+                    type: "checkbox",
+                    checked: this.selectedFiles.has(file)
+                });
+                
+                checkbox.addEventListener('change', () => {
+                    if (checkbox.checked) {
+                        this.selectedFiles.add(file);
+                    } else {
+                        this.selectedFiles.delete(file);
+                    }
+                    this.updateFileList();
+                });
+                
+                const fileInfo = fileItem.createDiv({ cls: "ai-assistant-file-info" });
+                fileInfo.innerHTML = `
+                    <div class="ai-assistant-file-name">${file.basename}</div>
+                    <div class="ai-assistant-file-meta">
+                        <span class="ai-assistant-file-size">${Math.round(file.stat.size / 1024)} KB</span>
+                        <span class="ai-assistant-file-date">${new Date(file.stat.mtime).toLocaleDateString()}</span>
+                    </div>
+                `;
+            });
+        });
+    }
+    
+    applyFilters() {
+        let filtered = [...this.allFiles];
+        
+        // 文件夹筛选
+        if (this.filters.folder) {
+            const folderPattern = this.filters.folder.replace(/\*/g, '.*').replace(/\?/g, '.');
+            const folderRegex = new RegExp(folderPattern, 'i');
+            filtered = filtered.filter(file => {
+                const folderPath = file.parent?.path || '/';
+                return folderRegex.test(folderPath);
+            });
+        }
+        
+        // 标签筛选
+        if (this.filters.tags) {
+            const tags = this.filters.tags.split(',').map(tag => tag.trim()).filter(tag => tag);
+            filtered = filtered.filter(file => {
+                try {
+                    const cache = this.app.metadataCache.getFileCache(file);
+                    
+                    // 收集所有可能的标签
+                    const allFileTags = new Set();
+                    
+                    // 从frontmatter中获取标签
+                    const frontmatterTags = cache?.frontmatter?.tags || [];
+                    if (Array.isArray(frontmatterTags)) {
+                        frontmatterTags.forEach(tag => {
+                            if (typeof tag === 'string') {
+                                allFileTags.add(tag.startsWith('#') ? tag : '#' + tag);
+                            }
+                        });
+                    }
+                    
+                    // 从文件内容中获取标签
+                    const fileTags = cache?.tags?.map(tag => tag.tag) || [];
+                    fileTags.forEach(tag => allFileTags.add(tag));
+                    
+                    // 从文件内容中搜索标签模式
+                    if (cache?.sections) {
+                        cache.sections.forEach(section => {
+                            if (section.type === 'paragraph' && section.text) {
+                                const tagMatches = section.text.match(/#[\w\u4e00-\u9fff-]+/g);
+                                if (tagMatches) {
+                                    tagMatches.forEach(tag => allFileTags.add(tag));
+                                }
+                            }
+                        });
+                    }
+                    
+                    // 检查是否匹配任何筛选标签
+                    return tags.some(searchTag => {
+                        const normalizedSearchTag = searchTag.toLowerCase();
+                        return Array.from(allFileTags).some(fileTag => {
+                            const normalizedFileTag = fileTag.toLowerCase();
+                            // 支持精确匹配和包含匹配
+                            return normalizedFileTag === normalizedSearchTag || 
+                                   normalizedFileTag.includes(normalizedSearchTag) ||
+                                   normalizedSearchTag.includes(normalizedFileTag);
+                        });
+                    });
+                } catch (e) {
+                    console.error('标签筛选错误:', e);
+                    return false;
+                }
+            });
+        }
+        
+        // 属性筛选
+        if (this.filters.properties) {
+            const propertyPairs = this.filters.properties.split(',').map(pair => pair.trim());
+            filtered = filtered.filter(file => {
+                try {
+                    const cache = this.app.metadataCache.getFileCache(file);
+                    const frontmatter = cache?.frontmatter || {};
+                    
+                    return propertyPairs.every(pair => {
+                        const [key, value] = pair.split(/[=:]/).map(s => s.trim());
+                        if (!key || !value) return true;
+                        
+                        const fileValue = frontmatter[key];
+                        if (typeof fileValue === 'string') {
+                            return fileValue.toLowerCase().includes(value.toLowerCase());
+                        } else if (Array.isArray(fileValue)) {
+                            return fileValue.some(v => 
+                                v.toString().toLowerCase().includes(value.toLowerCase())
+                            );
+                        }
+                        return false;
+                    });
+                } catch (e) {
+                    return false;
+                }
+            });
+        }
+        
+        // 缺少属性筛选
+        if (this.filters.missingProperties) {
+            const missingProps = this.filters.missingProperties.split(',').map(prop => prop.trim()).filter(prop => prop);
+            filtered = filtered.filter(file => {
+                try {
+                    const cache = this.app.metadataCache.getFileCache(file);
+                    const frontmatter = cache?.frontmatter || {};
+                    
+                    return missingProps.every(prop => {
+                        // 检查属性是否不存在或为空
+                        const value = frontmatter[prop];
+                        return value === undefined || value === null || value === '' || 
+                               (Array.isArray(value) && value.length === 0);
+                    });
+                } catch (e) {
+                    return false;
+                }
+            });
+        }
+        
+        // 日期范围筛选
+        if (this.filters.dateRange.start || this.filters.dateRange.end) {
+            filtered = filtered.filter(file => {
+                const fileDate = new Date(file.stat.mtime);
+                const startDate = this.filters.dateRange.start ? new Date(this.filters.dateRange.start) : null;
+                const endDate = this.filters.dateRange.end ? new Date(this.filters.dateRange.end) : null;
+                
+                if (startDate && fileDate < startDate) return false;
+                if (endDate && fileDate > endDate) return false;
+                return true;
+            });
+        }
+        
+        // 文件大小筛选
+        if (this.filters.fileSize.min || this.filters.fileSize.max) {
+            filtered = filtered.filter(file => {
+                const fileSizeKB = file.stat.size / 1024;
+                const minSize = this.filters.fileSize.min ? parseFloat(this.filters.fileSize.min) : 0;
+                const maxSize = this.filters.fileSize.max ? parseFloat(this.filters.fileSize.max) : Infinity;
+                
+                return fileSizeKB >= minSize && fileSizeKB <= maxSize;
+            });
+        }
+        
+        // Obsidian查询语法筛选
+        if (this.filters.customQuery) {
+            try {
+                // 简单的查询语法解析
+                const query = this.filters.customQuery.toLowerCase();
+                filtered = filtered.filter(file => {
+                    const cache = this.app.metadataCache.getFileCache(file);
+                    const frontmatter = cache?.frontmatter || {};
+                    const tags = cache?.tags?.map(tag => tag.tag) || [];
+                    
+                    // 解析查询条件
+                    const conditions = query.split(/\s+/);
+                    return conditions.every(condition => {
+                        if (condition.startsWith('path:')) {
+                            const pathPattern = condition.substring(5);
+                            return file.path.toLowerCase().includes(pathPattern);
+                        } else if (condition.startsWith('tag:')) {
+                            const tagPattern = condition.substring(4);
+                            return tags.some(tag => tag.toLowerCase().includes(tagPattern));
+                        } else if (condition.includes(':')) {
+                            const [key, value] = condition.split(':');
+                            const fileValue = frontmatter[key];
+                            if (typeof fileValue === 'string') {
+                                return fileValue.toLowerCase().includes(value);
+                            } else if (Array.isArray(fileValue)) {
+                                return fileValue.some(v => 
+                                    v.toString().toLowerCase().includes(value)
+                                );
+                            }
+                            return false;
+                        } else {
+                            // 全文搜索
+                            return file.basename.toLowerCase().includes(condition);
+                        }
+                    });
+                });
+            } catch (e) {
+                console.error('查询语法解析错误:', e);
+            }
+        }
+        
+        this.filteredFiles = filtered;
+        this.updateFileList();
+    }
+    
+    clearFilters() {
+        this.filters = {
+            folder: '',
+            tags: '',
+            properties: '',
+            missingProperties: '',
+            customQuery: '',
+            dateRange: { start: '', end: '' },
+            fileSize: { min: '', max: '' }
+        };
+        
+        // 清除所有输入框
+        const inputs = this.contentEl.querySelectorAll('.filter-input, .filter-textarea, .date-input, .size-input');
+        inputs.forEach(input => input.value = '');
+        
+        this.filteredFiles = [...this.allFiles];
+        this.updateFileList();
+    }
+    
+    renderBottomActions(container) {
+        const actionsContainer = container.createDiv({ cls: "ai-assistant-bottom-actions" });
+        
+        const selectedCount = actionsContainer.createEl("span", {
+            text: `已选择 ${this.selectedFiles.size} 个文件`,
+            cls: "ai-assistant-selected-count"
+        });
+        
+        const confirmBtn = actionsContainer.createEl("button", {
+            text: "确认选择",
+            cls: "mod-cta"
+        });
+        
+        const cancelBtn = actionsContainer.createEl("button", {
+            text: "取消",
+            cls: "mod-cancel"
+        });
+        
+        confirmBtn.addEventListener('click', () => {
+            if (this.selectedFiles.size === 0) {
+                new Notice("请至少选择一个文件", 2000);
+                return;
+            }
+            this.onChoose(Array.from(this.selectedFiles));
+            this.close();
+        });
+        
+        cancelBtn.addEventListener('click', () => this.close());
+    }
+    
     onClose() {
         const { contentEl } = this;
         contentEl.empty();
@@ -4005,7 +5191,7 @@ class FileSelectionModal extends Modal {
         contentEl.createEl("h2", { text: "选择要处理的文件" });
 
         // 全选/取消全选
-        const selectAllContainer = contentEl.createDiv({ cls: "select-all-container" });
+        const selectAllContainer = contentEl.createDiv({ cls: "ai-assistant-select-all-container" });
         const selectAllBtn = selectAllContainer.createEl("button", { text: "全选" });
         const deselectAllBtn = selectAllContainer.createEl("button", { text: "取消全选" });
 
