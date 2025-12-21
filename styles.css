@@ -483,6 +483,10 @@
     background: var(--background-primary);
 }
 
+.ai-assistant-file-list.expanded {
+    display: block;
+}
+
 .ai-assistant-file-item {
     display: flex;
     align-items: flex-start;
@@ -1659,6 +1663,14 @@
 
 .ai-assistant-folder-select-all {
     margin-left: 8px;
+}
+
+.ai-assistant-file-item input[type="checkbox"],
+.ai-assistant-folder-select-all,
+.ai-assistant-folder-select-all-checkbox {
+    accent-color: var(--interactive-accent);
+    width: 16px;
+    height: 16px;
 }
 
 .ai-assistant-file-list {

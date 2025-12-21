@@ -4509,7 +4509,7 @@ class AdvancedFileSelectionModal extends Modal {
         if (!this.fileListContainer) return;
         
         this.fileListContainer.empty();
-        this.statsText.textContent = `显示 ${this.filteredFiles.length} / ${this.allFiles.length} 个文件，已选择 ${this.selectedFiles.size} 个`;
+        this.updateSelectionDisplays();
         
         if (this.filteredFiles.length === 0) {
             this.fileListContainer.createEl("div", { 
@@ -4549,6 +4549,7 @@ class AdvancedFileSelectionModal extends Modal {
                 type: "checkbox",
                 cls: "ai-assistant-folder-select-all"
             });
+            folderSelectAll.addEventListener('click', (e) => e.stopPropagation());
             
             const folderSelectedCount = files.filter(f => this.selectedFiles.has(f)).length;
             folderSelectAll.checked = folderSelectedCount === files.length;
@@ -4560,11 +4561,24 @@ class AdvancedFileSelectionModal extends Modal {
                 } else {
                     files.forEach(file => this.selectedFiles.delete(file));
                 }
-                this.updateFileList();
+                fileList.querySelectorAll('input[type="checkbox"]').forEach(cb => cb.checked = folderSelectAll.checked);
+                this.updateFolderSelectAllState(folderSection, files);
+                this.updateSelectionDisplays();
             });
             
             // 文件列表
             const fileList = folderSection.createDiv({ cls: "ai-assistant-file-list" });
+
+            // 点击文件夹头展开/收起
+            folderHeader.addEventListener('click', (event) => {
+                // 跳过点击复选框的情况
+                if (event.target.closest('input[type="checkbox"]')) {
+                    return;
+                }
+                const isExpanded = fileList.classList.toggle('expanded');
+                folderHeader.classList.toggle('expanded', isExpanded);
+            });
+
             files.forEach(file => {
                 const fileItem = fileList.createDiv({ cls: "ai-assistant-file-item" });
                 
@@ -4579,7 +4593,8 @@ class AdvancedFileSelectionModal extends Modal {
                     } else {
                         this.selectedFiles.delete(file);
                     }
-                    this.updateFileList();
+                    this.updateSelectionDisplays();
+                    this.updateFolderSelectAllState(folderSection, files);
                 });
                 
                 const fileInfo = fileItem.createDiv({ cls: "ai-assistant-file-info" });
@@ -4804,6 +4819,7 @@ class AdvancedFileSelectionModal extends Modal {
             text: `已选择 ${this.selectedFiles.size} 个文件`,
             cls: "ai-assistant-selected-count"
         });
+        this.bottomSelectedCount = selectedCount;
         
         const confirmBtn = actionsContainer.createEl("button", {
             text: "确认选择",
@@ -4827,6 +4843,18 @@ class AdvancedFileSelectionModal extends Modal {
         cancelBtn.addEventListener('click', () => this.close());
     }
     
+    /**
+     * 更新顶部/底部的选择计数与统计文本，不触发重渲染
+     */
+    updateSelectionDisplays() {
+        if (this.statsText) {
+            this.statsText.textContent = `显示 ${this.filteredFiles.length} / ${this.allFiles.length} 个文件，已选择 ${this.selectedFiles.size} 个`;
+        }
+        if (this.bottomSelectedCount) {
+            this.bottomSelectedCount.textContent = `已选择 ${this.selectedFiles.size} 个文件`;
+        }
+    }
+
     onClose() {
         const { contentEl } = this;
         contentEl.empty();
@@ -4934,12 +4962,15 @@ class SimpleFileSelectionModal extends Modal {
         });
 
         const fileList = section.createDiv({ cls: "ai-assistant-file-list" });
-        if (isExpanded) {
-            fileList.style.display = 'block';
-        }
+        // 强制可见，防止样式或点击问题导致看不到文件
+        fileList.style.display = 'block';
+        fileList.style.padding = '0';
 
         files.forEach(file => {
             const fileItem = fileList.createDiv({ cls: "ai-assistant-file-item" });
+            fileItem.style.display = 'flex';
+            fileItem.style.alignItems = 'center';
+            fileItem.style.gap = '8px';
 
             const checkbox = fileItem.createEl("input", { type: "checkbox" });
             checkbox.addEventListener('change', () => {
@@ -4965,17 +4996,6 @@ class SimpleFileSelectionModal extends Modal {
                 cls: "ai-assistant-file-path"
             });
         });
-
-        // 点击标题容器展开/收起（不包括复选框）
-        titleContainer.addEventListener('click', () => {
-            const isVisible = fileList.style.display !== 'none';
-            fileList.style.display = isVisible ? 'none' : 'block';
-            header.classList.toggle('expanded', !isVisible);
-        });
-
-        if (isExpanded) {
-            header.classList.add('expanded');
-        }
 
         // 初始化全选复选框状态
         this.updateFolderSelectAllState(section, files);
