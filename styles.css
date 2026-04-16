@@ -1000,6 +1000,13 @@
     flex-direction: column;
     gap: 4px;
     margin-bottom: 12px;
+    max-height: 350px; /* 大约显示5个项目的高度 */
+    overflow-y: auto;
+    padding-right: 4px; /* 为滚动条留出空间 */
+    border: 1px solid var(--background-modifier-border); /* 可选：添加边框以明确区域 */
+    border-radius: 6px;
+    padding: 8px; /* 内边距 */
+    background-color: var(--background-secondary); /*稍微区分背景*/
 }
 
 .history-item {
