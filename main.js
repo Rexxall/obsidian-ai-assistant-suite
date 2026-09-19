@@ -1,6 +1,109 @@
+// agent: codex (2026-09-19)
+const escapeHtmlText = value => String(value).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;"); // guarded writes and focused workspace
 const { Plugin, Notice, PluginSettingTab, Setting, FuzzySuggestModal, Modal, ItemView, TFile } = require('obsidian');
 
 const ASSISTANT_VIEW_TYPE = "ai-assistant-view";
+const REDACTED_API_KEY = '[REDACTED]';
+
+let SharedUtils = {};
+try {
+    SharedUtils = require('../obsidian-utils/dist');
+} catch (error) {
+    SharedUtils = {};
+}
+
+class FallbackEncryptedSettings {
+    constructor(options = {}) {
+        this.namespace = options.namespace || 'default';
+        this.passphrase = options.passphrase || 'obsidian-default-passphrase-change-me';
+        this.encoder = new TextEncoder();
+        this.decoder = new TextDecoder();
+    }
+
+    isEncryptedValue(value) {
+        return typeof value === 'string' && value.startsWith('__ENC__:');
+    }
+
+    async encryptValue(plaintext) {
+        if (!plaintext) return plaintext;
+        if (!globalThis.crypto?.subtle) {
+            return `__ENC__:${this.namespace}:plain:${btoa(unescape(encodeURIComponent(plaintext)))}`;
+        }
+        const key = await this.deriveKey();
+        const iv = globalThis.crypto.getRandomValues(new Uint8Array(12));
+        const encrypted = await globalThis.crypto.subtle.encrypt(
+            { name: 'AES-GCM', iv },
+            key,
+            this.encoder.encode(plaintext)
+        );
+        const combined = new Uint8Array(iv.byteLength + encrypted.byteLength);
+        combined.set(iv, 0);
+        combined.set(new Uint8Array(encrypted), iv.byteLength);
+        return `__ENC__:${this.namespace}:${this.arrayBufferToBase64(combined.buffer)}`;
+    }
+
+    async decryptValue(value) {
+        if (!this.isEncryptedValue(value)) return value || '';
+        const parts = value.split(':');
+        const payload = parts.slice(2).join(':');
+        if (payload.startsWith('plain:')) {
+            return decodeURIComponent(escape(atob(payload.slice(6))));
+        }
+        if (!globalThis.crypto?.subtle) {
+            throw new Error('当前环境不支持 Web Crypto，无法解密 API Key。');
+        }
+        const combined = this.base64ToArrayBuffer(payload);
+        const iv = combined.slice(0, 12);
+        const encrypted = combined.slice(12);
+        const key = await this.deriveKey();
+        const decrypted = await globalThis.crypto.subtle.decrypt(
+            { name: 'AES-GCM', iv: new Uint8Array(iv) },
+            key,
+            new Uint8Array(encrypted)
+        );
+        return this.decoder.decode(decrypted);
+    }
+
+    async deriveKey() {
+        const keyMaterial = await globalThis.crypto.subtle.importKey(
+            'raw',
+            this.encoder.encode(this.passphrase),
+            'PBKDF2',
+            false,
+            ['deriveKey']
+        );
+        return globalThis.crypto.subtle.deriveKey(
+            {
+                name: 'PBKDF2',
+                salt: this.encoder.encode(`obsidian-utils-encrypted-settings-v1:${this.namespace}`),
+                iterations: 100000,
+                hash: 'SHA-256',
+            },
+            keyMaterial,
+            { name: 'AES-GCM', length: 256 },
+            false,
+            ['encrypt', 'decrypt']
+        );
+    }
+
+    arrayBufferToBase64(buffer) {
+        const bytes = new Uint8Array(buffer);
+        let binary = '';
+        for (let i = 0; i < bytes.byteLength; i++) {
+            binary += String.fromCharCode(bytes[i]);
+        }
+        return btoa(binary);
+    }
+
+    base64ToArrayBuffer(base64) {
+        const binary = atob(base64);
+        const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i++) {
+            bytes[i] = binary.charCodeAt(i);
+        }
+        return bytes;
+    }
+}
 
 const STRUCTURIZER_DEFAULT_PROMPT = `你是一位非常精准的笔记结构化编辑。你的任务是优化给定文本的结构和可读性，同时严格遵守以下规则。
 
@@ -217,6 +320,9 @@ const DEFAULT_SETTINGS = {
         tagger: true,
         mover: true,
     },
+    rollbackHistory: [],
+    rollbackRedoHistory: [],
+    customActions: [],
 
 
 
@@ -237,13 +343,16 @@ class AssistantView extends ItemView {
     getIcon() { return "anchor"; }
 
     async onOpen() {
+        if (!this.fileWatcherRef) this.setupFileWatcher();
         this.render();
     }
 
     onClose() {
         // 清理文件监听
+        if (this.refreshTimeout) clearTimeout(this.refreshTimeout);
         if (this.fileWatcherRef) {
             this.plugin.app.workspace.offref(this.fileWatcherRef);
+            this.fileWatcherRef = null;
         }
     }
 
@@ -295,14 +404,18 @@ class AssistantView extends ItemView {
         const container = this.containerEl.children[1];
         container.empty();
         const viewContainer = container.createDiv({ cls: "ai-assistant-view-container" });
-        const titleEl = viewContainer.createEl("h2", { text: "AI 助手一键处理" });
-        titleEl.style.textAlign = "center";
+        const heading = viewContainer.createDiv({ cls: 'ai-assistant-workspace-heading' });
+        heading.createEl('h2', { text: '整理笔记' });
+        heading.createEl('p', { text: '选择要整理的内容，逐项审阅结果。' });
+        const activeNote = this.plugin.app.workspace.getActiveFile();
+        heading.createDiv({ cls: 'ai-assistant-note-context', text: activeNote ? activeNote.basename : '先打开一篇笔记' });
+        this.renderCurrentRequestBanner(viewContainer);
 
         // --- One-Click Process Toggles ---
         const buttonGroup = viewContainer.createDiv({ cls: "ai-assistant-button-group" });
         buttonGroup.style.display = 'flex';
         buttonGroup.style.gap = '8px';
-        buttonGroup.style.justifyContent = 'center';
+        buttonGroup.style.flexWrap = 'wrap';
         buttonGroup.style.marginBottom = '1em';
 
         const actions = [
@@ -316,6 +429,7 @@ class AssistantView extends ItemView {
         actions.forEach(action => {
             const button = buttonGroup.createEl('button');
             button.setText(action.name);
+            button.setAttribute('aria-pressed', String(!!this.plugin.settings.oneClickProcessActions[action.key]));
 
             if (this.plugin.settings.oneClickProcessActions[action.key]) {
                 button.addClass('mod-cta');
@@ -326,12 +440,14 @@ class AssistantView extends ItemView {
                 this.plugin.settings.oneClickProcessActions[action.key] = newValue;
                 await this.plugin.saveSettings();
                 button.toggleClass('mod-cta', newValue);
+                button.setAttribute('aria-pressed', String(newValue));
                 new Notice(`"${action.name}" 已${newValue ? '开启' : '关闭'}`);
             });
         });
 
         const runButton = buttonGroup.createEl('button');
-        runButton.setText('🚀');
+        runButton.setText('开始整理');
+        runButton.addClass('mod-cta', 'ai-assistant-run');
         runButton.setAttribute('title', '对当前笔记执行已选的一键处理流程');
         runButton.addEventListener('click', () => {
             this.plugin.runOneClickSmartProcess();
@@ -343,14 +459,14 @@ class AssistantView extends ItemView {
         // --- 处理结果区域 (优先显示) ---
         const tasksContainer = viewContainer.createDiv({ cls: "ai-assistant-tasks-container" });
         if (this.tasks.length === 0) {
-            const placeholder = tasksContainer.createEl("p", { text: "暂无处理结果" });
+            const placeholder = tasksContainer.createEl("p", { text: "结果会显示在这里。先选择上方操作，再开始整理。" });
             placeholder.style.textAlign = "center";
             placeholder.style.color = "var(--text-muted)";
             placeholder.style.fontSize = "var(--font-ui-small)";
             placeholder.style.margin = "8px 0";
         } else {
             // 添加结果标题
-            const resultsTitle = tasksContainer.createEl("h3", { text: "🎯 处理结果" });
+            const resultsTitle = tasksContainer.createEl("h3", { text: "待审阅结果" });
             resultsTitle.style.margin = "0 0 12px 0";
             resultsTitle.style.fontSize = "var(--font-ui-medium)";
             resultsTitle.style.color = "var(--text-normal)";
@@ -367,13 +483,22 @@ class AssistantView extends ItemView {
         this.renderRecentHistory(viewContainer);
 
         // --- 使用统计 ---
-        this.renderUsageStats(viewContainer);
+        const diagnostics = viewContainer.createEl('details', { cls: 'ai-assistant-diagnostics' });
+        diagnostics.createEl('summary', { text: '使用情况与连接信息' });
+        this.renderUsageStats(diagnostics);
+        this.renderFileInfo(diagnostics);
+        this.renderAIStatus(diagnostics);
+    }
 
-        // --- 文件信息区域 ---
-        this.renderFileInfo(viewContainer);
-
-        // --- AI状态监控 ---
-        this.renderAIStatus(viewContainer);
+    renderCurrentRequestBanner(container) {
+        if (!this.plugin.currentAbortController || this.plugin.currentAbortController.signal.aborted) {
+            return;
+        }
+        const banner = container.createDiv({ cls: "ai-assistant-active-request" });
+        const label = this.plugin.currentRequestLabel || 'AI 请求';
+        banner.createEl("span", { text: `正在运行: ${label}` });
+        const cancelButton = banner.createEl("button", { text: "取消" });
+        cancelButton.addEventListener("click", () => this.plugin.cancelCurrentRequest('用户取消'));
     }
 
     renderTask(container, task) {
@@ -420,7 +545,18 @@ class AssistantView extends ItemView {
         }
 
         if (task.status === 'loading') {
-            card.createEl("p", { text: "AI 正在处理中，请稍候..." });
+            card.createEl("p", { text: task.message || "AI 正在处理中，请稍候..." });
+            const streamingContent = task.streamingContent || task.content?.streamingContent;
+            const chars = streamingContent ? streamingContent.length : 0;
+            const meta = card.createDiv({ cls: "ai-assistant-streaming-meta" });
+            meta.setText(chars > 0 ? `Streaming · 已接收 ${chars} 字` : 'Streaming · 等待首个响应片段');
+            if (streamingContent) {
+                const streamBox = card.createEl("pre", { cls: "ai-assistant-streaming-output" });
+                streamBox.setText(streamingContent + '▌');
+            }
+            const buttonContainer = card.createDiv({ cls: "ai-assistant-button-container" });
+            const cancelButton = buttonContainer.createEl("button", { text: "取消当前请求" });
+            cancelButton.addEventListener("click", () => this.plugin.cancelCurrentRequest('用户取消'));
         } else if (task.status === 'displaying') {
             switch (task.type) {
                 case 'mover':
@@ -437,6 +573,16 @@ class AssistantView extends ItemView {
                     break;
                 case 'structurizer':
                     this.renderStructurizerTask(card, task);
+                    break;
+                case 'furigana':
+                    this.renderStructurizerTask(card, task);
+                    break;
+                case 'diff-preview':
+                    this.renderDiffPreviewTask(card, task);
+                    break;
+                case 'quick-action':
+                case 'custom-action':
+                    this.renderResultTask(card, task);
                     break;
                 case 'batch-process':
                     this.renderBatchProcessTask(card, task);
@@ -1039,6 +1185,59 @@ class AssistantView extends ItemView {
         closeButton.addEventListener("click", () => this.removeTask(task.id));
     }
 
+    renderDiffPreviewTask(card, task) {
+        const content = task.content || {};
+        const stats = this.plugin.getDiffStats(content.originalContent || '', content.proposedContent || '');
+        const summary = card.createDiv({ cls: "ai-assistant-diff-summary" });
+        summary.createEl("span", {
+            text: `${content.action || 'AI 变更'} · ${stats.beforeLines} 行 → ${stats.afterLines} 行`
+        });
+        if (content.applied) {
+            summary.createEl("span", { text: "已应用", cls: "ai-assistant-applied-badge" });
+        }
+
+        const previewWrap = card.createDiv({ cls: "ai-assistant-review-preview" });
+        previewWrap.createEl("h4", { text: "AI 生成内容" });
+        const afterText = previewWrap.createEl("textarea", { cls: "ai-assistant-review-textarea" });
+        afterText.value = content.proposedPreview || content.proposedContent || '';
+        afterText.readOnly = true;
+
+        const details = card.createEl("details", { cls: "ai-assistant-full-diff-details" });
+        details.createEl("summary", { text: "查看原文" });
+        const beforeText = details.createEl("textarea", { cls: "ai-assistant-review-textarea ai-assistant-original-textarea" });
+        beforeText.value = content.originalPreview || content.originalContent || '';
+        beforeText.readOnly = true;
+
+        const buttonContainer = card.createDiv({ cls: "ai-assistant-button-container" });
+        if (!content.applied) {
+            const applyButton = buttonContainer.createEl("button", { text: "应用变更", cls: "mod-cta" });
+            applyButton.addEventListener("click", () => this.plugin.applyDiffPreview(task.id));
+        }
+        const closeButton = buttonContainer.createEl("button", { text: content.applied ? "关闭" : "暂不应用" });
+        closeButton.addEventListener("click", () => this.removeTask(task.id));
+    }
+
+    renderResultTask(card, task) {
+        const content = task.content || {};
+        if (content.originalContent) {
+            const original = card.createDiv({ cls: "ai-assistant-result-section" });
+            original.createEl("h4", { text: "Input" });
+            original.createEl("p", {
+                text: content.originalContent,
+                cls: "ai-assistant-result-preview"
+            });
+        }
+
+        const result = card.createDiv({ cls: "ai-assistant-result-section" });
+        result.createEl("h4", { text: "Result" });
+        const output = result.createEl("pre", { cls: "ai-assistant-result-output" });
+        output.setText(content.result || content.message || '');
+
+        const buttonContainer = card.createDiv({ cls: "ai-assistant-button-container" });
+        const closeButton = buttonContainer.createEl("button", { text: "关闭", cls: "mod-cta" });
+        closeButton.addEventListener("click", () => this.removeTask(task.id));
+    }
+
     // 渲染批量处理任务
     renderBatchProcessTask(card, task) {
         const content = task.content;
@@ -1111,7 +1310,7 @@ class AssistantView extends ItemView {
             <span class="info-icon">📁</span>
             <div class="info-content">
                 <strong>文件夹路径:</strong><br>
-                <code>${content.folderPath}</code>
+                <code>${escapeHtmlText(content.folderPath)}</code>
             </div>
         `;
 
@@ -1175,13 +1374,13 @@ class AssistantView extends ItemView {
 
         // 标题区域，包含刷新按钮
         const titleContainer = section.createDiv({ cls: "section-title-container" });
-        const title = titleContainer.createEl("h3", { text: "🚀 快速操作" });
+        const title = titleContainer.createEl("h3", { text: "快速操作" });
         title.style.margin = "0";
         title.style.flex = "1";
 
         // 刷新按钮放在标题旁边
         const refreshBtn = titleContainer.createEl("button", {
-            text: "🔄",
+            text: "刷新",
             cls: "ai-assistant-refresh-btn"
         });
         refreshBtn.title = "刷新面板";
@@ -1193,6 +1392,18 @@ class AssistantView extends ItemView {
         const actionGrid = section.createDiv({ cls: "ai-assistant-action-grid" });
 
         const actions = [
+            {
+                name: "回滚上次",
+                icon: "↩",
+                desc: "恢复最近一次应用的内容变更",
+                action: () => this.plugin.rollbackLastChange()
+            },
+            {
+                name: "撤销回滚",
+                icon: "↪",
+                desc: "重新应用刚刚回滚的 AI 变更",
+                action: () => this.plugin.redoLastRollback()
+            },
             {
                 name: "批量处理",
                 icon: "📦",
@@ -1210,6 +1421,16 @@ class AssistantView extends ItemView {
                 }
             }
         ];
+
+        const customActions = (this.plugin.settings.customActions || []).filter(action => action.enabled !== false);
+        customActions.forEach(action => {
+            actions.push({
+                name: action.name || '自定义动作',
+                icon: "✦",
+                desc: this.plugin.getCustomActionModeLabel(action.outputMode),
+                action: () => this.plugin.runCustomAction(action.id)
+            });
+        });
 
         actions.forEach(action => {
             const actionBtn = actionGrid.createDiv({ cls: "ai-assistant-action-btn" });
@@ -1291,7 +1512,7 @@ class AssistantView extends ItemView {
         apiStatus.createEl("span", { text: "API状态:", cls: "status-label" });
         const apiIndicator = apiStatus.createEl("span", { cls: "status-indicator" });
 
-        const hasValidConfig = this.plugin.settings.apiConfigs?.some(c => c.enabled !== false && c.apiKey);
+        const hasValidConfig = this.plugin.settings.apiConfigs?.some(c => c.enabled !== false && this.plugin.hasStoredApiKey(c));
         if (hasValidConfig) {
             apiIndicator.setText("🟢 已配置");
             apiIndicator.addClass("status-good");
@@ -1305,8 +1526,9 @@ class AssistantView extends ItemView {
         // 模型信息
         const modelStatus = statusGrid.createDiv({ cls: "status-item" });
         modelStatus.createEl("span", { text: "主模型:", cls: "status-label" });
+        const activeConfig = this.plugin.getActiveApiConfig();
         modelStatus.createEl("span", {
-            text: this.plugin.settings.modelName || "未设置",
+            text: activeConfig?.modelName || "未设置",
             cls: "status-value"
         });
     }
@@ -1666,7 +1888,7 @@ class PromptEditModal extends Modal {
         this.previewContent.empty();
 
         // 处理占位符，让它们在预览中更明显
-        const processedContent = content
+        const processedContent = escapeHtmlText(content)
             .replace(/\{\{(\w+)\}\}/g, '<span class="prompt-placeholder">{{$1}}</span>')
             .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
             .replace(/\*(.*?)\*/g, '<em>$1</em>')
@@ -1783,6 +2005,169 @@ class AiAssistantSuite extends Plugin {
 
     debounceTimers = new Map(); // 添加防抖定时器
 
+    initializeSharedServices() {
+        const EncryptedSettingsClass = SharedUtils.EncryptedSettings || FallbackEncryptedSettings;
+        this.encryptedSettings = new EncryptedSettingsClass({
+            namespace: 'ai-assistant-suite'
+        });
+        if (SharedUtils.RequestManager) {
+            this.requestManager = new SharedUtils.RequestManager({
+                maxRetries: 1,
+                timeout: 120000,
+                debug: false
+            });
+        } else {
+            this.requestManager = null;
+        }
+    }
+
+    normalizeSettings() {
+        if (!Array.isArray(this.settings.apiConfigs)) {
+            this.settings.apiConfigs = JSON.parse(JSON.stringify(DEFAULT_SETTINGS.apiConfigs));
+        }
+        this.settings.apiConfigs.forEach((config, index) => {
+            if (!config.id) config.id = `config_${index}_${Date.now()}`;
+            if (!config.name) config.name = `Config ${index + 1}`;
+            if (!config.apiProvider) config.apiProvider = 'openai';
+            if (config.enabled === undefined) config.enabled = true;
+        });
+        if (!this.settings.activeConfigId && this.settings.apiConfigs[0]) {
+            this.settings.activeConfigId = this.settings.apiConfigs[0].id;
+        }
+        if (!Array.isArray(this.settings.rollbackHistory)) {
+            this.settings.rollbackHistory = [];
+        }
+        if (!Array.isArray(this.settings.rollbackRedoHistory)) {
+            this.settings.rollbackRedoHistory = [];
+        }
+        if (!Array.isArray(this.settings.customActions)) {
+            this.settings.customActions = [];
+        }
+    }
+
+    getActiveApiConfig() {
+        return this.settings.apiConfigs?.find(c => c.id === this.settings.activeConfigId) || this.settings.apiConfigs?.[0] || null;
+    }
+
+    getAuxiliaryModelName() {
+        const activeConfig = this.getActiveApiConfig();
+        return activeConfig?.auxiliaryModelName || activeConfig?.modelName || null;
+    }
+
+    hasStoredApiKey(config) {
+        return !!(config?.apiKey && config.apiKey !== REDACTED_API_KEY);
+    }
+
+    async setApiKey(config, value) {
+        if (!config) return;
+        if (!value) {
+            config.apiKey = '';
+            return;
+        }
+        config.apiKey = await this.encryptedSettings.encryptValue(value);
+    }
+
+    async getApiKey(config) {
+        if (!config?.apiKey || config.apiKey === REDACTED_API_KEY) {
+            return '';
+        }
+        if (this.encryptedSettings?.isEncryptedValue?.(config.apiKey)) {
+            return await this.encryptedSettings.decryptValue(config.apiKey);
+        }
+        return config.apiKey;
+    }
+
+    async migrateApiKeys() {
+        let migrated = false;
+        for (const config of this.settings.apiConfigs || []) {
+            if (config.apiKey &&
+                config.apiKey !== REDACTED_API_KEY &&
+                !this.encryptedSettings.isEncryptedValue(config.apiKey)) {
+                config.apiKey = await this.encryptedSettings.encryptValue(config.apiKey);
+                migrated = true;
+            }
+        }
+        return migrated;
+    }
+
+    redactSettingsForExport(settings) {
+        const clone = JSON.parse(JSON.stringify(settings || {}));
+        if (Array.isArray(clone.apiConfigs)) {
+            clone.apiConfigs = clone.apiConfigs.map(config => ({
+                ...config,
+                apiKey: config.apiKey ? REDACTED_API_KEY : ''
+            }));
+        }
+        if (clone.apiKey) {
+            clone.apiKey = REDACTED_API_KEY;
+        }
+        if (Array.isArray(clone.rollbackHistory)) {
+            clone.rollbackHistory = [];
+        }
+        if (Array.isArray(clone.rollbackRedoHistory)) {
+            clone.rollbackRedoHistory = [];
+        }
+        return clone;
+    }
+
+    mergeImportedSettings(importedSettings) {
+        const existingConfigs = new Map((this.settings.apiConfigs || []).map(config => [config.id, config]));
+        const merged = Object.assign({}, JSON.parse(JSON.stringify(DEFAULT_SETTINGS)), importedSettings);
+        if (Array.isArray(importedSettings.apiConfigs)) {
+            merged.apiConfigs = importedSettings.apiConfigs.map(config => {
+                const existing = existingConfigs.get(config.id);
+                if (config.apiKey === REDACTED_API_KEY && existing?.apiKey) {
+                    return { ...config, apiKey: existing.apiKey };
+                }
+                return config;
+            });
+        }
+        return merged;
+    }
+
+    beginAiOperation(label = 'AI 请求') {
+        if (this.currentAbortController && !this.currentAbortController.signal.aborted) {
+            this.cancelCurrentRequest('新的 AI 操作已开始');
+        }
+        this.currentAbortController = new AbortController();
+        this.currentRequestLabel = label;
+        this.view?.render();
+        return this.currentAbortController;
+    }
+
+    finishAiOperation(controller) {
+        if (this.currentAbortController === controller) {
+            this.currentAbortController = null;
+            this.currentRequestLabel = null;
+            this.view?.render();
+        }
+    }
+
+    cancelCurrentRequest(reason = '用户取消') {
+        if (!this.currentAbortController || this.currentAbortController.signal.aborted) {
+            new Notice('当前没有正在运行的 AI 请求。', 2000);
+            return;
+        }
+        this.currentAbortController.abort(reason);
+        this.requestManager?.cancelAll?.();
+        new Notice('AI 请求已取消。', 2500);
+        this.view?.render();
+    }
+
+    isCancellationError(error) {
+        return error?.name === 'AbortError' ||
+            error?.code === 'ABORTED' ||
+            error?.message?.includes('aborted') ||
+            error?.message?.includes('取消');
+    }
+
+    createAbortError(message = 'AI 请求已取消') {
+        const error = new Error(message);
+        error.name = 'AbortError';
+        error.code = 'ABORTED';
+        return error;
+    }
+
     normalizeActionName(action) {
         if (!action) return '其他';
         if (action.includes('标签')) return '标签';
@@ -1888,7 +2273,8 @@ class AiAssistantSuite extends Plugin {
             delete this.settings.apiUrl;
             delete this.settings.modelName;
             delete this.settings.auxiliaryModelName;
-            
+
+            await this.migrateApiKeys();
             await this.saveSettings();
         }
 
@@ -1967,6 +2353,30 @@ class AiAssistantSuite extends Plugin {
             }
         });
 
+        this.addCommand({
+            id: 'cancel-current-ai-request',
+            name: 'AI Suite: Cancel Current AI Request (取消当前请求)',
+            callback: () => {
+                this.cancelCurrentRequest('用户取消');
+            }
+        });
+
+        this.addCommand({
+            id: 'rollback-last-ai-change',
+            name: 'AI Suite: Rollback Last Change (回滚上次修改)',
+            callback: () => {
+                this.rollbackLastChange();
+            }
+        });
+
+        this.addCommand({
+            id: 'redo-last-ai-rollback',
+            name: 'AI Suite: Redo Last Rollback (撤销回滚)',
+            callback: () => {
+                this.redoLastRollback();
+            }
+        });
+
         // 添加批量处理命令
         this.addCommand({
             id: 'run-ai-batch-process',
@@ -2012,6 +2422,8 @@ class AiAssistantSuite extends Plugin {
             }
         });
 
+        this.registerCustomActionCommands();
+
         // This adds a settings tab so the user can configure various aspects of the plugin
         this.addSettingTab(new AiAssistantSettingTab(this.app, this));
     }
@@ -2019,6 +2431,10 @@ class AiAssistantSuite extends Plugin {
     onunload() {
         console.log('Unloading AI Assistant Suite...');
 
+        if (this.currentAbortController && !this.currentAbortController.signal.aborted) {
+            this.currentAbortController.abort('插件卸载');
+        }
+        this.requestManager?.cancelAll?.();
         this.debounceTimers.clear();
     }
 
@@ -2102,7 +2518,7 @@ class AiAssistantSuite extends Plugin {
             return { valid: false, error: '未找到选中的 API 配置。' };
         }
 
-        if (!config.apiKey || (config.apiProvider !== 'gemini' && !config.apiUrl)) {
+        if (!this.hasStoredApiKey(config) || (config.apiProvider !== 'gemini' && !config.apiUrl)) {
             return { valid: false, error: '请填写 API Key (以及 API URL 如果必要)。' };
         }
 
@@ -2198,59 +2614,78 @@ class AiAssistantSuite extends Plugin {
         );
     }
 
-    // 通用API请求方法（支持多 Config 顺序 Fallback）
-    async makeApiRequest(prompt, modelNameOverride = null, expectJson = false, configOverride = null) {
-        // 若传入 configOverride 则直接使用（如测试连接场景），不走 fallback
-        if (configOverride) {
-            return this._callSingleConfig(prompt, modelNameOverride, expectJson, configOverride);
+    // 通用API请求方法（支持多 Config 顺序 Fallback、取消和 OpenAI-compatible streaming）
+    async makeApiRequest(prompt, modelNameOverride = null, expectJson = false, configOverride = null, options = {}) {
+        let operationController = null;
+        const requestOptions = { ...options };
+        if (!requestOptions.signal) {
+            operationController = this.beginAiOperation(requestOptions.label || 'AI 请求');
+            requestOptions.signal = operationController.signal;
         }
 
-        // 构建候选列表：所有 enabled 的 configs，顺序即优先级
-        const allConfigs = this.settings.apiConfigs || [];
-        const candidates = allConfigs.filter(c => c.enabled !== false); // 未设置 enabled 视为 true（向后兼容）
+        try {
+            if (configOverride) {
+                return await this._callSingleConfig(prompt, modelNameOverride, expectJson, configOverride, requestOptions);
+            }
 
-        if (candidates.length === 0) {
-            throw new Error("没有可用的 API 配置，请在设置中至少启用一个配置。");
-        }
+            const allConfigs = this.settings.apiConfigs || [];
+            const candidates = allConfigs.filter(c => c.enabled !== false && this.hasStoredApiKey(c));
 
-        const errors = [];
-        for (let i = 0; i < candidates.length; i++) {
-            const config = candidates[i];
-            const label = config.name || config.id;
-            try {
-                console.log(`[AI Assistant] 尝试配置 #${i + 1}: ${label}`);
-                const result = await this._callSingleConfig(prompt, modelNameOverride, expectJson, config);
-                if (i > 0) {
-                    new Notice(`✅ 已切换到备用配置「${label}」并成功`);
+            if (candidates.length === 0) {
+                throw new Error("没有可用的 API 配置，请在设置中至少启用一个配置。");
+            }
+
+            const errors = [];
+            for (let i = 0; i < candidates.length; i++) {
+                if (requestOptions.signal?.aborted) {
+                    throw this.createAbortError();
                 }
-                return result;
-            } catch (err) {
-                const msg = `配置「${label}」失败: ${err.message}`;
-                errors.push(msg);
-                console.warn(`[AI Assistant] ${msg}`);
-                if (i < candidates.length - 1) {
-                    new Notice(`⚠️ ${label} 失败，尝试下一个配置...`, 2000);
+                const config = candidates[i];
+                const label = config.name || config.id;
+                try {
+                    console.log(`[AI Assistant] 尝试配置 #${i + 1}: ${label}`);
+                    const result = await this._callSingleConfig(prompt, modelNameOverride, expectJson, config, requestOptions);
+                    if (i > 0) {
+                        new Notice(`已切换到备用配置「${label}」并成功`);
+                    }
+                    return result;
+                } catch (err) {
+                    if (requestOptions.signal?.aborted || this.isCancellationError(err)) {
+                        throw this.createAbortError();
+                    }
+                    const msg = `配置「${label}」失败: ${err.message}`;
+                    errors.push(msg);
+                    console.warn(`[AI Assistant] ${msg}`);
+                    if (i < candidates.length - 1) {
+                        new Notice(`${label} 失败，尝试下一个配置...`, 2000);
+                    }
                 }
             }
-        }
 
-        // 全部失败
-        throw new Error(`所有 API 配置均失败（共 ${candidates.length} 个）。\n最后错误: ${errors[errors.length - 1]}`);
+            throw new Error(`所有 API 配置均失败（共 ${candidates.length} 个）。\n最后错误: ${errors[errors.length - 1]}`);
+        } finally {
+            if (operationController) {
+                this.finishAiOperation(operationController);
+            }
+        }
     }
 
     // 对单个 config 执行实际的 API 请求
-    async _callSingleConfig(prompt, modelNameOverride, expectJson, activeConfig) {
+    async _callSingleConfig(prompt, modelNameOverride, expectJson, activeConfig, options = {}) {
         const model = modelNameOverride || activeConfig.modelName;
         const provider = activeConfig.apiProvider || 'openai';
+        const apiKey = await this.getApiKey(activeConfig);
 
-        if (!activeConfig.apiKey) {
+        if (!apiKey) {
             throw new Error('API Key 为空，请在设置中填写。');
         }
 
         let url, requestOptions;
 
         if (provider === 'gemini') {
-            url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${activeConfig.apiKey}`;
+            url = options.stream && !expectJson
+                ? `https://generativelanguage.googleapis.com/v1beta/models/${model}:streamGenerateContent?alt=sse`
+                : `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
             const body = {
                 contents: [{ parts: [{ text: prompt }] }]
             };
@@ -2259,7 +2694,10 @@ class AiAssistantSuite extends Plugin {
             }
             requestOptions = {
                 method: "POST",
-                headers: { "Content-Type": "application/json" },
+                headers: {
+                    "Content-Type": "application/json",
+                    "x-goog-api-key": apiKey
+                },
                 body: JSON.stringify(body)
             };
         } else {
@@ -2274,25 +2712,27 @@ class AiAssistantSuite extends Plugin {
             if (expectJson) {
                 body.response_format = { type: "json_object" };
             }
+            if (options.stream && !expectJson) {
+                body.stream = true;
+            }
             requestOptions = {
                 method: "POST",
                 headers: {
                     "Content-Type": "application/json",
-                    "Authorization": `Bearer ${activeConfig.apiKey}`
+                    "Authorization": `Bearer ${apiKey}`
                 },
                 body: JSON.stringify(body)
             };
         }
 
-        const response = await fetch(url, requestOptions);
-
-        if (!response.ok) {
-            const errorText = await response.text();
-            console.error("API Error Response:", errorText);
-            throw new Error(`HTTP ${response.status} ${response.statusText}. ${errorText.substring(0, 200)}`);
+        if (options.stream && provider !== 'gemini' && !expectJson) {
+            return await this.callOpenAiStreaming(url, requestOptions, options);
+        }
+        if (options.stream && provider === 'gemini' && !expectJson) {
+            return await this.callGeminiStreaming(url, requestOptions, options);
         }
 
-        const data = await response.json();
+        const data = await this.executeJsonRequest(url, requestOptions, options);
 
         let resultText = "";
         if (provider === 'gemini') {
@@ -2309,7 +2749,326 @@ class AiAssistantSuite extends Plugin {
         return resultText;
     }
 
-    // 批量处理文件
+    async executeJsonRequest(url, requestOptions, options = {}) {
+        if (options.signal?.aborted) {
+            throw this.createAbortError();
+        }
+
+        try {
+            if (this.requestManager && !options.forceFetch) {
+                const response = await this.requestManager.request({
+                    url,
+                    method: requestOptions.method || 'POST',
+                    headers: requestOptions.headers || {},
+                    body: requestOptions.body,
+                    signal: options.signal,
+                    timeout: options.timeout || 120000,
+                    maxRetries: options.maxRetries ?? 1
+                });
+                if (response.json) return response.json;
+                return JSON.parse(response.text);
+            }
+
+            const response = await fetch(url, {
+                ...requestOptions,
+                signal: options.signal
+            });
+            const text = await response.text();
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status} ${response.statusText}. ${text.substring(0, 200)}`);
+            }
+            return JSON.parse(text);
+        } catch (error) {
+            if (options.signal?.aborted || this.isCancellationError(error)) {
+                throw this.createAbortError();
+            }
+            if (error.response) {
+                throw new Error(`HTTP ${error.status || error.response.status}. ${(error.response.text || '').substring(0, 200)}`);
+            }
+            throw error;
+        }
+    }
+
+    async callOpenAiStreaming(url, requestOptions, options = {}) {
+        const response = await fetch(url, {
+            ...requestOptions,
+            signal: options.signal
+        });
+
+        if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(`HTTP ${response.status} ${response.statusText}. ${errorText.substring(0, 200)}`);
+        }
+
+        if (!response.body?.getReader) {
+            const data = await response.json();
+            return data.choices?.[0]?.message?.content || '';
+        }
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        let accumulated = '';
+
+        while (true) {
+            if (options.signal?.aborted) {
+                try { await reader.cancel(); } catch (error) {}
+                throw this.createAbortError();
+            }
+            const { value, done } = await reader.read();
+            if (done) break;
+
+            buffer += decoder.decode(value, { stream: true });
+            const events = buffer.split(/\r?\n\r?\n/);
+            buffer = events.pop() || '';
+
+            for (const event of events) {
+                const lines = event.split(/\r?\n/).filter(line => line.startsWith('data:'));
+                for (const line of lines) {
+                    const payload = line.replace(/^data:\s*/, '').trim();
+                    if (!payload) continue;
+                    if (payload === '[DONE]') {
+                        return accumulated;
+                    }
+                    try {
+                        const json = JSON.parse(payload);
+                        const delta = json.choices?.[0]?.delta?.content ||
+                            json.choices?.[0]?.message?.content ||
+                            json.choices?.[0]?.text ||
+                            '';
+                        if (delta) {
+                            accumulated += delta;
+                            options.onStream?.(delta, accumulated);
+                        }
+                    } catch (error) {
+                        console.warn('[AI Assistant] 无法解析 streaming chunk');
+                    }
+                }
+            }
+        }
+
+        return accumulated;
+    }
+
+    async callGeminiStreaming(url, requestOptions, options = {}) {
+        const response = await fetch(url, {
+            ...requestOptions,
+            signal: options.signal
+        });
+
+        if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(`HTTP ${response.status} ${response.statusText}. ${errorText.substring(0, 200)}`);
+        }
+
+        if (!response.body?.getReader) {
+            const data = await response.json();
+            return data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+        }
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        let accumulated = '';
+
+        while (true) {
+            if (options.signal?.aborted) {
+                try { await reader.cancel(); } catch (error) {}
+                throw this.createAbortError();
+            }
+
+            const { value, done } = await reader.read();
+            if (done) break;
+
+            buffer += decoder.decode(value, { stream: true });
+            const events = buffer.split(/\r?\n\r?\n/);
+            buffer = events.pop() || '';
+
+            for (const event of events) {
+                const lines = event.split(/\r?\n/).filter(line => line.startsWith('data:'));
+                for (const line of lines) {
+                    const payload = line.replace(/^data:\s*/, '').trim();
+                    if (!payload || payload === '[DONE]') continue;
+                    try {
+                        const json = JSON.parse(payload);
+                        const delta = json.candidates?.[0]?.content?.parts
+                            ?.map(part => part.text || '')
+                            .join('') || '';
+                        if (delta) {
+                            accumulated += delta;
+                            options.onStream?.(delta, accumulated);
+                        }
+                    } catch (error) {
+                        console.warn('[AI Assistant] 无法解析 Gemini streaming chunk');
+                    }
+                }
+            }
+        }
+
+        return accumulated;
+    }
+
+    truncatePreview(content, maxChars = 12000) {
+        if (!content || content.length <= maxChars) return content || '';
+        return content.substring(0, maxChars) + `\n\n... 已截断预览，完整内容会在 Apply 时写入 ...`;
+    }
+
+    getDiffStats(originalContent = '', proposedContent = '') {
+        const before = originalContent.split('\n');
+        const after = proposedContent.split('\n');
+        const max = Math.max(before.length, after.length);
+        let changedLines = 0;
+        for (let i = 0; i < max; i++) {
+            if (before[i] !== after[i]) changedLines++;
+        }
+        return { changedLines, beforeLines: before.length, afterLines: after.length };
+    }
+
+    async createDiffPreviewTask({ taskId = null, file, action, title, originalContent, proposedContent }) {
+        await this.activateView();
+        const id = taskId || `diff-${Date.now()}`;
+        const task = {
+            id,
+            type: 'diff-preview',
+            status: 'displaying',
+            title: title || `变更预览: ${file.basename}`,
+            content: {
+                file,
+                action,
+                originalContent,
+                proposedContent,
+                originalPreview: this.truncatePreview(originalContent),
+                proposedPreview: this.truncatePreview(proposedContent),
+                applied: false
+            }
+        };
+
+        if (this.view.getTask(id)) {
+            this.view.updateTask(id, task);
+        } else {
+            this.view.addTask(task);
+        }
+        return id;
+    }
+
+    async applyDiffPreview(taskId) {
+        const task = this.view?.getTask(taskId);
+        if (!task || task.type !== 'diff-preview') {
+            new Notice('未找到可应用的变更预览。', 3000);
+            return;
+        }
+
+        const content = task.content || {};
+        const file = content.file;
+        if (!file) {
+            new Notice('变更预览缺少目标文件。', 3000);
+            return;
+        }
+
+        try {
+            await this.applyContentChange(file, content.action || 'AI 变更',
+                content.originalContent, content.proposedContent || '');
+            this.addToHistory(file.basename, file.path, content.action || 'AI 变更', this.generateFileId(file));
+            this.view.updateTask(taskId, {
+                title: `${task.title || '变更预览'} · 已应用`,
+                content: { ...content, applied: true }
+            });
+            new Notice('变更已应用，可用“回滚上次修改”恢复。', 4000);
+        } catch (error) {
+            new Notice(`应用变更失败: ${error.message}`, 5000);
+            console.error('Apply Diff Preview Error:', error);
+        }
+    }
+
+    async saveRollbackSnapshot({ file, action, originalContent, appliedContent }) {
+        const snapshot = {
+            id: `rollback-${Date.now()}`,
+            timestamp: Date.now(),
+            action,
+            filePath: file.path,
+            fileName: file.basename,
+            originalContent,
+            appliedContent
+        };
+        const history = Array.isArray(this.settings.rollbackHistory) ? this.settings.rollbackHistory : [];
+        history.unshift(snapshot);
+        this.settings.rollbackHistory = history.slice(0, 30);
+        this.settings.rollbackRedoHistory = [];
+        await this.saveSettings();
+        return snapshot;
+    }
+
+    queueContentWrite(operation) {
+        const next = (this.contentWriteQueue || Promise.resolve()).then(operation);
+        this.contentWriteQueue = next.catch(() => {});
+        return next;
+    }
+
+    async guardedWrite(file, expected, replacement) {
+        await this.app.vault.process(file, current => {
+            if (current !== expected) {
+                throw new Error('笔记已有新修改，已保留当前内容。请重新预览后再应用。');
+            }
+            return replacement;
+        });
+    }
+
+    applyContentChange(file, action, expected, replacement) {
+        return this.queueContentWrite(async () => {
+            const current = await this.app.vault.read(file);
+            if (expected !== null && current !== expected) {
+                throw new Error('笔记已有新修改，已保留当前内容。请重新生成预览。');
+            }
+            const proposed = typeof replacement === 'function' ? replacement(current) : replacement;
+            if (current === proposed) return;
+            const previousUndo = [...(this.settings.rollbackHistory || [])];
+            const previousRedo = [...(this.settings.rollbackRedoHistory || [])];
+            try {
+                await this.saveRollbackSnapshot({ file, action, originalContent: current, appliedContent: proposed });
+                await this.guardedWrite(file, current, proposed);
+            } catch (error) {
+                this.settings.rollbackHistory = previousUndo;
+                this.settings.rollbackRedoHistory = previousRedo;
+                await this.saveSettings();
+                throw error;
+            }
+        });
+    }
+
+    async rollbackLastChange() {
+        return this.queueContentWrite(async () => {
+            const history = this.settings.rollbackHistory || [];
+            const snapshot = history[0];
+            if (!snapshot) { new Notice('没有可撤销的内容修改。'); return; }
+            const file = this.app.vault.getAbstractFileByPath(snapshot.filePath);
+            if (!file) { new Notice('原笔记已移动或删除，请先找到原文件。'); return; }
+            try {
+                await this.guardedWrite(file, snapshot.appliedContent || '', snapshot.originalContent || '');
+                this.settings.rollbackHistory = history.slice(1);
+                this.settings.rollbackRedoHistory = [snapshot, ...(this.settings.rollbackRedoHistory || [])].slice(0, 30);
+                await this.saveSettings();
+                new Notice(`已撤销：${snapshot.fileName}`);
+            } catch (error) { new Notice(`无法撤销：${error.message}`, 6000); }
+        });
+    }
+
+    async redoLastRollback() {
+        return this.queueContentWrite(async () => {
+            const history = this.settings.rollbackRedoHistory || [];
+            const snapshot = history[0];
+            if (!snapshot) { new Notice('没有可重做的修改。'); return; }
+            const file = this.app.vault.getAbstractFileByPath(snapshot.filePath);
+            if (!file) { new Notice('原笔记已移动或删除，请先找到原文件。'); return; }
+            try {
+                await this.guardedWrite(file, snapshot.originalContent || '', snapshot.appliedContent || '');
+                this.settings.rollbackRedoHistory = history.slice(1);
+                this.settings.rollbackHistory = [snapshot, ...(this.settings.rollbackHistory || [])].slice(0, 30);
+                await this.saveSettings();
+                new Notice(`已重做：${snapshot.fileName}`);
+            } catch (error) { new Notice(`无法重做：${error.message}`, 6000); }
+        });
+    }
+
     async runBatchProcess(selectedFiles = null) {
         if (!selectedFiles) {
             const files = this.app.vault.getMarkdownFiles();
@@ -2457,7 +3216,7 @@ class AiAssistantSuite extends Plugin {
     async runAiStructurizer(showCompletionCard = true, targetFile = null) {
         const app = this.app;
 
-        const hasEnabledConfig = this.settings.apiConfigs && this.settings.apiConfigs.some(c => c.enabled !== false && c.apiKey);
+        const hasEnabledConfig = this.settings.apiConfigs && this.settings.apiConfigs.some(c => c.enabled !== false && this.hasStoredApiKey(c));
         if (!hasEnabledConfig) {
             new Notice('请先在AI Assistant Suite插件设置中添加并启用至少一个API配置（需填写API Key）。');
             return;
@@ -2474,33 +3233,39 @@ class AiAssistantSuite extends Plugin {
         const activeEditor = !targetFile ? app.workspace.activeEditor?.editor : null;
         let isSelection = false;
         let originalFrontmatter = "";
+        let originalFullContent = await app.vault.read(currentFile);
+        let selectionStartOffset = null;
+        let selectionEndOffset = null;
 
         // Only process selection if explicitly interactive and selection exists
         if (activeEditor && activeEditor.getSelection()) {
             contentToProcess = activeEditor.getSelection();
             isSelection = true;
+            if (activeEditor.posToOffset && activeEditor.getCursor) {
+                selectionStartOffset = activeEditor.posToOffset(activeEditor.getCursor('from'));
+                selectionEndOffset = activeEditor.posToOffset(activeEditor.getCursor('to'));
+            }
         } else {
-            const fullFileContent = await app.vault.read(currentFile);
             const fileCache = app.metadataCache.getFileCache(currentFile);
 
             let fmFoundByAPI = false;
             if (fileCache && fileCache.frontmatter && fileCache.frontmatter.position && fileCache.frontmatter.position.end.offset) {
                 const fmEndOffset = fileCache.frontmatter.position.end.offset;
-                originalFrontmatter = fullFileContent.substring(0, fmEndOffset);
-                contentToProcess = fullFileContent.substring(fmEndOffset);
+                originalFrontmatter = originalFullContent.substring(0, fmEndOffset);
+                contentToProcess = originalFullContent.substring(fmEndOffset);
                 fmFoundByAPI = true;
             }
 
-            if (!fmFoundByAPI && fullFileContent.trim().startsWith('---')) {
-                const match = fullFileContent.match(/^(---[\s\S]*?---\s*)/);
+            if (!fmFoundByAPI && originalFullContent.trim().startsWith('---')) {
+                const match = originalFullContent.match(/^(---[\s\S]*?---\s*)/);
                 if (match) {
                     originalFrontmatter = match[1];
-                    contentToProcess = fullFileContent.substring(originalFrontmatter.length);
+                    contentToProcess = originalFullContent.substring(originalFrontmatter.length);
                 } else {
-                    contentToProcess = fullFileContent;
+                    contentToProcess = originalFullContent;
                 }
             } else if (!fmFoundByAPI) {
-                contentToProcess = fullFileContent;
+                contentToProcess = originalFullContent;
             }
         }
 
@@ -2510,45 +3275,62 @@ class AiAssistantSuite extends Plugin {
         }
 
         let progressNotice = new Notice("AI 正在重构您的笔记结构...", 0);
+        let taskId = `structurizer-${Date.now()}`;
         try {
+            await this.activateView();
+            this.view.addTask({
+                id: taskId,
+                type: 'structurizer',
+                status: 'loading',
+                title: `结构优化生成中: ${currentFile.basename}`,
+                message: '正在接收 AI 输出...',
+                content: { file: currentFile, streamingContent: '' }
+            });
+
             const prompt = this.getStructurizerPrompt(contentToProcess);
 
-            const newContent = await this.makeApiRequest(prompt);
+            const newContent = await this.makeApiRequest(prompt, null, false, null, {
+                label: '结构优化',
+                stream: true,
+                onStream: (_delta, accumulated) => {
+                    this.view?.updateTask(taskId, {
+                        streamingContent: accumulated,
+                        content: { file: currentFile, streamingContent: accumulated }
+                    });
+                }
+            });
 
+            let proposedContent;
             if (isSelection && activeEditor) {
-                // Check if the active editor is still the same file
-                const activeFile = app.workspace.getActiveFile();
-                if (activeFile && activeFile.path === currentFile.path) {
-                    activeEditor.replaceSelection(newContent);
+                const replacement = newContent.trim();
+                if (selectionStartOffset !== null && selectionEndOffset !== null) {
+                    proposedContent = originalFullContent.substring(0, selectionStartOffset) +
+                        replacement +
+                        originalFullContent.substring(selectionEndOffset);
                 } else {
-                    new Notice("文件焦点已改变，无法替换选区。请保持文件激活状态。", 5000);
+                    proposedContent = originalFullContent.replace(contentToProcess, replacement);
                 }
             } else {
-                const finalContent = originalFrontmatter + newContent.trim();
-                // ALWAYS use vault.modify for file-level changes to ensure safety in background
-                await app.vault.modify(currentFile, finalContent);
+                proposedContent = originalFrontmatter + newContent.trim();
             }
 
             progressNotice.hide();
-            new Notice("笔记结构已成功优化！", 5000);
-
-            // 添加到历史记录
-            this.addToHistory(currentFile.basename, currentFile.path, "结构优化", this.generateFileId(currentFile));
-
-            if (showCompletionCard) {
-                await this.activateView();
-                const taskId = `structurizer-${Date.now()}`;
-                this.view.addTask({
-                    id: taskId,
-                    type: 'structurizer',
-                    status: 'displaying',
-                    title: `结构优化完成: ${currentFile.basename}`,
-                    content: { file: currentFile }
-                });
-            }
+            await this.createDiffPreviewTask({
+                taskId,
+                file: currentFile,
+                action: "结构优化",
+                title: `结构优化预览: ${currentFile.basename}`,
+                originalContent: originalFullContent,
+                proposedContent
+            });
+            new Notice("结构优化预览已生成，请在侧边栏确认 Apply。", 5000);
 
         } catch (error) {
             progressNotice?.hide();
+            if (this.isCancellationError(error)) {
+                this.view?.removeTask(taskId);
+                return;
+            }
             new Notice(`处理失败: ${error.message}`, 0);
             console.error("AI Structurizer Error:", error);
         }
@@ -2557,7 +3339,7 @@ class AiAssistantSuite extends Plugin {
     async runAiFurigana(showCompletionCard = true, targetFile = null, showProgressNotice = true) {
         const app = this.app;
 
-        const hasEnabledConfig = this.settings.apiConfigs && this.settings.apiConfigs.some(c => c.enabled !== false && c.apiKey);
+        const hasEnabledConfig = this.settings.apiConfigs && this.settings.apiConfigs.some(c => c.enabled !== false && this.hasStoredApiKey(c));
         if (!hasEnabledConfig) {
             new Notice('请先在AI Assistant Suite插件设置中添加并启用至少一个API配置（需填写API Key）。');
             return;
@@ -2574,32 +3356,38 @@ class AiAssistantSuite extends Plugin {
         const activeEditor = !targetFile ? app.workspace.activeEditor?.editor : null;
         let isSelection = false;
         let originalFrontmatter = "";
+        let originalFullContent = await app.vault.read(currentFile);
+        let selectionStartOffset = null;
+        let selectionEndOffset = null;
 
         if (activeEditor && activeEditor.getSelection()) {
             contentToProcess = activeEditor.getSelection();
             isSelection = true;
+            if (activeEditor.posToOffset && activeEditor.getCursor) {
+                selectionStartOffset = activeEditor.posToOffset(activeEditor.getCursor('from'));
+                selectionEndOffset = activeEditor.posToOffset(activeEditor.getCursor('to'));
+            }
         } else {
-            const fullFileContent = await app.vault.read(currentFile);
             const fileCache = app.metadataCache.getFileCache(currentFile);
 
             let fmFoundByAPI = false;
             if (fileCache && fileCache.frontmatter && fileCache.frontmatter.position && fileCache.frontmatter.position.end.offset) {
                 const fmEndOffset = fileCache.frontmatter.position.end.offset;
-                originalFrontmatter = fullFileContent.substring(0, fmEndOffset);
-                contentToProcess = fullFileContent.substring(fmEndOffset);
+                originalFrontmatter = originalFullContent.substring(0, fmEndOffset);
+                contentToProcess = originalFullContent.substring(fmEndOffset);
                 fmFoundByAPI = true;
             }
 
-            if (!fmFoundByAPI && fullFileContent.trim().startsWith('---')) {
-                const match = fullFileContent.match(/^(---[\s\S]*?---\s*)/);
+            if (!fmFoundByAPI && originalFullContent.trim().startsWith('---')) {
+                const match = originalFullContent.match(/^(---[\s\S]*?---\s*)/);
                 if (match) {
                     originalFrontmatter = match[1];
-                    contentToProcess = fullFileContent.substring(originalFrontmatter.length);
+                    contentToProcess = originalFullContent.substring(originalFrontmatter.length);
                 } else {
-                    contentToProcess = fullFileContent;
+                    contentToProcess = originalFullContent;
                 }
             } else if (!fmFoundByAPI) {
-                contentToProcess = fullFileContent;
+                contentToProcess = originalFullContent;
             }
         }
 
@@ -2609,10 +3397,30 @@ class AiAssistantSuite extends Plugin {
         }
 
         let progressNotice = showProgressNotice ? new Notice("AI 正在为日文汉字添加假名注音...", 0) : null;
+        let taskId = `furigana-${Date.now()}`;
         try {
+            await this.activateView();
+            this.view.addTask({
+                id: taskId,
+                type: 'furigana',
+                status: 'loading',
+                title: `假名标注生成中: ${currentFile.basename}`,
+                message: '正在接收 AI 输出...',
+                content: { file: currentFile, streamingContent: '' }
+            });
+
             const prompt = this.getFuriganaPrompt(contentToProcess);
 
-            const newContent = await this.makeApiRequest(prompt);
+            const newContent = await this.makeApiRequest(prompt, null, false, null, {
+                label: '假名标注',
+                stream: true,
+                onStream: (_delta, accumulated) => {
+                    this.view?.updateTask(taskId, {
+                        streamingContent: accumulated,
+                        content: { file: currentFile, streamingContent: accumulated }
+                    });
+                }
+            });
 
             // 清理可能的代码块标记
             let cleanedContent = newContent.trim();
@@ -2630,40 +3438,36 @@ class AiAssistantSuite extends Plugin {
             // 修正 inline code 中错误的 ruby：强制改成 括号假名 形式
             cleanedContent = this.convertRubyInInlineCode(cleanedContent);
 
+            let proposedContent;
             if (isSelection && activeEditor) {
-                // Check if the active editor is still the same file
-                const activeFile = app.workspace.getActiveFile();
-                if (activeFile && activeFile.path === currentFile.path) {
-                    activeEditor.replaceSelection(cleanedContent);
+                if (selectionStartOffset !== null && selectionEndOffset !== null) {
+                    proposedContent = originalFullContent.substring(0, selectionStartOffset) +
+                        cleanedContent +
+                        originalFullContent.substring(selectionEndOffset);
                 } else {
-                    new Notice("文件焦点已改变，无法替换选区。请保持文件激活状态。", 5000);
+                    proposedContent = originalFullContent.replace(contentToProcess, cleanedContent);
                 }
             } else {
-                const finalContent = originalFrontmatter + cleanedContent;
-                // ALWAYS use vault.modify for file-level changes
-                await app.vault.modify(currentFile, finalContent);
+                proposedContent = originalFrontmatter + cleanedContent;
             }
 
             progressNotice?.hide();
-            new Notice("日文假名注音已成功添加！", 5000);
-
-            // 添加到历史记录
-            this.addToHistory(currentFile.basename, currentFile.path, "日文假名标注", this.generateFileId(currentFile));
-
-            if (showCompletionCard) {
-                await this.activateView();
-                const taskId = `furigana-${Date.now()}`;
-                this.view.addTask({
-                    id: taskId,
-                    type: 'furigana',
-                    status: 'displaying',
-                    title: `假名标注完成: ${currentFile.basename}`,
-                    content: { file: currentFile }
-                });
-            }
+            await this.createDiffPreviewTask({
+                taskId,
+                file: currentFile,
+                action: "日文假名标注",
+                title: `假名标注预览: ${currentFile.basename}`,
+                originalContent: originalFullContent,
+                proposedContent
+            });
+            new Notice("假名标注预览已生成，请在侧边栏确认 Apply。", 5000);
 
         } catch (error) {
             progressNotice?.hide();
+            if (this.isCancellationError(error)) {
+                this.view?.removeTask(taskId);
+                return;
+            }
             new Notice(`处理失败: ${error.message}`, 0);
             console.error("AI Furigana Error:", error);
         }
@@ -2677,7 +3481,7 @@ class AiAssistantSuite extends Plugin {
             new Notice("没有活动的笔记文件。");
             return;
         }
-        const hasEnabledConfig = this.settings.apiConfigs && this.settings.apiConfigs.some(c => c.enabled !== false && c.apiKey);
+        const hasEnabledConfig = this.settings.apiConfigs && this.settings.apiConfigs.some(c => c.enabled !== false && this.hasStoredApiKey(c));
         if (!hasEnabledConfig) {
             new Notice('请先在AI Assistant Suite插件设置中添加并启用至少一个API配置（需填写API Key）。');
             return;
@@ -2746,6 +3550,9 @@ class AiAssistantSuite extends Plugin {
 
         } catch (error) {
             if (progressNotice) progressNotice.hide();
+            if (this.isCancellationError(error)) {
+                return;
+            }
             new Notice(`处理失败: ${error.message}`, 0);
             console.error("aiMover Script Error:", error);
         }
@@ -2759,7 +3566,7 @@ class AiAssistantSuite extends Plugin {
             new Notice("没有活动的笔记文件。");
             return;
         }
-        const hasEnabledConfig = this.settings.apiConfigs && this.settings.apiConfigs.some(c => c.enabled !== false && c.apiKey);
+        const hasEnabledConfig = this.settings.apiConfigs && this.settings.apiConfigs.some(c => c.enabled !== false && this.hasStoredApiKey(c));
         if (!hasEnabledConfig) {
             new Notice('请先在AI Assistant Suite插件设置中添加并启用至少一个API配置（需填写API Key）。');
             return;
@@ -2784,6 +3591,7 @@ class AiAssistantSuite extends Plugin {
         }
 
         let progressNotice = new Notice("正在准备 AI 标签助手...", 0);
+        let taskId = null;
         try {
             progressNotice.setMessage("正在扫描知识库中的所有标签...");
             const allTagsFromCache = this.app.metadataCache.getTags();
@@ -2793,7 +3601,7 @@ class AiAssistantSuite extends Plugin {
             const taggerPrompt = this.getTaggerPrompt(existingTags, content);
 
             await this.activateView();
-            let taskId = `tagger-${Date.now()}`;
+            taskId = `tagger-${Date.now()}`;
             this.view.addTask({
                 id: taskId,
                 type: 'tagger',
@@ -2839,7 +3647,7 @@ class AiAssistantSuite extends Plugin {
                     progressNotice.setMessage(`检测到 ${tagsToTranslate.length} 个长英文标签，正在翻译...`);
                     const translationPrompt = this.getTranslationPrompt(tagsToTranslate);
                     try {
-                        const translationResult = await this.makeApiRequest(translationPrompt, this.settings.auxiliaryModelName);
+                        const translationResult = await this.makeApiRequest(translationPrompt, this.getAuxiliaryModelName());
                         const translations = translationResult.trim().split('\n');
                         if (translations && translations.length === tagsToTranslate.length) {
                             translations.forEach((translatedTag, i) => {
@@ -2873,7 +3681,10 @@ class AiAssistantSuite extends Plugin {
 
         } catch (error) {
             progressNotice?.hide();
-            this.view.removeTask(taskId);
+            if (taskId) this.view.removeTask(taskId);
+            if (this.isCancellationError(error)) {
+                return;
+            }
             new Notice(`处理失败: ${error.message}`, 0);
             console.error("AI Tagger Error:", error);
         }
@@ -2887,7 +3698,7 @@ class AiAssistantSuite extends Plugin {
             new Notice("没有活动的笔记文件。");
             return;
         }
-        const hasEnabledConfig = this.settings.apiConfigs && this.settings.apiConfigs.some(c => c.enabled !== false && c.apiKey);
+        const hasEnabledConfig = this.settings.apiConfigs && this.settings.apiConfigs.some(c => c.enabled !== false && this.hasStoredApiKey(c));
         if (!hasEnabledConfig) {
             new Notice('请先在AI Assistant Suite插件设置中添加并启用至少一个API配置（需填写API Key）。');
             return;
@@ -2988,6 +3799,9 @@ class AiAssistantSuite extends Plugin {
 
         } catch (error) {
             progressNotice?.hide();
+            if (this.isCancellationError(error)) {
+                return;
+            }
             new Notice(`处理失败: ${error.message}`, 0);
             console.error("AI Meta Error:", error);
         }
@@ -3001,7 +3815,7 @@ class AiAssistantSuite extends Plugin {
             new Notice("没有活动的笔记文件。");
             return;
         }
-        const hasEnabledConfig = this.settings.apiConfigs && this.settings.apiConfigs.some(c => c.enabled !== false && c.apiKey);
+        const hasEnabledConfig = this.settings.apiConfigs && this.settings.apiConfigs.some(c => c.enabled !== false && this.hasStoredApiKey(c));
         if (!hasEnabledConfig) {
             new Notice('请先在AI Assistant Suite插件设置中添加并启用至少一个API配置（需填写API Key）。');
             return;
@@ -3155,7 +3969,7 @@ ${contextForPrompt}
                         progressNotice.setMessage(`检测到 ${tagsToTranslate.length} 个长英文标签，正在翻译...`);
                         const translationPrompt = this.getTranslationPrompt(tagsToTranslate);
                         try {
-                            const translationResult = await this.makeApiRequest(translationPrompt, this.settings.auxiliaryModelName);
+                            const translationResult = await this.makeApiRequest(translationPrompt, this.getAuxiliaryModelName());
                             const translations = translationResult.trim().split('\n');
                             if (translations && translations.length === tagsToTranslate.length) {
                                 translations.forEach((translatedTag, i) => {
@@ -3202,6 +4016,9 @@ ${contextForPrompt}
 
         } catch (error) {
             progressNotice?.hide();
+            if (this.isCancellationError(error)) {
+                return;
+            }
             new Notice(`一键处理失败: ${error.message}`, 0);
             console.error("One Click Process Error:", error);
         }
@@ -3359,7 +4176,7 @@ ${content}
 
     // 简化的智能操作方法
     async runSmartAction(action) {
-        const hasEnabledConfig = this.settings.apiConfigs && this.settings.apiConfigs.some(c => c.enabled !== false && c.apiKey);
+        const hasEnabledConfig = this.settings.apiConfigs && this.settings.apiConfigs.some(c => c.enabled !== false && this.hasStoredApiKey(c));
         if (!hasEnabledConfig) {
             new Notice('请先在AI Assistant Suite插件设置中添加并启用至少一个API配置（需填写API Key）。');
             return;
@@ -3404,7 +4221,10 @@ ${content}
             // 调用AI
             progressNotice.setMessage(`正在执行AI${this.getActionName(action)}...`);
 
-            const result = await this.makeApiRequest(prompt, this.settings.auxiliaryModelName || this.settings.modelName);
+            const result = await this.makeApiRequest(prompt, this.getAuxiliaryModelName(), false, null, {
+                label: this.getActionName(action),
+                stream: true
+            });
 
             progressNotice.hide();
 
@@ -3433,6 +4253,9 @@ ${content}
 
         } catch (error) {
             progressNotice?.hide();
+            if (this.isCancellationError(error)) {
+                return;
+            }
             new Notice(`${this.getActionName(action)}失败: ${error.message}`, 0);
             console.error("Smart Action Error:", error);
         }
@@ -3483,6 +4306,219 @@ ${content}`
         return prompts[action] || `请处理以下内容：\n\n${content}`;
     }
 
+    registerCustomActionCommands() {
+        (this.settings.customActions || []).forEach(action => {
+            if (action.enabled === false || !action.id) return;
+            this.addCommand({
+                id: `run-custom-action-${this.toCommandId(action.id)}`,
+                name: `AI Suite Custom: ${action.name || '自定义动作'}`,
+                callback: () => this.runCustomAction(action.id)
+            });
+        });
+    }
+
+    toCommandId(value) {
+        return String(value || Date.now()).replace(/[^a-zA-Z0-9_-]/g, '-');
+    }
+
+    getCustomActionModeLabel(mode) {
+        const labels = {
+            sidebar: '显示到侧边栏',
+            diff: '生成变更预览',
+            append: '追加到当前笔记',
+            'new-note': '创建新笔记'
+        };
+        return labels[mode] || labels.sidebar;
+    }
+
+    async getCurrentActionContext() {
+        const currentFile = this.app.workspace.getActiveFile();
+        if (!currentFile) {
+            throw new Error('没有活动的笔记文件。');
+        }
+
+        const editor = this.app.workspace.activeEditor?.editor;
+        const originalContent = await this.app.vault.read(currentFile);
+        let selection = '';
+        let selectionStartOffset = null;
+        let selectionEndOffset = null;
+
+        if (editor && editor.getSelection()) {
+            selection = editor.getSelection();
+            if (editor.posToOffset && editor.getCursor) {
+                selectionStartOffset = editor.posToOffset(editor.getCursor('from'));
+                selectionEndOffset = editor.posToOffset(editor.getCursor('to'));
+            }
+        }
+
+        return {
+            file: currentFile,
+            originalContent,
+            content: originalContent,
+            selection,
+            selectionStartOffset,
+            selectionEndOffset
+        };
+    }
+
+    renderCustomPrompt(template, context) {
+        const replacements = {
+            content: context.content || '',
+            selection: context.selection || '',
+            file_name: context.file?.basename || '',
+            file_path: context.file?.path || ''
+        };
+        return String(template || '请处理以下内容：\n\n{{content}}')
+            .replace(/\{\{content\}\}/g, replacements.content)
+            .replace(/\{\{selection\}\}/g, replacements.selection)
+            .replace(/\{\{file_name\}\}/g, replacements.file_name)
+            .replace(/\{\{file_path\}\}/g, replacements.file_path);
+    }
+
+    buildReplacementContent(context, replacement) {
+        const cleaned = String(replacement || '').trim();
+        if (context.selection) {
+            if (context.selectionStartOffset !== null && context.selectionEndOffset !== null) {
+                return context.originalContent.substring(0, context.selectionStartOffset) +
+                    cleaned +
+                    context.originalContent.substring(context.selectionEndOffset);
+            }
+            return context.originalContent.replace(context.selection, cleaned);
+        }
+        return cleaned;
+    }
+
+    async createUniqueMarkdownPath(folderPath, baseName) {
+        const safeBaseName = (baseName || 'AI Result')
+            .replace(/[/\\:?*"<>|]/g, '-')
+            .replace(/\s+/g, ' ')
+            .trim()
+            .substring(0, 80) || 'AI Result';
+        const folderPrefix = folderPath && folderPath !== '/' ? `${folderPath}/` : '';
+        let candidate = `${folderPrefix}${safeBaseName}.md`;
+        let counter = 2;
+        while (this.app.vault.getAbstractFileByPath(candidate)) {
+            candidate = `${folderPrefix}${safeBaseName} ${counter}.md`;
+            counter++;
+        }
+        return candidate;
+    }
+
+    async runCustomAction(actionId) {
+        const action = (this.settings.customActions || []).find(item => item.id === actionId);
+        if (!action || action.enabled === false) {
+            new Notice('未找到启用的自定义 AI Action。', 3000);
+            return;
+        }
+        const hasEnabledConfig = this.settings.apiConfigs && this.settings.apiConfigs.some(c => c.enabled !== false && this.hasStoredApiKey(c));
+        if (!hasEnabledConfig) {
+            new Notice('请先在AI Assistant Suite插件设置中添加并启用至少一个API配置（需填写API Key）。');
+            return;
+        }
+
+        const taskId = `custom-action-${Date.now()}`;
+        let progressNotice = new Notice(`正在执行 ${action.name || '自定义动作'}...`, 0);
+
+        try {
+            const context = await this.getCurrentActionContext();
+            const prompt = this.renderCustomPrompt(action.prompt, context);
+            if (!prompt.trim()) {
+                throw new Error('自定义 Action 的 Prompt 为空。');
+            }
+
+            await this.activateView();
+            this.view.addTask({
+                id: taskId,
+                type: 'custom-action',
+                status: 'loading',
+                title: `${action.name || '自定义动作'} 生成中`,
+                message: '正在接收 AI 输出...',
+                content: { file: context.file, streamingContent: '' }
+            });
+
+            const result = await this.makeApiRequest(prompt, this.getAuxiliaryModelName(), false, null, {
+                label: action.name || '自定义动作',
+                stream: true,
+                onStream: (_delta, accumulated) => {
+                    this.view?.updateTask(taskId, {
+                        streamingContent: accumulated,
+                        content: { file: context.file, streamingContent: accumulated }
+                    });
+                }
+            });
+
+            progressNotice.hide();
+            const outputMode = action.outputMode || 'sidebar';
+
+            if (outputMode === 'diff') {
+                await this.createDiffPreviewTask({
+                    taskId,
+                    file: context.file,
+                    action: action.name || '自定义动作',
+                    title: `${action.name || '自定义动作'} 预览: ${context.file.basename}`,
+                    originalContent: context.originalContent,
+                    proposedContent: this.buildReplacementContent(context, result)
+                });
+                new Notice('自定义 Action 预览已生成，请在侧边栏确认 Apply。', 5000);
+                return;
+            }
+
+            if (outputMode === 'append') {
+                await this.applyContentChange(context.file, action.name || '自定义动作追加', null,
+                    current => `${current}${current.endsWith('\n') ? '\n' : '\n\n'}${result.trim()}\n`);
+                this.addToHistory(context.file.basename, context.file.path, action.name || '自定义动作', this.generateFileId(context.file));
+                this.view.updateTask(taskId, {
+                    type: 'success',
+                    status: 'displaying',
+                    title: `${action.name || '自定义动作'} 已追加`,
+                    content: { message: '结果已追加到当前笔记，可用回滚恢复。', type: 'success', file: context.file }
+                });
+                new Notice('自定义 Action 结果已追加。', 4000);
+                return;
+            }
+
+            if (outputMode === 'new-note') {
+                const folderPath = context.file.parent?.path || '';
+                const newPath = await this.createUniqueMarkdownPath(folderPath, `${context.file.basename} - ${action.name || 'AI Result'}`);
+                const newFile = await this.app.vault.create(newPath, result.trim() + '\n');
+                this.view.updateTask(taskId, {
+                    type: 'success',
+                    status: 'displaying',
+                    title: `${action.name || '自定义动作'} 已创建新笔记`,
+                    content: { message: `已创建: ${newPath}`, type: 'success', file: newFile }
+                });
+                new Notice(`已创建新笔记: ${newPath}`, 5000);
+                return;
+            }
+
+            this.view.updateTask(taskId, {
+                type: 'custom-action',
+                status: 'displaying',
+                title: `${action.name || '自定义动作'} 结果`,
+                content: {
+                    file: context.file,
+                    result,
+                    originalContent: (context.selection || context.content).substring(0, 500)
+                }
+            });
+            this.addToHistory(context.file.basename, context.file.path, action.name || '自定义动作', this.generateFileId(context.file));
+        } catch (error) {
+            progressNotice?.hide();
+            if (this.isCancellationError(error)) {
+                this.view?.removeTask(taskId);
+                return;
+            }
+            this.view?.updateTask(taskId, {
+                type: 'error',
+                status: 'displaying',
+                title: `${action.name || '自定义动作'} 失败`,
+                content: { message: error.message, type: 'error' }
+            });
+            new Notice(`自定义 Action 失败: ${error.message}`, 5000);
+            console.error('Custom Action Error:', error);
+        }
+    }
+
 
 
 
@@ -3490,7 +4526,13 @@ ${content}`
 
 
     async loadSettings() {
-        this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+        this.initializeSharedServices();
+        this.settings = Object.assign({}, JSON.parse(JSON.stringify(DEFAULT_SETTINGS)), await this.loadData());
+        this.normalizeSettings();
+        const migrated = await this.migrateApiKeys();
+        if (migrated) {
+            await this.saveSettings();
+        }
     }
 
     async saveSettings() {
@@ -3513,8 +4555,8 @@ ${content}`
             version: this.manifest.version,
             history: this.view.history,
             settings: {
-                modelName: this.settings.modelName,
-                auxiliaryModelName: this.settings.auxiliaryModelName
+                modelName: this.getActiveApiConfig()?.modelName,
+                auxiliaryModelName: this.getAuxiliaryModelName()
             }
         };
 
@@ -3709,15 +4751,42 @@ class AiAssistantSettingTab extends PluginSettingTab {
                     await this.plugin.saveSettings();
                 }));
 
+        let apiKeyInput = null;
         new Setting(containerEl)
             .setName('API Key')
-            .setDesc('在这里填入你的AI服务API密钥。')
-            .addText(text => text
-                .setPlaceholder('Enter your API key')
-                .setValue(activeConfig.apiKey || '')
-                .onChange(async (value) => {
-                    activeConfig.apiKey = value;
+            .setDesc(this.plugin.hasStoredApiKey(activeConfig)
+                ? '已保存 API Key。输入新值并点击保存可替换；不会在设置页显示明文。'
+                : '在这里填入你的 AI 服务 API Key。保存后会以本地加密标记写入 data.json。')
+            .addText(text => {
+                text.inputEl.type = 'password';
+                text.setPlaceholder(this.plugin.hasStoredApiKey(activeConfig) ? '已保存，输入新值可替换' : 'Enter your API key');
+                text.setValue('');
+                text.inputEl.autocomplete = 'off';
+                text.inputEl.spellcheck = false;
+                text.onChange(() => {});
+                apiKeyInput = text;
+            })
+            .addButton(button => button
+                .setButtonText('保存密钥')
+                .onClick(async () => {
+                    const value = apiKeyInput?.getValue?.() || '';
+                    if (!value.trim()) {
+                        new Notice('请输入新的 API Key。', 2500);
+                        return;
+                    }
+                    await this.plugin.setApiKey(activeConfig, value.trim());
                     await this.plugin.saveSettings();
+                    new Notice('API Key 已保存。', 3000);
+                    this.display();
+                }))
+            .addButton(button => button
+                .setButtonText('清除密钥')
+                .setWarning()
+                .onClick(async () => {
+                    activeConfig.apiKey = '';
+                    await this.plugin.saveSettings();
+                    new Notice('API Key 已清除。', 3000);
+                    this.display();
                 }));
 
         new Setting(containerEl)
@@ -3916,6 +4985,94 @@ class AiAssistantSettingTab extends PluginSettingTab {
                 }));
 
 
+        containerEl.createEl('h3', { text: '自定义 AI Action' });
+        containerEl.createEl('p', {
+            text: 'Prompt 支持 {{content}}、{{selection}}、{{file_name}}、{{file_path}}。新增动作会立即出现在侧边栏；若要作为 Obsidian 命令/热键使用，重载插件后会注册。',
+            attr: { style: 'font-size: 0.85em; color: var(--text-muted); margin: -4px 0 12px 0;' }
+        });
+
+        const customActions = this.plugin.settings.customActions || [];
+        customActions.forEach((action, index) => {
+            const actionContainer = containerEl.createDiv({ cls: 'custom-action-settings-block' });
+            actionContainer.createEl('h4', { text: action.name || `自定义动作 ${index + 1}` });
+
+            new Setting(actionContainer)
+                .setName('启用')
+                .addToggle(toggle => toggle
+                    .setValue(action.enabled !== false)
+                    .onChange(async (value) => {
+                        action.enabled = value;
+                        await this.plugin.saveSettings();
+                        this.display();
+                    }));
+
+            new Setting(actionContainer)
+                .setName('名称')
+                .addText(text => text
+                    .setPlaceholder('例如：提取行动项')
+                    .setValue(action.name || '')
+                    .onChange(async (value) => {
+                        action.name = value || '自定义动作';
+                        await this.plugin.saveSettings();
+                    }));
+
+            new Setting(actionContainer)
+                .setName('输出模式')
+                .addDropdown(dropdown => dropdown
+                    .addOption('sidebar', '侧边栏显示')
+                    .addOption('diff', 'Diff Preview')
+                    .addOption('append', '追加到当前笔记')
+                    .addOption('new-note', '创建新笔记')
+                    .setValue(action.outputMode || 'sidebar')
+                    .onChange(async (value) => {
+                        action.outputMode = value;
+                        await this.plugin.saveSettings();
+                    }));
+
+            new Setting(actionContainer)
+                .setName('Prompt')
+                .addTextArea(text => {
+                    text.setPlaceholder('请基于以下内容执行任务：\n\n{{selection}}\n\n{{content}}')
+                        .setValue(action.prompt || '')
+                        .onChange(async (value) => {
+                            action.prompt = value;
+                            await this.plugin.saveSettings();
+                        });
+                    text.inputEl.style.width = '100%';
+                    text.inputEl.style.minHeight = '120px';
+                    text.inputEl.style.fontFamily = 'var(--font-monospace)';
+                });
+
+            new Setting(actionContainer)
+                .setName('删除')
+                .setDesc('删除此自定义动作。')
+                .addButton(button => button
+                    .setButtonText('删除')
+                    .setWarning()
+                    .onClick(async () => {
+                        this.plugin.settings.customActions = customActions.filter(item => item.id !== action.id);
+                        await this.plugin.saveSettings();
+                        this.display();
+                    }));
+        });
+
+        new Setting(containerEl)
+            .setName('添加自定义 Action')
+            .addButton(button => button
+                .setButtonText('新增')
+                .setCta()
+                .onClick(async () => {
+                    this.plugin.settings.customActions.push({
+                        id: `custom_${Date.now()}`,
+                        name: `自定义动作 ${customActions.length + 1}`,
+                        prompt: '请基于以下内容执行任务：\n\n{{selection}}\n\n{{content}}',
+                        outputMode: 'sidebar',
+                        enabled: true
+                    });
+                    await this.plugin.saveSettings();
+                    this.display();
+                }));
+
 
         containerEl.createEl('h3', { text: 'Prompts 设置' });
         containerEl.createEl('p', { text: '在这里自定义每个功能的系统提示词(Prompt)。请注意，占位符(例如 {{content}})是必需的，用于在运行时动态插入内容。' });
@@ -3999,7 +5156,7 @@ class AiAssistantSettingTab extends PluginSettingTab {
 
     // 导出设置
     exportSettings() {
-        const settingsJson = JSON.stringify(this.plugin.settings, null, 2);
+        const settingsJson = JSON.stringify(this.plugin.redactSettingsForExport(this.plugin.settings), null, 2);
         const blob = new Blob([settingsJson], { type: 'application/json' });
         const url = URL.createObjectURL(blob);
 
@@ -4032,8 +5189,10 @@ class AiAssistantSettingTab extends PluginSettingTab {
                     throw new Error('无效的设置文件格式');
                 }
 
-                // 合并设置（保留默认值）
-                this.plugin.settings = Object.assign({}, DEFAULT_SETTINGS, importedSettings);
+                // 合并设置（保留默认值），且不让 [REDACTED] 覆盖已保存密钥
+                this.plugin.settings = this.plugin.mergeImportedSettings(importedSettings);
+                this.plugin.normalizeSettings();
+                await this.plugin.migrateApiKeys();
                 await this.plugin.saveSettings();
 
                 // 刷新设置界面
@@ -4051,7 +5210,7 @@ class AiAssistantSettingTab extends PluginSettingTab {
     async resetSettings() {
         const confirmed = confirm('确定要重置所有设置为默认值吗？此操作不可撤销。');
         if (confirmed) {
-            this.plugin.settings = Object.assign({}, DEFAULT_SETTINGS);
+            this.plugin.settings = JSON.parse(JSON.stringify(DEFAULT_SETTINGS));
             await this.plugin.saveSettings();
             this.display();
             new Notice('设置已重置为默认值！', 3000);
@@ -4644,7 +5803,7 @@ class AdvancedFileSelectionModal extends Modal {
             // 文件夹标题
             const folderHeader = folderSection.createDiv({ cls: "ai-assistant-folder-header" });
             folderHeader.innerHTML = `
-                <span class="ai-assistant-folder-name">📁 ${folderPath}</span>
+                <span class="ai-assistant-folder-name">📁 ${escapeHtmlText(folderPath)}</span>
                 <span class="ai-assistant-folder-count">${files.length} 个文件</span>
             `;
 
@@ -4703,7 +5862,7 @@ class AdvancedFileSelectionModal extends Modal {
 
                 const fileInfo = fileItem.createDiv({ cls: "ai-assistant-file-info" });
                 fileInfo.innerHTML = `
-                    <div class="ai-assistant-file-name">${file.basename}</div>
+                    <div class="ai-assistant-file-name">${escapeHtmlText(file.basename)}</div>
                     <div class="ai-assistant-file-meta">
                         <span class="ai-assistant-file-size">${Math.round(file.stat.size / 1024)} KB</span>
                         <span class="ai-assistant-file-date">${new Date(file.stat.mtime).toLocaleDateString()}</span>
