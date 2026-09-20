@@ -1907,3 +1907,11 @@
 .ai-assistant-diagnostics { margin-top: 24px; border-top: 1px solid var(--background-modifier-border); padding-top: 12px; }
 .ai-assistant-diagnostics > summary { color: var(--text-muted); cursor: pointer; font-size: var(--font-ui-small); padding: 8px 0; }
 @media (prefers-reduced-motion: reduce) { .ai-assistant-view-container * { animation: none !important; transition: none !important; } }
+
+/* agent: codex (2026-09-20) — compact actions after live sidebar review */
+.ai-assistant-view-container .ai-assistant-action-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.ai-assistant-view-container .ai-assistant-action-btn { display: grid; grid-template-columns: 24px minmax(0, 1fr); align-items: center; text-align: left; height: auto; min-height: 64px; padding: 10px 12px; gap: 3px 8px; white-space: normal; font: inherit; }
+.ai-assistant-view-container .ai-assistant-action-btn .action-icon { grid-row: 1 / 3; font-size: 20px; margin: 0; }
+.ai-assistant-view-container .ai-assistant-action-btn .action-name { font-size: 13px; margin: 0; }
+.ai-assistant-view-container .ai-assistant-action-btn .action-desc { font-size: 11px; line-height: 1.4; margin: 0; }
+.ai-assistant-view-container button.history-item { display: flex; width: 100%; height: auto; text-align: left; white-space: normal; background: transparent; box-shadow: none; border: 0; border-bottom: 1px solid var(--background-modifier-border); }

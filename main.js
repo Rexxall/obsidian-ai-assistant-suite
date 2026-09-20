@@ -1,3 +1,4 @@
+// agent: codex (2026-09-20) — keyboard-accessible compact actions
 // agent: codex (2026-09-19)
 const escapeHtmlText = value => String(value).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;"); // guarded writes and focused workspace
 const { Plugin, Notice, PluginSettingTab, Setting, FuzzySuggestModal, Modal, ItemView, TFile } = require('obsidian');
@@ -1433,10 +1434,10 @@ class AssistantView extends ItemView {
         });
 
         actions.forEach(action => {
-            const actionBtn = actionGrid.createDiv({ cls: "ai-assistant-action-btn" });
-            actionBtn.createEl("div", { text: action.icon, cls: "action-icon" });
-            actionBtn.createEl("div", { text: action.name, cls: "action-name" });
-            actionBtn.createEl("div", { text: action.desc, cls: "action-desc" });
+            const actionBtn = actionGrid.createEl("button", { cls: "ai-assistant-action-btn", attr: { type: "button", "aria-label": action.name + "：" + action.desc } });
+            actionBtn.createEl("span", { text: action.icon, cls: "action-icon" });
+            actionBtn.createEl("span", { text: action.name, cls: "action-name" });
+            actionBtn.createEl("span", { text: action.desc, cls: "action-desc" });
 
             actionBtn.addEventListener("click", action.action);
         });
@@ -1575,7 +1576,7 @@ class AssistantView extends ItemView {
         }
 
         validHistory.forEach(item => { // 显示所有历史，通过CSS控制滚动
-            const historyItem = historyList.createDiv({ cls: "history-item" });
+            const historyItem = historyList.createEl("button", { cls: "history-item", attr: { type: "button", "aria-label": "打开笔记：" + item.fileName } });
 
             // 显示当前文件名（可能已更新）
             const fileNameSpan = historyItem.createEl("span", {
