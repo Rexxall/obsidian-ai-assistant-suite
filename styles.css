@@ -1952,3 +1952,16 @@
 .ai-assistant-view-container .ai-assistant-card { padding: 16px; background: var(--panel-wash); border-radius: 9px; margin: 12px 0; }
 .ai-assistant-view-container .ai-assistant-section h3 { color: var(--panel-accent) !important; }
 .ai-assistant-view-container > hr { display: none; }
+
+/* agent: codex (2026-09-20) — discoverable settings navigation */
+.plugin-settings-entry { min-height: 30px; padding: 4px 10px; font-size: var(--font-ui-small); white-space: nowrap; flex-shrink: 0; }
+.plugin-settings-workspace .plugin-settings-jump { position: sticky; top: 0; z-index: 2; padding: 10px 0; background: var(--background-primary); border-bottom: 1px solid var(--background-modifier-border); margin-bottom: 16px; }
+.plugin-settings-jump label { display: flex; align-items: center; gap: 12px; color: var(--text-muted); font-size: var(--font-ui-small); }
+.plugin-settings-jump select { flex: 1; min-width: 0; max-width: 360px; }
+.plugin-settings-workspace :is(h2,h3,.setting-item-name) { scroll-margin-top: 76px; }
+.ai-assistant-workspace-heading .plugin-settings-entry, .polyglot-workspace-heading .plugin-settings-entry { margin-top: 8px; }
+
+.ai-assistant-workspace-heading { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; column-gap: 8px; }
+.ai-assistant-workspace-heading h2 { grid-column: 1; grid-row: 1; min-width: 0; }
+.ai-assistant-workspace-heading .plugin-settings-entry { grid-column: 2; grid-row: 1; margin: 0; }
+.ai-assistant-workspace-heading > :is(p,.ai-assistant-note-context) { grid-column: 1 / -1; }

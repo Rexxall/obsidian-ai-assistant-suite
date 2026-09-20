@@ -411,6 +411,11 @@ class AssistantView extends ItemView {
         heading.createEl('p', { text: '选择要整理的内容，逐项审阅结果。' });
         const activeNote = this.plugin.app.workspace.getActiveFile();
         heading.createDiv({ cls: 'ai-assistant-note-context', text: activeNote ? activeNote.basename : '先打开一篇笔记' });
+        const settingsEntry = heading.createEl('button', { text: '插件设置', cls: 'plugin-settings-entry' });
+        settingsEntry.addEventListener('click', () => {
+            this.plugin.app.setting.open();
+            this.plugin.app.setting.openTabById(this.plugin.manifest.id);
+        });
         this.renderCurrentRequestBanner(viewContainer);
 
         // --- One-Click Process Toggles ---
@@ -4608,9 +4613,33 @@ class AiAssistantSettingTab extends PluginSettingTab {
     }
 
     display() {
+        this.renderSettingsBody();
+        const root = this.containerEl;
+        root.addClass('plugin-settings-workspace');
+        const nav = root.createDiv({ cls: 'plugin-settings-jump' });
+        const label = nav.createEl('label', { text: '快速定位' });
+        const select = label.createEl('select', { attr: { 'aria-label': '跳转到设置分组' } });
+        select.createEl('option', { text: '选择设置分组…', value: '' });
+        const sections = Array.from(root.querySelectorAll('h3'));
+        sections.forEach((section, index) => {
+            select.createEl('option', { text: section.textContent || '设置', value: String(index) });
+        });
+        select.addEventListener('change', () => {
+            if (select.value === '') return;
+            const target = sections[Number(select.value)];
+            if (target) {
+                target.setAttribute('tabindex', '-1');
+                target.scrollIntoView({ block: 'start' });
+                target.focus({ preventScroll: true });
+            }
+        });
+        root.prepend(nav);
+    }
+
+    renderSettingsBody() {
         const { containerEl } = this;
         containerEl.empty();
-        containerEl.createEl('h2', { text: 'AI Assistant Suite Settings' });
+        containerEl.createEl('h2', { text: '笔记助手设置' });
 
         containerEl.createEl('h3', { text: 'API 设置管理' });
         containerEl.createEl('p', {
