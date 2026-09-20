@@ -1,3 +1,4 @@
+// agent: codex (2026-09-20) — legible processing options
 // agent: codex (2026-09-20) — keyboard-accessible compact actions
 // agent: codex (2026-09-19)
 const escapeHtmlText = value => String(value).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;"); // guarded writes and focused workspace
@@ -420,11 +421,11 @@ class AssistantView extends ItemView {
         buttonGroup.style.marginBottom = '1em';
 
         const actions = [
-            { name: '结构', key: 'structurizer' },
-            { name: '假名', key: 'furigana' },
-            { name: '元数据', key: 'meta' },
-            { name: '标签', key: 'tagger' },
-            { name: '移动', key: 'mover' }
+            { name: '整理结构', key: 'structurizer' },
+            { name: '标注假名', key: 'furigana' },
+            { name: '补全元数据', key: 'meta' },
+            { name: '补充标签', key: 'tagger' },
+            { name: '智能归档', key: 'mover' }
         ];
 
         actions.forEach(action => {
