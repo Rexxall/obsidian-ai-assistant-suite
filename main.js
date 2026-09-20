@@ -1,4 +1,4 @@
-// agent: codex (2026-09-20) — legible processing options
+// agent: codex (2026-09-20) — task presets, selective review and guarded undo
 // agent: codex (2026-09-20) — keyboard-accessible compact actions
 // agent: codex (2026-09-19)
 const escapeHtmlText = value => String(value).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;"); // guarded writes and focused workspace
@@ -418,6 +418,25 @@ class AssistantView extends ItemView {
         });
         this.renderCurrentRequestBanner(viewContainer);
 
+        const workflow = viewContainer.createDiv({ cls: 'assistant-workflow' });
+        workflow.createEl('label', { text: '本次流程', attr: { for: 'assistant-workflow-select' } });
+        const presets = workflow.createEl('select', { attr: { id: 'assistant-workflow-select', 'aria-label': '本次整理流程' } });
+        for (const [value, text] of [['default','沿用默认流程'], ['reading','整理阅读笔记'], ['archive','归档这篇笔记'], ['custom','自定义操作']]) {
+            presets.createEl('option', { value, text });
+        }
+        presets.value = this.sessionPreset || 'default';
+        presets.addEventListener('change', () => {
+            this.sessionPreset = presets.value;
+            if (presets.value === 'default') this.sessionActions = null;
+            else if (presets.value !== 'custom') this.sessionActions = presets.value === 'reading'
+                ? { structurizer: true, furigana: false, meta: true, tagger: true, mover: false }
+                : { structurizer: false, furigana: false, meta: false, tagger: true, mover: true };
+            else this.sessionActions = { ...(this.sessionActions || this.plugin.settings.oneClickProcessActions) };
+            this.render();
+        });
+        const chosenActions = this.sessionActions || this.plugin.settings.oneClickProcessActions;
+        workflow.createEl('p', { text: '本次选择不修改默认设置。生成后再决定接受哪些建议。', cls: 'assistant-review-muted' });
+
         // --- One-Click Process Toggles ---
         const buttonGroup = viewContainer.createDiv({ cls: "ai-assistant-button-group" });
         buttonGroup.style.display = 'flex';
@@ -436,16 +455,18 @@ class AssistantView extends ItemView {
         actions.forEach(action => {
             const button = buttonGroup.createEl('button');
             button.setText(action.name);
-            button.setAttribute('aria-pressed', String(!!this.plugin.settings.oneClickProcessActions[action.key]));
+            button.setAttribute('aria-pressed', String(!!chosenActions[action.key]));
 
-            if (this.plugin.settings.oneClickProcessActions[action.key]) {
+            if (chosenActions[action.key]) {
                 button.addClass('mod-cta');
             }
 
             button.addEventListener('click', async () => {
-                const newValue = !this.plugin.settings.oneClickProcessActions[action.key];
-                this.plugin.settings.oneClickProcessActions[action.key] = newValue;
-                await this.plugin.saveSettings();
+                this.sessionActions = { ...(this.sessionActions || this.plugin.settings.oneClickProcessActions) };
+                const newValue = !this.sessionActions[action.key];
+                this.sessionActions[action.key] = newValue;
+                this.sessionPreset = 'custom';
+                presets.value = 'custom';
                 button.toggleClass('mod-cta', newValue);
                 button.setAttribute('aria-pressed', String(newValue));
                 new Notice(`"${action.name}" 已${newValue ? '开启' : '关闭'}`);
@@ -453,11 +474,11 @@ class AssistantView extends ItemView {
         });
 
         const runButton = buttonGroup.createEl('button');
-        runButton.setText('开始整理');
+        runButton.setText('生成修改建议');
         runButton.addClass('mod-cta', 'ai-assistant-run');
         runButton.setAttribute('title', '对当前笔记执行已选的一键处理流程');
         runButton.addEventListener('click', () => {
-            this.plugin.runOneClickSmartProcess();
+            this.plugin.runOneClickSmartProcess(activeNote, { ...(this.sessionActions || this.plugin.settings.oneClickProcessActions) });
         });
 
         viewContainer.createEl('hr');
@@ -626,7 +647,7 @@ class AssistantView extends ItemView {
                 details.setAttr('open', true);
                 isFirstSection = false;
             }
-            details.createEl('summary', { text: '建议元数据' });
+            details.createEl('summary', { text: '属性 · 标题与摘要' });
             const content = details.createDiv();
             this.renderOneClickMetaSection(content, { ...task, meta: suggestions.meta });
         }
@@ -636,7 +657,7 @@ class AssistantView extends ItemView {
                 details.setAttr('open', true);
                 isFirstSection = false;
             }
-            details.createEl('summary', { text: '建议标签' });
+            details.createEl('summary', { text: '属性 · 标签' });
             const content = details.createDiv();
             this.renderOneClickTaggerSection(content, { ...task, tags: suggestions.tags });
         }
@@ -646,7 +667,7 @@ class AssistantView extends ItemView {
                 details.setAttr('open', true);
                 isFirstSection = false;
             }
-            details.createEl('summary', { text: '建议移动位置' });
+            details.createEl('summary', { text: '位置 · 归档建议' });
             const content = details.createDiv();
             this.renderOneClickMoverSection(content, { ...task, mover: suggestions.mover });
         }
@@ -658,6 +679,10 @@ class AssistantView extends ItemView {
 
     renderOneClickMetaSection(container, task) {
         container.addClass('ai-assistant-meta-section');
+        const existing = this.plugin.app.metadataCache.getFileCache(task.content.file)?.frontmatter || {};
+        const before = container.createEl('details', { cls: 'assistant-review-current-properties' });
+        before.createEl('summary', { text: '查看当前属性' });
+        for (const key of ['title','summary','tldr']) before.createEl('p', { text: `${key}: ${existing[key] ?? '未设置'}` });
         const { title, summary, tldr } = task.meta;
 
 
@@ -835,6 +860,7 @@ class AssistantView extends ItemView {
     }
 
     renderOneClickMoverSection(container, task) {
+        container.createEl('p', { text: `当前位置：${task.content.file.path}`, cls: 'assistant-review-path' });
         container.addClass('ai-assistant-mover-list');
 
         task.mover.forEach(suggestion => {
@@ -1192,36 +1218,67 @@ class AssistantView extends ItemView {
         closeButton.addEventListener("click", () => this.removeTask(task.id));
     }
 
-    renderDiffPreviewTask(card, task) {
+    renderDiffPreviewTask(card, task, expanded = false) {
         const content = task.content || {};
-        const stats = this.plugin.getDiffStats(content.originalContent || '', content.proposedContent || '');
-        const summary = card.createDiv({ cls: "ai-assistant-diff-summary" });
-        summary.createEl("span", {
-            text: `${content.action || 'AI 变更'} · ${stats.beforeLines} 行 → ${stats.afterLines} 行`
-        });
-        if (content.applied) {
-            summary.createEl("span", { text: "已应用", cls: "ai-assistant-applied-badge" });
+        if (!content.reviewHunks) content.reviewHunks = this.plugin.buildReviewHunks(content.originalContent || '', content.proposedContent || '');
+        if (!Array.isArray(content.reviewSelected)) content.reviewSelected = content.reviewHunks.map(h => h.id);
+        card.addClass('assistant-review-surface');
+        card.createDiv({ text: content.file?.path || '当前笔记', cls: 'assistant-review-path' });
+        const summary = card.createDiv({ cls: 'assistant-review-summary', attr: { 'aria-live': 'polite' } });
+        const controls = card.createDiv({ cls: 'assistant-review-toolbar' });
+        if (!expanded) controls.createEl('button', { text: '展开审阅' }).onclick = () => {
+            const modal = new Modal(this.plugin.app);
+            modal.modalEl.addClass('assistant-review-modal');
+            const paint = () => { modal.contentEl.empty(); modal.contentEl.createEl('h2', { text: task.title || '审阅修改' }); this.renderDiffPreviewTask(modal.contentEl, task, true); };
+            modal.onOpen = paint;
+            modal.open();
+        };
+        const list = card.createDiv({ cls: 'assistant-review-hunks' });
+        const checks = [];
+        for (const hunk of content.reviewHunks) {
+            const row = list.createDiv({ cls: 'assistant-review-hunk' });
+            const label = row.createEl('label', { cls: 'assistant-review-check' });
+            const checkbox = label.createEl('input', { type: 'checkbox' });
+            checkbox.checked = content.reviewSelected.includes(hunk.id);
+            checkbox.disabled = !!content.applied || !!content.applying;
+            label.createSpan({ text: hunk.atomic ? '整篇建议（保持文档结构完整）' : `修改 ${hunk.id + 1} · 原文第 ${hunk.start + 1} 行` });
+            const columns = row.createDiv({ cls: 'assistant-review-columns' });
+            for (const [title, value, kind] of [['原内容',hunk.before,'before'],['建议内容',hunk.after,'after']]) {
+                const column = columns.createDiv();
+                column.createEl('span', { text: title, cls: 'assistant-review-muted' });
+                column.createEl('pre', { text: value || (kind === 'before' ? '（此处新增）' : '（删除这段）'), cls: `assistant-review-${kind}` });
+            }
+            const updateRow = () => row.toggleClass('is-skipped', !checkbox.checked);
+            checkbox.addEventListener('change', () => {
+                content.reviewSelected = checkbox.checked ? [...content.reviewSelected, hunk.id] : content.reviewSelected.filter(id => id !== hunk.id);
+                updateRow(); updateSummary();
+            });
+            updateRow(); checks.push(checkbox);
         }
-
-        const previewWrap = card.createDiv({ cls: "ai-assistant-review-preview" });
-        previewWrap.createEl("h4", { text: "AI 生成内容" });
-        const afterText = previewWrap.createEl("textarea", { cls: "ai-assistant-review-textarea" });
-        afterText.value = content.proposedPreview || content.proposedContent || '';
-        afterText.readOnly = true;
-
-        const details = card.createEl("details", { cls: "ai-assistant-full-diff-details" });
-        details.createEl("summary", { text: "查看原文" });
-        const beforeText = details.createEl("textarea", { cls: "ai-assistant-review-textarea ai-assistant-original-textarea" });
-        beforeText.value = content.originalPreview || content.originalContent || '';
-        beforeText.readOnly = true;
-
-        const buttonContainer = card.createDiv({ cls: "ai-assistant-button-container" });
-        if (!content.applied) {
-            const applyButton = buttonContainer.createEl("button", { text: "应用变更", cls: "mod-cta" });
-            applyButton.addEventListener("click", () => this.plugin.applyDiffPreview(task.id));
-        }
-        const closeButton = buttonContainer.createEl("button", { text: content.applied ? "关闭" : "暂不应用" });
-        closeButton.addEventListener("click", () => this.removeTask(task.id));
+        const buttons = card.createDiv({ cls: 'assistant-review-actions' });
+        const apply = buttons.createEl('button', { cls: 'mod-cta' });
+        const updateSummary = () => {
+            const count = content.reviewSelected.length;
+            summary.setText(content.applied ? `已接受 ${count} 项修改` : `${content.reviewHunks.length} 项建议 · 已选择 ${count} 项`);
+            apply.setText(content.applied ? '撤回本次正文修改' : content.applying ? '正在应用…' : `接受所选 ${count} 项`);
+            apply.disabled = !!content.applying || (!content.applied && !count);
+        };
+        apply.onclick = async () => {
+            if (content.applying) return;
+            content.applying = true; updateSummary(); checks.forEach(c => c.disabled = true);
+            try {
+                if (content.applied) await this.plugin.undoReviewTask(task.id);
+                else await this.plugin.applyDiffPreview(task.id);
+            } finally {
+                content.applying = false;
+                checks.forEach(c => c.disabled = !!content.applied);
+                updateSummary();
+                this.render();
+            }
+        };
+        if (!content.applied) buttons.createEl('button', { text: '全不选' }).onclick = () => { if (content.applying) return; content.reviewSelected = []; checks.forEach(c => { c.checked = false; c.dispatchEvent(new Event('change')); }); updateSummary(); };
+        card.createEl('p', { text: '只应用勾选的正文差异。笔记有新编辑时将停止应用；属性与位置建议单独确认。', cls: 'assistant-review-muted' });
+        updateSummary();
     }
 
     renderResultTask(card, task) {
@@ -2931,6 +2988,62 @@ class AiAssistantSuite extends Plugin {
         return { changedLines, beforeLines: before.length, afterLines: after.length };
     }
 
+    buildReviewHunks(original, proposed) {
+        if (original === proposed) return [];
+        const lines = text => text.match(/[^\n]*\n|[^\n]+$/g) || [];
+        const a = lines(original), b = lines(proposed);
+        const frontmatter = text => text.match(/^---\r?\n[\s\S]*?\r?\n(?:---|\.\.\.)(?:\r?\n|$)/)?.[0] || '';
+        // YAML and fenced code must never be partially accepted across structural boundaries.
+        const atomic = a.length + b.length > 20000 || a.length * b.length > 1000000 || frontmatter(original) !== frontmatter(proposed)
+            || /^\s*(```|~~~)/m.test(original + proposed);
+        if (atomic) return [{ id: 0, start: 0, end: a.length, before: original, after: proposed, atomic: true }];
+        const matrix = Array.from({ length: a.length + 1 }, () => new Uint32Array(b.length + 1));
+        for (let i = a.length - 1; i >= 0; i--) for (let j = b.length - 1; j >= 0; j--)
+            matrix[i][j] = a[i] === b[j] ? matrix[i + 1][j + 1] + 1 : Math.max(matrix[i + 1][j], matrix[i][j + 1]);
+        const hunks = []; let i = 0, j = 0, hunk = null;
+        const flush = () => { if (hunk) { hunk.id = hunks.length; hunks.push(hunk); hunk = null; } };
+        while (i < a.length || j < b.length) {
+            if (i < a.length && j < b.length && a[i] === b[j]) { flush(); i++; j++; continue; }
+            if (!hunk) hunk = { start: i, end: i, before: '', after: '' };
+            if (j < b.length && (i === a.length || matrix[i][j + 1] > matrix[i + 1][j])) hunk.after += b[j++];
+            else { hunk.before += a[i++]; hunk.end = i; }
+        }
+        flush(); return hunks;
+    }
+
+    composeReviewContent(original, hunks, selected) {
+        const lines = original.match(/[^\n]*\n|[^\n]+$/g) || [];
+        let cursor = 0, result = '';
+        for (const hunk of hunks) {
+            if (hunk.start < cursor || lines.slice(hunk.start, hunk.end).join('') !== hunk.before) throw new Error('预览已失效，请重新生成。');
+            result += lines.slice(cursor, hunk.start).join('');
+            result += selected.includes(hunk.id) ? hunk.after : hunk.before;
+            cursor = hunk.end;
+        }
+        return result + lines.slice(cursor).join('');
+    }
+
+    async undoReviewTask(taskId) {
+        const task = this.view?.getTask(taskId), content = task?.content;
+        if (!content?.applied || !content.reviewSnapshotId) return;
+        try {
+            await this.queueContentWrite(async () => {
+                const history = this.settings.rollbackHistory || [];
+                const snapshot = history.find(s => s.id === content.reviewSnapshotId);
+                if (!snapshot) throw new Error('此修改已撤回或不在撤回记录中。');
+                const file = this.app.vault.getAbstractFileByPath(snapshot.filePath);
+                if (!file) throw new Error('目标笔记已移动或删除。');
+                await this.guardedWrite(file, snapshot.appliedContent, snapshot.originalContent);
+                this.settings.rollbackHistory = history.filter(s => s.id !== snapshot.id);
+                this.settings.rollbackRedoHistory = [snapshot, ...(this.settings.rollbackRedoHistory || [])].slice(0,30);
+                await this.saveSettings();
+                content.applied = false;
+            });
+            this.view.render();
+            new Notice('已撤回本次正文修改，审阅选择保留。');
+        } catch (error) { new Notice(`无法撤回：${error.message}`, 6000); }
+    }
+
     async createDiffPreviewTask({ taskId = null, file, action, title, originalContent, proposedContent }) {
         await this.activateView();
         const id = taskId || `diff-${Date.now()}`;
@@ -2972,13 +3085,19 @@ class AiAssistantSuite extends Plugin {
             return;
         }
 
+        if (content.applied) return;
         try {
-            await this.applyContentChange(file, content.action || 'AI 变更',
-                content.originalContent, content.proposedContent || '');
+            const hunks = content.reviewHunks || this.buildReviewHunks(content.originalContent || '', content.proposedContent || '');
+            const selected = content.reviewSelected || hunks.map(h => h.id);
+            if (!selected.length) { new Notice('请至少选择一项修改。'); return; }
+            const proposed = this.composeReviewContent(content.originalContent, hunks, selected);
+            const snapshot = await this.applyContentChange(file, content.action || 'AI 变更', content.originalContent, proposed);
+            content.applied = true;
+            content.reviewSnapshotId = snapshot?.id;
             this.addToHistory(file.basename, file.path, content.action || 'AI 变更', this.generateFileId(file));
             this.view.updateTask(taskId, {
-                title: `${task.title || '变更预览'} · 已应用`,
-                content: { ...content, applied: true }
+                title: task.title || '变更预览',
+                content
             });
             new Notice('变更已应用，可用“回滚上次修改”恢复。', 4000);
         } catch (error) {
@@ -2989,7 +3108,7 @@ class AiAssistantSuite extends Plugin {
 
     async saveRollbackSnapshot({ file, action, originalContent, appliedContent }) {
         const snapshot = {
-            id: `rollback-${Date.now()}`,
+            id: `rollback-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
             timestamp: Date.now(),
             action,
             filePath: file.path,
@@ -3031,8 +3150,9 @@ class AiAssistantSuite extends Plugin {
             const previousUndo = [...(this.settings.rollbackHistory || [])];
             const previousRedo = [...(this.settings.rollbackRedoHistory || [])];
             try {
-                await this.saveRollbackSnapshot({ file, action, originalContent: current, appliedContent: proposed });
+                const snapshot = await this.saveRollbackSnapshot({ file, action, originalContent: current, appliedContent: proposed });
                 await this.guardedWrite(file, current, proposed);
+                return snapshot;
             } catch (error) {
                 this.settings.rollbackHistory = previousUndo;
                 this.settings.rollbackRedoHistory = previousRedo;
@@ -3814,7 +3934,7 @@ class AiAssistantSuite extends Plugin {
         }
     }
 
-    async runOneClickSmartProcess(targetFile = null) {
+    async runOneClickSmartProcess(targetFile = null, selectedActions = null) {
         const app = this.app;
         let currentFile = targetFile || app.workspace.getActiveFile();
 
@@ -3828,7 +3948,7 @@ class AiAssistantSuite extends Plugin {
             return;
         }
 
-        const { oneClickProcessActions } = this.settings;
+        const oneClickProcessActions = { ...(selectedActions || this.settings.oneClickProcessActions) };
         const actions = Object.keys(oneClickProcessActions).filter(k => oneClickProcessActions[k]);
 
         if (actions.length === 0) {
@@ -3844,13 +3964,13 @@ class AiAssistantSuite extends Plugin {
                 progressNotice.setMessage("正在优化笔记结构...");
                 await this.runAiStructurizer(false, currentFile);
                 // Re-read file content after potential modification
-                currentFile = targetFile || app.workspace.getActiveFile();
+                // Keep currentFile pinned to the original target.
             }
 
             if (oneClickProcessActions.furigana) {
                 progressNotice.setMessage("正在为笔记添加日文假名注音...");
                 await this.runAiFurigana(false, currentFile, false); // 复用一键处理的进度提示，不再额外弹窗
-                currentFile = targetFile || app.workspace.getActiveFile();
+                // Keep currentFile pinned to the original target.
             }
 
             const interactiveActions = actions.filter(a => a !== 'structurizer' && a !== 'furigana');
