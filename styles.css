@@ -1892,26 +1892,40 @@
     background-color: var(--background-modifier-hover);
 }
 
-/* agent: codex (2026-09-19) — focused, theme-native workspace */
-.ai-assistant-view-container { padding: 20px 16px; max-width: 1100px; margin-inline: auto; line-height: 1.55; }
-.ai-assistant-workspace-heading { margin-bottom: 18px; }
-.ai-assistant-workspace-heading h2 { font-size: 22px; font-weight: 650; letter-spacing: -.03em; margin: 0 0 6px; }
-.ai-assistant-workspace-heading p { color: var(--text-muted); font-size: var(--font-ui-small); margin: 0 0 12px; }
-.ai-assistant-note-context { border-left: 3px solid var(--interactive-accent); padding: 7px 10px; background: var(--background-secondary); border-radius: 0 6px 6px 0; overflow-wrap: anywhere; }
-.ai-assistant-view-container .ai-assistant-button-group { padding: 10px; border: 1px solid var(--background-modifier-border); border-radius: 12px; background: var(--background-secondary); }
-.ai-assistant-view-container .ai-assistant-button-group button { min-height: 34px; border-radius: 7px; box-shadow: none; }
-.ai-assistant-view-container .ai-assistant-run { flex: 1 0 100%; margin-top: 6px; font-weight: 600; }
-.ai-assistant-view-container .ai-assistant-card { box-shadow: none; border-radius: 12px; background: var(--background-primary); padding: 16px; }
-.ai-assistant-view-container .ai-assistant-card h3 { font-size: 15px; overflow-wrap: anywhere; }
-.ai-assistant-view-container button:focus-visible { outline: 2px solid var(--interactive-accent); outline-offset: 2px; }
-.ai-assistant-diagnostics { margin-top: 24px; border-top: 1px solid var(--background-modifier-border); padding-top: 12px; }
-.ai-assistant-diagnostics > summary { color: var(--text-muted); cursor: pointer; font-size: var(--font-ui-small); padding: 8px 0; }
-@media (prefers-reduced-motion: reduce) { .ai-assistant-view-container * { animation: none !important; transition: none !important; } }
 
-/* agent: codex (2026-09-20) — compact actions after live sidebar review */
-.ai-assistant-view-container .ai-assistant-action-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
-.ai-assistant-view-container .ai-assistant-action-btn { display: grid; grid-template-columns: 24px minmax(0, 1fr); align-items: center; text-align: left; height: auto; min-height: 64px; padding: 10px 12px; gap: 3px 8px; white-space: normal; font: inherit; }
-.ai-assistant-view-container .ai-assistant-action-btn .action-icon { grid-row: 1 / 3; font-size: 20px; margin: 0; }
-.ai-assistant-view-container .ai-assistant-action-btn .action-name { font-size: 13px; margin: 0; }
-.ai-assistant-view-container .ai-assistant-action-btn .action-desc { font-size: 11px; line-height: 1.4; margin: 0; }
-.ai-assistant-view-container button.history-item { display: flex; width: 100%; height: auto; text-align: left; white-space: normal; background: transparent; box-shadow: none; border: 0; border-bottom: 1px solid var(--background-modifier-border); }
+/* agent: codex (2026-09-20) — unified layout: one grid, restrained surfaces */
+.ai-assistant-view-container { font-size: 13px !important; line-height: 1.5; color: var(--text-normal); background: var(--background-primary); min-width: 0; overflow-x: hidden; }
+.ai-assistant-view-container, .ai-assistant-view-container * { box-sizing: border-box; }
+.ai-assistant-view-container :is(div,section,header,span) { min-width: 0; }
+.ai-assistant-view-container :is(h1,h2) { font-size: 20px !important; line-height: 1.3; font-weight: 600; color: var(--text-normal) !important; margin: 0 0 12px; padding: 0; border: 0; }
+.ai-assistant-view-container :is(h3,h4) { font-size: 13px !important; line-height: 1.5; font-weight: 600; color: var(--text-normal) !important; margin: 0 0 12px; padding: 0; border: 0; }
+.ai-assistant-view-container :is(button,input,select) { font-family: var(--font-interface); font-size: 12px !important; border-radius: 6px !important; min-width: 0; max-width: 100%; }
+.ai-assistant-view-container button { height: 32px; padding: 0 10px; border: 1px solid var(--background-modifier-border); background: var(--background-primary) !important; color: var(--text-normal) !important; box-shadow: none !important; transform: none !important; }
+.ai-assistant-view-container :is(input:not([type="checkbox"]),select) { height: 32px; padding: 0 8px; background: var(--background-primary); border: 1px solid var(--background-modifier-border); }
+.ai-assistant-view-container :is(button.active,button.is-active,button[aria-pressed="true"]) { color: var(--interactive-accent) !important; border-color: var(--interactive-accent); background: var(--background-secondary) !important; }
+.ai-assistant-view-container :is(button,input,select,textarea):focus-visible { outline: 2px solid var(--interactive-accent); outline-offset: 2px; }
+.ai-assistant-view-container * { box-shadow: none !important; text-shadow: none !important; }
+
+.ai-assistant-view-container { max-width: none; margin: 0; padding: 20px !important; }
+.ai-assistant-workspace-heading { margin: 0 0 20px; }
+.ai-assistant-workspace-heading p { margin: 6px 0 16px; color: var(--text-muted); }
+.ai-assistant-note-context { padding: 10px 12px; border: 0; border-radius: 6px; background: var(--background-secondary); font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
+.ai-assistant-view-container .ai-assistant-button-group { display: grid !important; grid-template-columns: repeat(5,minmax(0,1fr)); gap: 6px !important; padding: 0; border: 0; background: transparent; }
+.ai-assistant-view-container .ai-assistant-button-group button { width: 100%; padding: 0 4px !important; }
+.ai-assistant-view-container .ai-assistant-run { grid-column: 1 / -1; margin: 8px 0 0; height: 36px !important; background: var(--interactive-accent) !important; color: var(--text-on-accent) !important; }
+.ai-assistant-view-container .ai-assistant-section { padding: 20px 0 0; margin: 20px 0 0; border: 0; border-top: 1px solid var(--background-modifier-border); background: transparent; }
+.ai-assistant-view-container .section-title-container { padding: 0; margin: 0 0 12px; background: transparent; border: 0; display: flex; align-items: center; gap: 8px; }
+.ai-assistant-view-container .ai-assistant-action-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 8px; }
+.ai-assistant-view-container .ai-assistant-action-btn { display: grid; grid-template-columns: 20px minmax(0,1fr); grid-template-rows: auto auto; gap: 4px 8px; padding: 12px !important; height: auto !important; min-height: 76px; text-align: left; white-space: normal; align-content: center; background: transparent !important; }
+.ai-assistant-view-container .action-icon { grid-row: 1 / 3; font-size: 18px; margin: 0; align-self: center; }
+.ai-assistant-view-container .action-name { font-size: 13px; margin: 0; color: var(--text-normal); }
+.ai-assistant-view-container .action-desc { font-size: 11px; line-height: 1.4; margin: 0; max-width: none; color: var(--text-muted); }
+.ai-assistant-view-container .ai-assistant-history-list { max-height: 240px; overflow: auto; padding: 0; background: transparent; border: 0; }
+.ai-assistant-view-container button.history-item { display: grid; grid-template-columns: minmax(0,1fr) auto; width: 100%; height: auto !important; gap: 4px 12px; padding: 10px 0 !important; text-align: left !important; white-space: normal; border: 0 !important; border-bottom: 1px solid var(--background-modifier-border) !important; background: transparent !important; }
+.ai-assistant-view-container .history-filename { grid-column: 1 / -1; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ai-assistant-view-container :is(.history-time,.history-action) { text-align: left; font-size: 11px; color: var(--text-muted); }
+.ai-assistant-view-container .ai-assistant-card { padding: 12px; border: 1px solid var(--background-modifier-border); border-radius: 6px; background: transparent; }
+.ai-assistant-diagnostics { margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--background-modifier-border); }
+.ai-assistant-diagnostics summary { color: var(--text-muted); cursor: pointer; }
+.ai-assistant-view-container .ai-assistant-tasks-container { padding: 14px 0; margin: 0; background: transparent; border: 0 !important; border-bottom: 1px solid var(--background-modifier-border) !important; border-radius: 0; }
+.ai-assistant-view-container .ai-assistant-section { border-radius: 0; }
