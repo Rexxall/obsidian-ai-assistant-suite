@@ -1,4 +1,4 @@
-// agent: codex (2026-10-03) — morning workspace; preserves selective review and guarded undo
+// agent: codex (2026-10-03) — task-led workbench, focused review and secondary navigation
 // agent: codex (2026-09-20) — keyboard-accessible compact actions
 // agent: codex (2026-09-19)
 const escapeHtmlText = value => String(value).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;"); // guarded writes and focused workspace
@@ -382,6 +382,8 @@ class AssistantView extends ItemView {
 
     addTask(task) {
         this.tasks.push(task);
+        this.selectedTaskId = task.id;
+        this.workbenchPage = 'review';
         this.render();
     }
 
@@ -405,132 +407,133 @@ class AssistantView extends ItemView {
     render() {
         const container = this.containerEl.children[1];
         container.empty();
-        const viewContainer = container.createDiv({ cls: "ai-assistant-view-container" });
-        const heading = viewContainer.createDiv({ cls: 'ai-assistant-workspace-heading' });
-        heading.createEl('div', { text: 'NOTE ASSISTANT', cls: 'assistant-eyebrow' });
-        heading.createEl('h2', { text: '笔记助手' });
-        heading.createEl('p', { text: '选择要整理的内容，逐项审阅结果。' });
+        const root = container.createDiv({ cls: 'ai-assistant-view-container assistant-workbench' });
+        const page = this.workbenchPage || 'prepare';
         const activeNote = this.plugin.app.workspace.getActiveFile();
-        heading.createDiv({ cls: 'ai-assistant-note-context', text: activeNote ? activeNote.basename : '先打开一篇笔记' });
-        const settingsEntry = heading.createEl('button', { text: '插件设置', cls: 'plugin-settings-entry' });
-        settingsEntry.addEventListener('click', () => {
+        const file = activeNote?.extension === 'md' ? activeNote : null;
+        const busy = !!this.workbenchRunning || this.tasks.some(t => t.status === 'loading');
+        const header = root.createDiv({ cls: 'aw-header' });
+        const brand = header.createDiv({ cls: 'aw-brand' });
+        brand.createSpan({ cls: 'aw-orb', attr: { 'aria-hidden': 'true' } });
+        brand.createEl('h2', { text: '笔记助手' });
+        header.createEl('button', { text: '设置', cls: 'aw-text-button', attr: { 'aria-label': '打开笔记助手设置' } }).onclick = () => {
             this.plugin.app.setting.open();
             this.plugin.app.setting.openTabById(this.plugin.manifest.id);
-        });
-        this.renderCurrentRequestBanner(viewContainer);
-
-        const studio = viewContainer.createDiv({ cls: 'assistant-studio-grid' });
-        const request = studio.createDiv({ cls: 'assistant-request-panel' });
-        request.createEl('h3', { text: '选择处理' });
-        const workflow = request.createDiv({ cls: 'assistant-workflow' });
-        workflow.createEl('label', { text: '本次流程', attr: { for: 'assistant-workflow-select' } });
-        const presets = workflow.createEl('select', { attr: { id: 'assistant-workflow-select', 'aria-label': '本次整理流程' } });
-        for (const [value, text] of [['default','沿用默认流程'], ['reading','整理阅读笔记'], ['archive','归档这篇笔记'], ['custom','自定义操作']]) {
-            presets.createEl('option', { value, text });
+        };
+        const nav = root.createEl('nav', { cls: 'aw-navigation', attr: { 'aria-label': '笔记助手导航' } });
+        for (const [id, label] of [['prepare','整理'],['review',`审阅${this.tasks.length ? ' · '+this.tasks.length : ''}`],['history','记录'],['tools','工具']]) {
+            const button = nav.createEl('button', { text: label, cls: 'aw-nav-button', attr: { 'aria-current': page === id ? 'page' : 'false' } });
+            button.onclick = () => { this.workbenchPage = id; this.render(); this.containerEl.children[1].querySelector?.('[aria-current=page]')?.focus(); };
         }
-        presets.value = this.sessionPreset || 'default';
-        presets.addEventListener('change', () => {
-            this.sessionPreset = presets.value;
-            if (presets.value === 'default') this.sessionActions = null;
-            else if (presets.value !== 'custom') this.sessionActions = presets.value === 'reading'
-                ? { structurizer: true, furigana: false, meta: true, tagger: true, mover: false }
-                : { structurizer: false, furigana: false, meta: false, tagger: true, mover: true };
-            else this.sessionActions = { ...(this.sessionActions || this.plugin.settings.oneClickProcessActions) };
-            this.render();
-        });
-        const chosenActions = this.sessionActions || this.plugin.settings.oneClickProcessActions;
-        workflow.createEl('p', { text: '本次选择不修改默认设置。生成后再决定接受哪些建议。', cls: 'assistant-review-muted' });
-
-        // --- One-Click Process Toggles ---
-        const buttonGroup = request.createDiv({ cls: "ai-assistant-button-group" });
-        buttonGroup.style.display = 'flex';
-        buttonGroup.style.gap = '8px';
-        buttonGroup.style.flexWrap = 'wrap';
-        buttonGroup.style.marginBottom = '1em';
-
-        const actions = [
-            { name: '整理结构', key: 'structurizer' },
-            { name: '标注假名', key: 'furigana' },
-            { name: '补全元数据', key: 'meta' },
-            { name: '补充标签', key: 'tagger' },
-            { name: '智能归档', key: 'mover' }
-        ];
-
-        actions.forEach(action => {
-            const button = buttonGroup.createEl('button');
-            button.setText(action.name);
-            button.setAttribute('aria-pressed', String(!!chosenActions[action.key]));
-
-            if (chosenActions[action.key]) {
-                button.addClass('mod-cta');
+        const body = root.createDiv({ cls: 'aw-body' });
+        if (page === 'history') {
+            body.createEl('h3', { text: '整理过的笔记', cls: 'aw-page-title' });
+            body.createEl('p', { text: '继续阅读，或回到上次整理的位置。', cls: 'aw-caption' });
+            if (!this.plugin.getRecentHistory().length) this.renderWorkbenchEmpty(body, '还没有处理记录', '完成一次整理后，可以在这里找回笔记。');
+            else this.renderRecentHistory(body);
+            return;
+        }
+        if (page === 'tools') {
+            body.createEl('h3', { text: '更多处理方式', cls: 'aw-page-title' });
+            body.createEl('p', { text: '批量整理、自定义操作，以及最近修改的回滚。', cls: 'aw-caption' });
+            this.renderQuickActions(body);
+            const diagnostics = body.createEl('details', { cls: 'ai-assistant-diagnostics' });
+            diagnostics.createEl('summary', { text: '使用情况与连接信息' });
+            this.renderUsageStats(diagnostics); this.renderFileInfo(diagnostics); this.renderAIStatus(diagnostics);
+            return;
+        }
+        if (page === 'review') {
+            this.renderCurrentRequestBanner(body);
+            if (!this.tasks.length) {
+                this.renderWorkbenchEmpty(body, this.workbenchRunning ? '正在准备建议' : '这里留给你的判断', this.workbenchRunning ? '正在读取笔记和准备处理步骤。生成的结果会出现在这里。' : '生成建议后，在这里对照原文、选择要接受的修改。');
+                body.createEl('button', { text: '选择要整理的内容', cls: 'aw-primary' }).onclick = () => { this.workbenchPage = 'prepare'; this.render(); };
+                return;
             }
-
-            button.addEventListener('click', async () => {
-                this.sessionActions = { ...(this.sessionActions || this.plugin.settings.oneClickProcessActions) };
-                const newValue = !this.sessionActions[action.key];
-                this.sessionActions[action.key] = newValue;
-                this.sessionPreset = 'custom';
-                presets.value = 'custom';
-                button.toggleClass('mod-cta', newValue);
-                button.setAttribute('aria-pressed', String(newValue));
-                new Notice(`"${action.name}" 已${newValue ? '开启' : '关闭'}`);
-            });
-        });
-
-        const runButton = buttonGroup.createEl('button');
-        runButton.setText('生成修改建议');
-        runButton.addClass('mod-cta', 'ai-assistant-run');
-        runButton.setAttribute('title', '对当前笔记执行已选的一键处理流程');
-        runButton.addEventListener('click', () => {
-            this.plugin.runOneClickSmartProcess(activeNote, { ...(this.sessionActions || this.plugin.settings.oneClickProcessActions) });
-        });
-
-        viewContainer.createEl('hr');
-        // --- End of Toggles ---
-
-        // --- 处理结果区域 (优先显示) ---
-        const tasksContainer = studio.createDiv({ cls: "ai-assistant-tasks-container" });
-        if (this.tasks.length === 0) {
-            const placeholder = tasksContainer.createEl("p", { text: "结果会显示在这里。先选择上方操作，再开始整理。" });
-            placeholder.style.textAlign = "center";
-            placeholder.style.color = "var(--text-muted)";
-            placeholder.style.fontSize = "var(--font-ui-small)";
-            placeholder.style.margin = "8px 0";
-        } else {
-            // 添加结果标题
-            const resultsTitle = tasksContainer.createEl("h3", { text: "待审阅结果" });
-            resultsTitle.style.margin = "0 0 12px 0";
-            resultsTitle.style.fontSize = "var(--font-ui-medium)";
-            resultsTitle.style.color = "var(--text-normal)";
-
-            this.tasks.forEach(task => {
-                this.renderTask(tasksContainer, task);
-            });
+            const task = this.tasks.find(t => t.id === this.selectedTaskId) || this.tasks[this.tasks.length - 1];
+            this.selectedTaskId = task.id;
+            const rail = body.createDiv({ cls: 'aw-result-switcher' });
+            rail.createEl('label', { text: '本次查看', attr: { for: 'aw-result-select' } });
+            const select = rail.createEl('select', { attr: { id: 'aw-result-select', 'aria-label': '选择处理结果' } });
+            for (const t of this.tasks) select.createEl('option', { value: t.id, text: `${t.status === 'loading' ? '生成中 · ' : t.content?.applied ? '已接受 · ' : ''}${t.title || '处理结果'}` });
+            select.value = task.id;
+            select.onchange = () => { this.selectedTaskId = select.value; this.render(); this.containerEl.children[1].querySelector?.('#aw-result-select')?.focus(); };
+            this.renderTask(body, task);
+            return;
         }
+        const intro = body.createDiv({ cls: 'aw-note' });
+        intro.createDiv({ text: '当前笔记', cls: 'aw-eyebrow' });
+        intro.createEl('h3', { text: file ? file.basename : '从一篇笔记开始', cls: 'aw-note-title' });
+        intro.createEl('p', { text: file ? (file.parent?.path === '/' ? '笔记库根目录' : file.parent?.path || file.path) : '打开一篇 Markdown 笔记，再选择你想做的整理。', cls: 'aw-caption' });
+        if (file) intro.createEl('button', { text: '回到原文 ↗', cls: 'aw-text-button' }).onclick = () => this.plugin.app.workspace.getLeaf().openFile(file);
+        const workspace = body.createDiv({ cls: 'aw-prepare-layout' });
+        const choices = workspace.createDiv({ cls: 'aw-choices' });
+        choices.createEl('h3', { text: '这次想做什么？', cls: 'aw-section-title' });
+        const workflow = choices.createDiv({ cls: 'aw-presets' });
+        const presets = [['default','日常整理','沿用你的默认步骤'],['reading','阅读笔记','结构、属性与标签'],['archive','归档收纳','标签与存放位置']];
+        for (const [id, label, desc] of presets) {
+            const button = workflow.createEl('button', { cls: 'aw-preset', attr: { 'aria-pressed': String((this.sessionPreset || 'default') === id) } });
+            button.createSpan({ text: label }); button.createEl('small', { text: desc });
+            button.onclick = () => {
+                this.sessionPreset = id;
+                this.sessionActions = id === 'default' ? null : id === 'reading'
+                    ? { structurizer:true, furigana:false, meta:true, tagger:true, mover:false }
+                    : { structurizer:false, furigana:false, meta:false, tagger:true, mover:true };
+                this.render();
+            };
+        }
+        const chosen = this.sessionActions || this.plugin.settings.oneClickProcessActions;
+        const actions = [['structurizer','整理结构','梳理段落与标题'],['furigana','标注假名','辅助日文阅读'],['meta','补全属性','标题、摘要与一句话总结'],['tagger','补充标签','连接已有的分类'],['mover','建议位置','找到适合存放的文件夹']];
+        const options = choices.createEl('details', { cls: 'aw-options' });
+        if (this.workbenchOptionsOpen || this.sessionPreset === 'custom') options.open = true;
+        options.ontoggle = () => { this.workbenchOptionsOpen = options.open; };
+        options.createEl('summary', { text: `调整步骤 · 已选 ${actions.filter(([key]) => chosen[key]).length} 项` });
+        for (const [key,label,desc] of actions) {
+            const row = options.createEl('label', { cls: 'aw-option' });
+            const check = row.createEl('input', { type:'checkbox', attr:{ 'data-action':key } }); check.checked = !!chosen[key];
+            const text = row.createSpan(); text.createSpan({ text:label }); text.createEl('small', { text:desc });
+            check.onchange = () => {
+                this.sessionActions = { ...chosen, [key]:check.checked }; this.sessionPreset = 'custom'; this.workbenchOptionsOpen = true; this.render(); this.containerEl.children[1].querySelector?.(`[data-action=${key}]`)?.focus();
+            };
+        }
+        const start = workspace.createDiv({ cls: 'aw-start' });
+        start.createDiv({ text: '本次整理', cls: 'aw-eyebrow' });
+        const selected = actions.filter(([key]) => chosen[key]);
+        const plan = start.createEl('ul', { cls: 'aw-plan' });
+        for (const [,label] of selected) plan.createEl('li', { text:label });
+        if (!selected.length) start.createEl('p', { text:'请至少选择一个步骤。', cls:'aw-caption' });
+        start.createEl('p', { text:'正文建议逐项审阅，属性与位置分别确认。本次选择不改变默认设置。', cls:'aw-caption' });
+        const run = start.createEl('button', { text: busy ? '正在生成建议…' : '生成修改建议 →', cls:'aw-primary', attr:{ 'aria-label':'为当前笔记生成修改建议' } });
+        run.disabled = !file || !selected.length || busy;
+        run.onclick = async () => {
+            if (this.workbenchRunning || !file) return;
+            this.workbenchRunning = true; this.workbenchCancelled = false; this.workbenchPage = 'review'; this.render();
+            try { await this.plugin.runOneClickSmartProcess(file, { ...chosen }, () => this.workbenchCancelled); }
+            finally { this.workbenchRunning = false; this.render(); }
+        };
+        if (busy) start.createEl('button', { text:'查看生成进度', cls:'aw-text-button' }).onclick = () => { this.workbenchPage = 'review'; this.render(); };
+    }
 
-        // --- 快速操作区域 ---
-        this.renderQuickActions(viewContainer);
+    renderWorkbenchEmpty(container, title, description) {
+        const empty = container.createDiv({ cls: 'aw-empty' });
+        empty.createDiv({ cls:'aw-empty-mark', text:'↗', attr:{'aria-hidden':'true'} });
+        empty.createEl('h3', { text:title });
+        empty.createEl('p', { text:description });
+    }
 
-        // --- 最近处理历史 ---
-        this.renderRecentHistory(viewContainer);
-
-        // --- 使用统计 ---
-        const diagnostics = viewContainer.createEl('details', { cls: 'ai-assistant-diagnostics' });
-        diagnostics.createEl('summary', { text: '使用情况与连接信息' });
-        this.renderUsageStats(diagnostics);
-        this.renderFileInfo(diagnostics);
-        this.renderAIStatus(diagnostics);
+    cancelWorkbenchRequest() {
+        this.workbenchCancelled = true;
+        this.plugin.cancelCurrentRequest('用户取消');
     }
 
     renderCurrentRequestBanner(container) {
-        if (!this.plugin.currentAbortController || this.plugin.currentAbortController.signal.aborted) {
+        if (!this.workbenchRunning && (!this.plugin.currentAbortController || this.plugin.currentAbortController.signal.aborted)) {
             return;
         }
         const banner = container.createDiv({ cls: "ai-assistant-active-request" });
         const label = this.plugin.currentRequestLabel || 'AI 请求';
         banner.createEl("span", { text: `正在运行: ${label}` });
         const cancelButton = banner.createEl("button", { text: "取消" });
-        cancelButton.addEventListener("click", () => this.plugin.cancelCurrentRequest('用户取消'));
+        cancelButton.addEventListener("click", () => this.cancelWorkbenchRequest());
     }
 
     renderTask(container, task) {
@@ -588,7 +591,7 @@ class AssistantView extends ItemView {
             }
             const buttonContainer = card.createDiv({ cls: "ai-assistant-button-container" });
             const cancelButton = buttonContainer.createEl("button", { text: "取消当前请求" });
-            cancelButton.addEventListener("click", () => this.plugin.cancelCurrentRequest('用户取消'));
+            cancelButton.addEventListener("click", () => this.cancelWorkbenchRequest());
         } else if (task.status === 'displaying') {
             switch (task.type) {
                 case 'mover':
@@ -1420,7 +1423,7 @@ class AssistantView extends ItemView {
 
         const messageEl = card.createEl("p", {
             text: content.message,
-            cls: content.type === 'error' ? 'error-message' : 'success-message'
+            cls: content.type === 'error' || task.type === 'error' ? 'error-message' : 'success-message'
         });
 
         const buttonContainer = card.createDiv({ cls: "ai-assistant-button-container" });
@@ -3463,6 +3466,7 @@ class AiAssistantSuite extends Plugin {
                 return;
             }
             new Notice(`处理失败: ${error.message}`, 0);
+            this.view?.updateTask(taskId, { status: 'displaying', type: 'error', title: '这次处理未完成', content: { type: 'error', file: currentFile, message: error.message } });
             console.error("AI Structurizer Error:", error);
         }
     }
@@ -3600,6 +3604,7 @@ class AiAssistantSuite extends Plugin {
                 return;
             }
             new Notice(`处理失败: ${error.message}`, 0);
+            this.view?.updateTask(taskId, { status: 'displaying', type: 'error', title: '这次处理未完成', content: { type: 'error', file: currentFile, message: error.message } });
             console.error("AI Furigana Error:", error);
         }
     }
@@ -3938,7 +3943,7 @@ class AiAssistantSuite extends Plugin {
         }
     }
 
-    async runOneClickSmartProcess(targetFile = null, selectedActions = null) {
+    async runOneClickSmartProcess(targetFile = null, selectedActions = null, shouldStop = () => false) {
         const app = this.app;
         let currentFile = targetFile || app.workspace.getActiveFile();
 
@@ -3967,13 +3972,15 @@ class AiAssistantSuite extends Plugin {
             if (oneClickProcessActions.structurizer) {
                 progressNotice.setMessage("正在优化笔记结构...");
                 await this.runAiStructurizer(false, currentFile);
+                if (shouldStop()) { progressNotice.hide(); return; }
                 // Re-read file content after potential modification
                 // Keep currentFile pinned to the original target.
             }
 
             if (oneClickProcessActions.furigana) {
                 progressNotice.setMessage("正在为笔记添加日文假名注音...");
-                await this.runAiFurigana(false, currentFile, false); // 复用一键处理的进度提示，不再额外弹窗
+                await this.runAiFurigana(false, currentFile, false);
+                if (shouldStop()) { progressNotice.hide(); return; } // 复用一键处理的进度提示，不再额外弹窗
                 // Keep currentFile pinned to the original target.
             }
 
@@ -4042,6 +4049,7 @@ ${contextForPrompt}
 **需要处理的文本如下：**
 \n\n${contentToProcess}`;
 
+            if (shouldStop()) { progressNotice.hide(); return; }
             progressNotice.setMessage("正在请求 AI 进行综合分析...");
 
             const messageContent = await this.makeApiRequest(prompt, null, true);
@@ -4151,6 +4159,7 @@ ${contextForPrompt}
                 return;
             }
             new Notice(`一键处理失败: ${error.message}`, 0);
+            this.view?.addTask({ id: `error-${Date.now()}`, status: 'displaying', type: 'error', title: '这次处理未完成', content: { type: 'error', file: currentFile, message: error.message } });
             console.error("One Click Process Error:", error);
         }
     }
