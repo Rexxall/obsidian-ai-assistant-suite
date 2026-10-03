@@ -2192,6 +2192,9 @@ class AiAssistantSuite extends Plugin {
             if (!config.id) config.id = `config_${index}_${Date.now()}`;
             if (!config.name) config.name = `Config ${index + 1}`;
             if (!config.apiProvider) config.apiProvider = 'openai';
+            if (config.apiProvider === 'openai' && /^https:\/\/api\.deepseek\.com(?:\/|$)/i.test(config.apiUrl || '')) {
+                config.apiProvider = 'deepseek';
+            }
             if (config.enabled === undefined) config.enabled = true;
         });
         if (!this.settings.activeConfigId && this.settings.apiConfigs[0]) {
@@ -2684,7 +2687,7 @@ class AiAssistantSuite extends Plugin {
             return { valid: false, error: '未找到选中的 API 配置。' };
         }
 
-        if (!this.hasStoredApiKey(config) || (config.apiProvider !== 'gemini' && !config.apiUrl)) {
+        if (!this.hasStoredApiKey(config) || (!['gemini', 'deepseek'].includes(config.apiProvider) && !config.apiUrl)) {
             return { valid: false, error: '请填写 API Key (以及 API URL 如果必要)。' };
         }
 
@@ -2844,9 +2847,14 @@ class AiAssistantSuite extends Plugin {
         }
     }
 
+    resolveDeepSeekUrl(value) {
+        const url = (value?.trim() || 'https://api.deepseek.com').replace(/\/+$/, '');
+        return /\/chat\/completions$/.test(url) ? url : `${url}/chat/completions`;
+    }
+
     // 对单个 config 执行实际的 API 请求
     async _callSingleConfig(prompt, modelNameOverride, expectJson, activeConfig, options = {}) {
-        const model = modelNameOverride || activeConfig.modelName;
+        const model = modelNameOverride || activeConfig.modelName || (activeConfig.apiProvider === 'deepseek' ? 'deepseek-flash' : '');
         const provider = activeConfig.apiProvider || 'openai';
         const apiKey = await this.getApiKey(activeConfig);
 
@@ -2875,14 +2883,15 @@ class AiAssistantSuite extends Plugin {
                 body: JSON.stringify(body)
             };
         } else {
-            if (!activeConfig.apiUrl) {
+            if (!activeConfig.apiUrl && provider !== 'deepseek') {
                 throw new Error('API URL 为空，请在设置中填写。');
             }
-            url = activeConfig.apiUrl;
+            url = provider === 'deepseek' ? this.resolveDeepSeekUrl(activeConfig.apiUrl) : activeConfig.apiUrl;
             const body = {
                 model: model,
                 messages: [{ role: "user", content: prompt }]
             };
+            if (provider === 'deepseek') body.thinking = { type: activeConfig.deepseekThinking ? 'enabled' : 'disabled' };
             if (expectJson) {
                 body.response_format = { type: "json_object" };
             }
@@ -4852,24 +4861,32 @@ class AiAssistantSettingTab extends PluginSettingTab {
         this.renderSettingsBody();
         const root = this.containerEl;
         root.addClass('plugin-settings-workspace', 'assistant-settings-morning');
-        const nav = root.createDiv({ cls: 'plugin-settings-jump' });
-        const label = nav.createEl('label', { text: '快速定位' });
-        const select = label.createEl('select', { attr: { 'aria-label': '跳转到设置分组' } });
-        select.createEl('option', { text: '选择设置分组…', value: '' });
-        const sections = Array.from(root.querySelectorAll('h3'));
-        sections.forEach((section, index) => {
-            select.createEl('option', { text: section.textContent || '设置', value: String(index) });
-        });
-        select.addEventListener('change', () => {
-            if (select.value === '') return;
-            const target = sections[Number(select.value)];
-            if (target) {
-                target.setAttribute('tabindex', '-1');
-                target.scrollIntoView({ block: 'start' });
-                target.focus({ preventScroll: true });
+        const nav = root.createDiv({ cls: 'atelier-settings-nav' });
+        const pages = ['模型连接', '处理偏好', '动作与提示词', '备份与恢复'];
+        const sections = Array.from(root.children).filter(el => el.tagName === 'H3');
+        const groups = sections.map((heading, index) => {
+            const nodes = [heading];
+            let node = heading.nextElementSibling;
+            while (node && node.tagName !== 'H3' && node !== nav) {
+                nodes.push(node); node = node.nextElementSibling;
             }
+            return { nodes, page: index === 0 ? 0 : index <= 2 ? 1 : index <= 4 ? 2 : 3 };
         });
-        root.prepend(nav);
+        const buttons = [];
+        const select = page => {
+            this.settingsPage = page;
+            groups.forEach(group => group.nodes.forEach(el => { el.hidden = group.page !== page; }));
+            buttons.forEach((button, index) => {
+                button.setAttribute('aria-pressed', String(index === page));
+            });
+        };
+        pages.forEach((name, index) => {
+            const button = nav.createEl('button', { text: name });
+            button.onclick = () => select(index);
+            buttons.push(button);
+        });
+        root.children[0].after(nav);
+        select(this.settingsPage || 0);
     }
 
     renderSettingsBody() {
@@ -4877,9 +4894,9 @@ class AiAssistantSettingTab extends PluginSettingTab {
         containerEl.empty();
         containerEl.createEl('h2', { text: '笔记助手设置' });
 
-        containerEl.createEl('h3', { text: 'API 设置管理' });
+        containerEl.createEl('h3', { text: '连接你的模型' });
         containerEl.createEl('p', {
-            text: '多个配置按列表顺序自动 Fallback：调用时优先使用排在前面的配置，失败后立即切换到下一个。',
+            text: '每个服务独立保存。启用的配置按优先级依次尝试，连接失败时自动使用备用服务。',
             attr: { style: 'font-size: 0.85em; color: var(--text-muted); margin: -4px 0 12px 0;' }
         });
 
@@ -4922,15 +4939,27 @@ class AiAssistantSettingTab extends PluginSettingTab {
             const newId = 'config_' + Date.now();
             this.plugin.settings.apiConfigs.push({
                 id: newId,
-                name: 'New Config ' + (apiConfigs.length + 1),
+                name: '模型连接 ' + (apiConfigs.length + 1),
                 apiProvider: 'openai',
                 apiKey: '',
-                apiUrl: 'https://api.example.com',
+                apiUrl: '',
                 modelName: '',
                 auxiliaryModelName: '',
                 enabled: true
             });
             this.plugin.settings.activeConfigId = newId;
+            await this.plugin.saveSettings();
+            this.display();
+        };
+
+        const deepseekButton = actionsContainer.createEl('button', { text: '添加 DeepSeek' });
+        deepseekButton.onclick = async () => {
+            const config = { id: `deepseek_${Date.now()}`, name: 'DeepSeek', apiProvider: 'deepseek',
+                apiKey: '', apiUrl: 'https://api.deepseek.com/chat/completions',
+                modelName: 'deepseek-flash', auxiliaryModelName: 'deepseek-flash',
+                deepseekThinking: false, enabled: true };
+            apiConfigs.push(config);
+            this.plugin.settings.activeConfigId = config.id;
             await this.plugin.saveSettings();
             this.display();
         };
@@ -4976,18 +5005,18 @@ class AiAssistantSettingTab extends PluginSettingTab {
         
         if (!activeConfig) return;
 
-        containerEl.createEl('hr');
+        containerEl.createEl('hr', { cls: 'atelier-settings-divider' });
 
         // 显示当前配置的优先级
         const priorityIdx = apiConfigs.findIndex(c => c.id === activeConfigId);
         const enabledCount = apiConfigs.filter(c => c.enabled !== false).length;
         containerEl.createEl('p', {
-            text: `📋 当前编辑: 优先级 #${priorityIdx + 1}（共 ${apiConfigs.length} 个配置，其中 ${enabledCount} 个已启用）`,
+            text: `优先级 #${priorityIdx + 1}（共 ${apiConfigs.length} 个配置，其中 ${enabledCount} 个已启用）`,
             attr: { style: 'font-size: 0.82em; color: var(--text-accent); margin: 6px 0 12px 0;' }
         });
 
         new Setting(containerEl)
-            .setName('启用此配置 (Enabled)')
+            .setName('启用此配置')
             .setDesc('禁用后此配置将在 Fallback 列表中被跳过。')
             .addToggle(toggle => toggle
                 .setValue(activeConfig.enabled !== false)
@@ -5007,18 +5036,42 @@ class AiAssistantSettingTab extends PluginSettingTab {
                 }));
 
         new Setting(containerEl)
-            .setName('API 提供商 (API Provider)')
+            .setName('服务商')
             .setDesc('选择您使用的 AI 服务提供商格式。')
             .addDropdown(dropdown => dropdown
                 .addOption('openai', 'OpenAI (兼容格式)')
                 .addOption('gemini', 'Google Gemini (官方格式)')
+                .addOption('deepseek', 'DeepSeek 官方')
                 .setValue(activeConfig.apiProvider || 'openai')
                 .onChange(async (value) => {
                     activeConfig.apiProvider = value;
                     await this.plugin.saveSettings();
+                    this.display();
                 }));
 
         let apiKeyInput = null;
+        if (activeConfig.apiProvider === 'deepseek') {
+            new Setting(containerEl)
+                .setName('DeepSeek 模型预设')
+                .setDesc('Flash 用于日常整理，Pro 用于复杂改写。下方仍可手动填写模型名。')
+                .addDropdown(dropdown => dropdown
+                    .addOption('', '选择模型…')
+                    .addOption('deepseek-flash', 'DeepSeek Flash')
+                    .addOption('deepseek-v4-pro', 'DeepSeek V4 Pro')
+                    .setValue(['deepseek-flash', 'deepseek-v4-pro'].includes(activeConfig.modelName) ? activeConfig.modelName : '')
+                    .onChange(async value => {
+                        if (!value) return;
+                        activeConfig.modelName = value;
+                        await this.plugin.saveSettings(); this.display();
+                    }));
+            new Setting(containerEl).setName('深度思考')
+                .setDesc('适合复杂内容；等待时间可能增加。默认关闭，方便快速整理笔记。')
+                .addToggle(toggle => toggle.setValue(!!activeConfig.deepseekThinking).onChange(async value => {
+                    activeConfig.deepseekThinking = value; await this.plugin.saveSettings();
+                }));
+            containerEl.createEl('p', { cls: 'atelier-provider-note', text: '官方地址：https://api.deepseek.com/chat/completions。留空使用官方地址；也支持填写基础地址。切换已有配置的服务商不会覆盖你保存的地址和模型。' });
+        }
+
         new Setting(containerEl)
             .setName('API Key')
             .setDesc(this.plugin.hasStoredApiKey(activeConfig)
@@ -5068,7 +5121,7 @@ class AiAssistantSettingTab extends PluginSettingTab {
                 }));
 
         new Setting(containerEl)
-            .setName('AI 主模型名称 (Main Model Name)')
+            .setName('主模型')
             .setDesc('指定用于内容生成、分析等核心任务的 AI 模型。')
             .addText(text => text
                 .setPlaceholder('e.g., gemini-2.5-pro')
@@ -5079,7 +5132,7 @@ class AiAssistantSettingTab extends PluginSettingTab {
                 }));
 
         new Setting(containerEl)
-            .setName('AI 辅助模型名称 (Auxiliary Model Name)')
+            .setName('辅助模型')
             .setDesc('指定用于翻译等轻量级任务的 AI 模型，可以选一个更快的。')
             .addText(text => text
                 .setPlaceholder('e.g., gemini-2.5-flash')
@@ -5089,26 +5142,23 @@ class AiAssistantSettingTab extends PluginSettingTab {
                     await this.plugin.saveSettings();
                 }));
 
+        let connectionStatus;
         new Setting(containerEl)
-            .setName('Test Connection (测试当前配置)')
-            .setDesc('测试当前选中的 API 配置是否可用。')
-            .addButton(button => button
-                .setButtonText('测试连接')
-                .onClick(async () => {
-                    button.setButtonText('Testing...').setDisabled(true);
+            .setName('检查连接')
+            .setDesc('仅测试当前配置，发送一条简短测试消息，不读取笔记。')
+            .addButton(button => button.setButtonText('测试连接').onClick(async () => {
+                button.setButtonText('正在连接…').setDisabled(true);
+                connectionStatus.setText('正在检查当前服务与主模型…');
+                try {
                     const { valid, error } = await this.plugin.validateApiConfig(activeConfig);
-                    if (valid) {
-                        new Notice('API 连接成功！', 3000);
-                        button.setButtonText('Success').removeTooltip();
-                    } else {
-                        new Notice(`API 连接失败: ${error}`, 5000);
-                        button.setButtonText('Failed').setTooltip(error);
-                    }
-                    setTimeout(() => {
-                        button.setButtonText('测试连接').setDisabled(false).removeTooltip();
-                    }, 3000);
-                }));
-
+                    connectionStatus.setText(valid ? '连接成功，可以开始整理笔记。' : error || '连接失败，请检查地址、模型和密钥。');
+                } catch (error) {
+                    connectionStatus.setText(`连接失败：${error.message}`);
+                } finally {
+                    button.setButtonText('测试连接').setDisabled(false);
+                }
+            }));
+        connectionStatus = containerEl.createEl('p', { cls: 'atelier-connection-status', attr: { role: 'status', 'aria-live': 'polite' } });
 
         containerEl.createEl('h3', { text: '功能参数设置' });
 
@@ -5126,7 +5176,7 @@ class AiAssistantSettingTab extends PluginSettingTab {
                 }));
 
         new Setting(containerEl)
-            .setName('忽略的文件夹 (Ignored Folders)')
+            .setName('忽略的文件夹')
             .setDesc('AI Mover功能将忽略这些文件夹及其子文件夹。每行一个文件夹路径。')
             .addTextArea(text => text
                 .setPlaceholder('例如：\n40 - Obsidian\nTemplates\nAttachments')
@@ -5197,7 +5247,7 @@ class AiAssistantSettingTab extends PluginSettingTab {
                     await this.plugin.saveSettings();
                 }));
 
-        containerEl.createEl('h3', { text: '一键智能处理 (One-Click Smart Process)' });
+        containerEl.createEl('h3', { text: '默认处理步骤' });
         new Setting(containerEl)
             .setDesc('选择生成建议的默认步骤。正文先生成对照预览，接受后才写入；属性、标签和位置分别确认。');
 
@@ -5252,7 +5302,7 @@ class AiAssistantSettingTab extends PluginSettingTab {
                 }));
 
 
-        containerEl.createEl('h3', { text: '自定义 AI Action' });
+        containerEl.createEl('h3', { text: '自定义动作' });
         containerEl.createEl('p', {
             text: 'Prompt 支持 {{content}}、{{selection}}、{{file_name}}、{{file_path}}。新增动作会立即出现在侧边栏；若要作为 Obsidian 命令/热键使用，重载插件后会注册。',
             attr: { style: 'font-size: 0.85em; color: var(--text-muted); margin: -4px 0 12px 0;' }
@@ -5324,7 +5374,7 @@ class AiAssistantSettingTab extends PluginSettingTab {
         });
 
         new Setting(containerEl)
-            .setName('添加自定义 Action')
+            .setName('添加自定义动作')
             .addButton(button => button
                 .setButtonText('新增')
                 .setCta()
@@ -5341,7 +5391,7 @@ class AiAssistantSettingTab extends PluginSettingTab {
                 }));
 
 
-        containerEl.createEl('h3', { text: 'Prompts 设置' });
+        containerEl.createEl('h3', { text: '内置提示词' });
         containerEl.createEl('p', { text: '在这里自定义每个功能的系统提示词(Prompt)。请注意，占位符(例如 {{content}})是必需的，用于在运行时动态插入内容。' });
 
         new Setting(containerEl)
@@ -5393,7 +5443,7 @@ class AiAssistantSettingTab extends PluginSettingTab {
 
         new Setting(containerEl)
             .setName('导出设置')
-            .setDesc('将当前所有设置导出为JSON文件，便于备份或分享。')
+            .setDesc('导出配置与提示词，密钥会被移除。导入后需要另行填写密钥。')
             .addButton(button => {
                 button.setButtonText('导出设置').onClick(() => {
                     this.exportSettings();

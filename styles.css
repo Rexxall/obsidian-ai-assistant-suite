@@ -2122,3 +2122,38 @@
  .atelier-workbench .at-chrome { gap:10px; }
  .atelier-workbench .at-assistant,.atelier-workbench .at-docbar,.atelier-workbench .at-review { padding:20px 18px; }
 }
+
+/* Settings: a quiet reading surface with four focused destinations. */
+.assistant-settings-morning { max-width: 920px; margin: 0 auto; }
+.assistant-settings-morning [hidden] { display: none !important; }
+.assistant-settings-morning > h2 { font-family: var(--font-text); font-size: 28px; letter-spacing: -.035em; margin-bottom: 20px; }
+.assistant-settings-morning .atelier-settings-nav { display: flex; flex-wrap: wrap; gap: 6px; padding: 6px; margin-bottom: 28px; background: var(--background-secondary); border-radius: 16px; }
+.assistant-settings-morning .atelier-settings-nav button { flex: 1 1 120px; box-shadow: none; border: 0; background: transparent; border-radius: 11px; padding: 10px 14px; height: auto; color: var(--text-muted); }
+.assistant-settings-morning .atelier-settings-nav button[aria-pressed="true"] { color: var(--text-normal); background: var(--background-primary); box-shadow: 0 2px 8px rgb(0 0 0 / 5%); }
+.assistant-settings-morning > h3 { margin: 24px 0 10px; font-size: 18px; }
+.assistant-settings-morning .setting-item { padding: 17px 0; gap: 20px; border-color: var(--background-modifier-border); }
+.assistant-settings-morning .setting-item-name { font-size: 14px; font-weight: 550; }
+.assistant-settings-morning .setting-item-description { line-height: 1.6; max-width: 460px; }
+.assistant-settings-morning .setting-item-control { flex-wrap: wrap; gap: 8px; }
+.assistant-settings-morning input[type="text"], .assistant-settings-morning input[type="password"], .assistant-settings-morning select { max-width: 100%; border-radius: 9px; }
+.assistant-settings-morning .api-config-header { flex-direction: column; align-items: stretch !important; gap: 8px !important; padding: 16px 0; border-bottom: 1px solid var(--background-modifier-border); }
+.assistant-settings-morning .api-config-header .setting-item { width: 100%; border: 0; padding: 0 0 12px; }
+.assistant-settings-morning .api-config-header > div:last-child { display: flex; flex-wrap: wrap; gap: 8px; }
+.assistant-settings-morning .api-config-header button { margin: 0 !important; box-shadow: none; border-radius: 9px; }
+.assistant-settings-morning .atelier-provider-note { font-size: 12px; line-height: 1.7; color: var(--text-muted); padding: 12px 16px; background: var(--background-secondary); border-radius: 12px; overflow-wrap: anywhere; }
+.assistant-settings-morning .custom-action-settings-block { padding: 16px 20px; margin: 18px 0; border: 1px solid var(--background-modifier-border); border-radius: 14px; background: transparent; }
+@media (max-width: 680px) {
+ .assistant-settings-morning .setting-item { align-items: stretch; flex-direction: column; gap: 10px; }
+ .assistant-settings-morning .setting-item-control { justify-content: flex-start; }
+ .assistant-settings-morning .setting-item-control input { width: 100%; }
+}
+.assistant-settings-morning .setting-item { background: transparent !important; box-shadow: none !important; border-radius: 0 !important; margin: 0 !important; border: 0 !important; border-bottom: 1px solid var(--am-line) !important; }
+.assistant-settings-morning .api-config-header .setting-item { border-bottom: 0 !important; }
+.assistant-settings-morning button:not(.mod-warning):not(.mod-cta):not([aria-pressed]) { background: var(--am-soft); color: var(--am-ink); border: 1px solid var(--am-line); box-shadow: none; }
+.assistant-settings-morning .api-config-header button:nth-child(2) { background: var(--am-accent) !important; color: var(--text-on-accent) !important; border-color: transparent !important; }
+.assistant-settings-morning .setting-item-control { min-width: 0; max-width: 100%; }
+.assistant-settings-morning > p { line-height: 1.7; }
+.assistant-settings-morning > p[style] { border-top: 0 !important; }
+.assistant-settings-morning .atelier-settings-divider { display: none; }
+.assistant-settings-morning .atelier-connection-status { color: var(--am-accent); font-size: 13px; overflow-wrap: anywhere; }
+.assistant-settings-morning .atelier-connection-status:empty { display: none; }
