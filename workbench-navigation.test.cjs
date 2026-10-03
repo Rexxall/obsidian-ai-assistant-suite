@@ -30,14 +30,16 @@ test('sidebar and workbench share tasks and selection, and clearing one clears b
 test('a picked note remains the processing target even if another editor is active',async()=>{
  const f=fixture();f.v.pinnedFile={basename:'Picked',path:'Picked.md',extension:'md',parent:{path:'/'}};f.v.render();const p=f.button('生成修改建议 →').onclick();assert.equal(f.args[0].path,'Picked.md');f.finish();await p;
 });
-test('processing preserves the expanded workspace and switching modes controls the sidedock',async()=>{
+test('processing always opens the sidebar even when a legacy workbench is active',async()=>{
  const module={exports:{}};vm.runInNewContext(fs.readFileSync(__dirname+'/main.js','utf8'),{module,console,require:()=>Object.fromEntries(['Plugin','Notice','PluginSettingTab','Setting','FuzzySuggestModal','Modal','ItemView','TFile'].map(k=>[k,class{}]))});
  const p=new module.exports();const full={view:{expanded:true}},side={view:{expanded:false}},calls=[];
  p.view=full.view;p.refreshAssistantViews=()=>{};p.app={workspace:{getLeavesOfType:t=>[t==='ai-assistant-workbench-view'?full:side],revealLeaf:async l=>calls.push(l),rightSplit:{collapse:()=>calls.push('collapse'),expand:()=>calls.push('expand')}}};
- await p.activateView();assert.equal(calls[0],full);assert.equal(calls[1],'collapse');await p.activateView(false);assert.equal(calls[2],side);assert.equal(calls[3],'expand');
+ await p.activateView();assert.equal(calls[0],side);assert.equal(calls[1],'expand');await p.activateView(true);assert.equal(calls[2],full);assert.equal(calls[3],'collapse');
 });
 test('a custom action for a picked note cannot inherit another editor selection',async()=>{
  const module={exports:{}};vm.runInNewContext(fs.readFileSync(__dirname+'/main.js','utf8'),{module,console,require:()=>Object.fromEntries(['Plugin','Notice','PluginSettingTab','Setting','FuzzySuggestModal','Modal','ItemView','TFile'].map(k=>[k,class{}]))});
  const p=new module.exports(),picked={path:'Picked.md'},other={path:'Other.md'};p.app={workspace:{getActiveFile:()=>other,activeEditor:{editor:{getSelection:()=>{throw new Error('wrong editor read')}}}},vault:{read:async f=>{assert.equal(f,picked);return 'Picked note content'}}};
  const c=await p.getCurrentActionContext(picked);assert.equal(c.file,picked);assert.equal(c.selection,'');assert.equal(c.originalContent,'Picked note content');
 });
+
+test('sidebar puts five functions directly on the main surface and keeps secondary entries in More',()=>{const f=fixture();assert.equal(f.all().filter(e=>e.attrs['data-action']).length,5);assert.equal(f.all().filter(e=>e.options.cls==='aw-nav-button').length,2);assert.ok(!f.all().some(e=>['at-art','at-document','aw-presets','aw-orb'].includes(e.options.cls)));const more=f.all().find(e=>e.options.cls==='as-more');assert.ok(more);assert.ok(more.children.some(e=>e.options.text==='更多'));assert.ok(f.all(more).some(e=>e.options.text==='设置'));});

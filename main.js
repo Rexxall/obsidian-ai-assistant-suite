@@ -420,7 +420,7 @@ class AssistantView extends ItemView {
     render() {
         const container = this.containerEl.children[1];
         container.empty();
-        const root = container.createDiv({ cls: 'ai-assistant-view-container assistant-workbench atelier-workbench' });
+        const root = container.createDiv({ cls: 'ai-assistant-view-container assistant-workbench atelier-workbench assistant-sidebar-focused' });
         if (this.expanded) root.addClass('atelier-expanded');
         const page = this.workbenchPage || 'prepare';
         const activeNote = this.plugin.app.workspace.getActiveFile();
@@ -429,25 +429,23 @@ class AssistantView extends ItemView {
         const busy = !!this.workbenchRunning || this.tasks.some(t => t.status === 'loading');
         const header = root.createDiv({ cls: 'aw-header' });
         const brand = header.createDiv({ cls: 'aw-brand' });
-        brand.createSpan({ cls: 'aw-orb', attr: { 'aria-hidden':'true' } });
-        const identity = brand.createDiv();
-        identity.createEl('h2', { text:'笔记助手' });
-        identity.createEl('small', { text:'NOTE ASSISTANT', cls:'at-brand-caption' });
-        const chrome = header.createDiv({ cls:'at-chrome' });
-        chrome.createEl('button', { text:this.expanded?'侧栏 ↗':'展开 ↗', cls:'aw-text-button', attr:{'aria-label':this.expanded?'打开助手侧栏':'展开笔记工作台'} }).onclick = () => this.plugin.activateView(!this.expanded);
-        chrome.createEl('button', { text:'设置', cls:'aw-text-button', attr:{'aria-label':'打开笔记助手设置'} }).onclick = () => this.openAtelierSettings();
+        brand.createEl('h2', { text: '笔记助手' });
+        const more = header.createEl('details', { cls: 'as-more' });
+        more.createEl('summary', { text: '更多', attr: { 'aria-label': '笔记助手更多功能' } });
+        const menu = more.createDiv({ cls: 'as-menu' });
+        for (const [label, action] of [
+            ['设置', () => { this.plugin.app.setting.open(); this.plugin.app.setting.openTabById(this.plugin.manifest.id); }],
+            ['处理记录', () => { this.workbenchPage = 'history'; this.render(); }],
+            ['批量整理', () => this.showBatchProcessingModal()],
+            ['自定义动作', () => this.showAtelierCustomActions()],
+            ['其他工具', () => { this.workbenchPage = 'tools'; this.render(); }]
+        ]) menu.createEl('button', { text: label }).onclick = () => { more.open = false; action(); };
         const nav = root.createEl('nav', { cls:'aw-navigation', attr:{'aria-label':'笔记助手导航'} });
-        for (const [id,label] of [['prepare','整理'],['review',`审阅${this.tasks.length?' · '+this.tasks.length:''}`],['history','记录'],['tools','工具']]) {
+        for (const [id,label] of [['prepare','整理笔记'],['review',`处理结果${this.tasks.length?' · '+this.tasks.length:''}`]]) {
             const b = nav.createEl('button', { text:label, cls:'aw-nav-button', attr:{'aria-current':page===id?'page':'false'} });
             b.onclick = () => { this.workbenchPage=id; this.render(); this.plugin.refreshAssistantViews?.(this); container.querySelector?.('[aria-current=page]')?.focus(); };
         }
         const body = root.createDiv({ cls:'aw-body' });
-        const hero = body.createDiv({ cls:'at-hero' });
-        const heading = hero.createDiv();
-        heading.createDiv({ text:'YOUR QUIET WORKSPACE', cls:'aw-eyebrow' });
-        heading.createEl('h3', { text:page==='review'?'让每一处修改，都由你决定。':page==='history'?'每一步，都有来处。':page==='tools'?'按自己的方式，继续整理。':'给思考，一点整理的空间。', cls:'at-title' });
-        heading.createEl('p', { text:page==='review'?'对照原文，留下真正有帮助的部分。':page==='history'?'找回处理过的笔记，撤回或重新应用最近的修改。':page==='tools'?'批量处理、自定义动作与运行信息。':'从手边这篇笔记开始，把线索连成自己的理解。', cls:'aw-caption' });
-        hero.createDiv({ cls:'at-art', attr:{'aria-hidden':'true'} });
         if (page==='history') {
             const history = body.createDiv({ cls:'at-history' });
             const actions = history.createDiv({ cls:'at-history-actions' });
@@ -473,12 +471,12 @@ class AssistantView extends ItemView {
         noteLabel.createEl('small',{text:file?(file.parent?.path==='/'?'笔记库根目录':file.parent?.path||file.path):'打开或选择 Markdown 文件'});
         noteButton.createSpan({text:'⌄',attr:{'aria-hidden':'true'}});
         noteButton.onclick=()=>this.chooseAtelierNote();
-        docbar.createSpan({text:busy?'正在生成 · 原文未改':page==='review'?'逐项确认后应用':'当前笔记',cls:'at-doc-status'});
+        docbar.createSpan({text:busy?'正在生成 · 原文未改':page==='review'?'预览后应用':'当前笔记',cls:'at-doc-status'});
         if (page==='review') {
             const review = surface.createDiv({cls:'at-review'});
             this.renderCurrentRequestBanner(review);
             if (!this.tasks.length) {
-                this.renderWorkbenchEmpty(review,this.workbenchRunning?'正在准备建议':'这里留给你的判断',this.workbenchRunning?'正在读取笔记和准备处理步骤。':'生成建议后，在这里对照原文、选择要接受的修改。');
+                this.renderWorkbenchEmpty(review,this.workbenchRunning?'正在准备建议':'这里留给你的判断',this.workbenchRunning?'正在读取笔记和准备处理步骤。':'生成后在这里查看完整排版，再应用到笔记。');
                 review.createEl('button',{text:'选择要整理的内容',cls:'aw-primary'}).onclick=()=>{this.workbenchPage='prepare';this.render()};
             } else {
                 const task = this.tasks.find(t=>t.id===this.selectedTaskId)||this.tasks[this.tasks.length-1];
@@ -492,16 +490,9 @@ class AssistantView extends ItemView {
                 this.renderTask(review,task);
             }
         } else {
-            const desk=surface.createDiv({cls:'at-desk'});
-            const paper=desk.createEl('article',{cls:'at-document',attr:{'aria-label':'当前笔记预览'}});
-            this.renderAtelierDocument(paper,file);
-            const side=desk.createDiv({cls:'at-assistant'});
+            const side=surface.createDiv({cls:'at-assistant'});
             this.renderAtelierPreparation(side,file,busy);
         }
-        const under=body.createDiv({cls:'at-underbar'});
-        under.createEl('button',{text:'批量整理 ↗',cls:'aw-text-button'}).onclick=()=>this.showBatchProcessingModal();
-        under.createEl('button',{text:'自定义动作',cls:'aw-text-button'}).onclick=()=>this.showAtelierCustomActions();
-        if(file) under.createEl('button',{text:'回到原文 ↗',cls:'aw-text-button'}).onclick=()=>this.plugin.app.workspace.getLeaf(false).openFile(file);
     }
 
     renderAtelierDocument(container,file) {
@@ -525,25 +516,10 @@ class AssistantView extends ItemView {
     }
 
     renderAtelierPreparation(side,file,busy) {
-        side.createDiv({text:'WITH A LITTLE HELP',cls:'aw-eyebrow'});
-        side.createEl('h3',{text:'这篇笔记，想怎样继续？',cls:'at-assistant-title'});
-        side.createEl('p',{text:'选一个方向，也可以只调整其中一步。',cls:'aw-caption'});
-        const presets=side.createDiv({cls:'aw-presets'});
-        for(const [id,label,desc] of [['default','日常整理','沿用你的默认步骤'],['reading','读得更深','结构 · 属性 · 标签'],['archive','收纳妥当','标签 · 存放位置'],['language','语言精读','日文注音 · 属性']]){
-            const b=presets.createEl('button',{cls:'aw-preset',attr:{'aria-pressed':String((this.sessionPreset||'default')===id)}});
-            b.createSpan({text:label});b.createEl('small',{text:desc});
-            b.onclick=()=>{
-                this.sessionPreset=id;
-                this.sessionActions=id==='default'?null:id==='reading'?{structurizer:true,meta:true,tagger:true}:id==='archive'?{tagger:true,mover:true}:{furigana:true,meta:true};
-                this.render();this.plugin.refreshAssistantViews?.(this);
-            };
-        }
         const chosen=this.sessionActions||this.plugin.settings.oneClickProcessActions||{};
         const actions=[['structurizer','整理结构','梳理段落与标题'],['furigana','标注假名','辅助日文阅读'],['meta','补全属性','标题、摘要与一句话总结'],['tagger','补充标签','连接已有的分类'],['mover','建议位置','找到适合存放的文件夹']];
-        const options=side.createEl('details',{cls:'aw-options'});
-        if(this.workbenchOptionsOpen||this.sessionPreset==='custom')options.open=true;
-        options.ontoggle=()=>{this.workbenchOptionsOpen=options.open};
-        options.createEl('summary',{text:`调整步骤 · 已选 ${actions.filter(([key])=>chosen[key]).length} 项`});
+        const options=side.createDiv({cls:'aw-options as-action-list',attr:{'role':'group','aria-label':'选择处理功能'}});
+        options.createEl('p',{text:'选择处理功能',cls:'as-section-label'});
         for(const [key,label,desc] of actions){
             const row=options.createEl('label',{cls:'aw-option'});
             const check=row.createEl('input',{type:'checkbox',attr:{'data-action':key}});check.checked=!!chosen[key];
@@ -552,7 +528,7 @@ class AssistantView extends ItemView {
         }
         const start=side.createDiv({cls:'aw-start'});
         const selected=actions.filter(([key])=>chosen[key]);
-        start.createEl('p',{text:selected.length?selected.map(([,label])=>label).join(' · '):'请至少选择一个步骤。',cls:'at-selected-steps'});
+        if(!selected.length)start.createEl('p',{text:'请至少选择一个功能。',cls:'at-selected-steps'});
         const run=start.createEl('button',{text:busy?'正在生成建议…':'生成修改建议 →',cls:'aw-primary',attr:{'aria-label':'为当前笔记生成修改建议'}});
         run.disabled=!file||!selected.length||busy;
         run.onclick=async()=>{
@@ -561,7 +537,7 @@ class AssistantView extends ItemView {
             try{await this.plugin.runOneClickSmartProcess(file,{...chosen},()=>this.workbenchCancelled)}
             finally{this.workbenchRunning=false;this.render();this.plugin.refreshAssistantViews?.(this)}
         };
-        start.createEl('p',{text:'先生成预览，正文逐项审阅。属性、标签与位置分别确认。',cls:'aw-caption'});
+        start.createEl('p',{text:'先预览整篇排版，再应用。属性、标签和位置分别确认。',cls:'aw-caption'});
         if(busy)start.createEl('button',{text:'查看生成进度',cls:'aw-text-button'}).onclick=()=>{this.workbenchPage='review';this.render()};
     }
 
@@ -2500,7 +2476,6 @@ class AiAssistantSuite extends Plugin {
         );
 
         this.registerView(ASSISTANT_WORKBENCH_TYPE, leaf => (this.view = new AssistantView(leaf, this, true)));
-        this.addCommand({ id: 'open-ai-assistant-workbench', name: 'Open Note Workbench (展开笔记工作台)', callback: () => this.activateView(true) });
 
         this.addRibbonIcon("anchor", "打开 AI 助手面板", () => {
             this.activateView();
@@ -2826,8 +2801,7 @@ class AiAssistantSuite extends Plugin {
         }
     }
 
-    async activateView(expanded = null) {
-        expanded ??= !!this.view?.expanded;
+    async activateView(expanded = false) {
         const type = expanded ? ASSISTANT_WORKBENCH_TYPE : ASSISTANT_VIEW_TYPE;
         let leaf = this.app.workspace.getLeavesOfType(type)[0];
         if (!leaf) {

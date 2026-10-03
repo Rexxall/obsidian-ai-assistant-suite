@@ -2169,3 +2169,35 @@
 .assistant-article-preview pre { white-space: pre-wrap; }
 .assistant-article-preview img { max-width: 100%; }
 .assistant-article-preview table { display: block; max-width: 100%; overflow: auto; }
+
+/* Sidebar-first assistant: one note, a short checklist, one primary action. */
+.assistant-sidebar-focused { max-width: 540px; margin: 0 auto; }
+.assistant-sidebar-focused .aw-header { padding: 18px 18px 12px; }
+.assistant-sidebar-focused .aw-brand h2 { font-size: 17px; }
+.assistant-sidebar-focused .aw-navigation { padding: 0 18px; gap: 24px; }
+.assistant-sidebar-focused .aw-body { padding: 18px; }
+.assistant-sidebar-focused .at-surface { padding: 0; border: 0; box-shadow: none; background: transparent; border-radius: 0; overflow: visible; }
+.assistant-sidebar-focused .at-docbar { padding: 0 0 16px; gap: 8px; flex-wrap: wrap; border-bottom: 1px solid var(--am-line); }
+.assistant-sidebar-focused .at-doc-picker { min-width: 0; flex: 1 1 200px; padding: 0; background: transparent; border: 0; }
+.assistant-sidebar-focused .at-doc-picker strong { font-size: 14px; line-height: 1.5; }
+.assistant-sidebar-focused .at-doc-picker small { font-size: 11px; }
+.assistant-sidebar-focused .at-doc-status { padding: 0; border: 0; background: none; font-size: 11px; color: var(--am-muted); }
+.assistant-sidebar-focused .at-assistant { padding: 18px 0 0; border: 0; background: transparent; }
+.assistant-sidebar-focused .aw-options { margin: 0; padding: 0; border: 0; background: none; }
+.assistant-sidebar-focused .as-section-label { color: var(--am-muted); font-size: 12px; margin: 0 0 10px; }
+.assistant-sidebar-focused .aw-option { padding: 10px 0; border: 0; gap: 11px; align-items: center; }
+.assistant-sidebar-focused .aw-option > span > span { font-size: 14px; }
+.assistant-sidebar-focused .aw-option small { color: var(--am-muted); font-size: 11px; }
+.assistant-sidebar-focused input[type="checkbox"] { accent-color: var(--am-accent); flex-shrink: 0; }
+.assistant-sidebar-focused .aw-start { margin: 18px 0 0; padding: 0; border: 0; background: none; }
+.assistant-sidebar-focused .aw-primary { width: 100%; min-height: 42px; border-radius: 10px; font-size: 14px; background: var(--am-accent); color: var(--text-on-accent); }
+.assistant-sidebar-focused .aw-start > .aw-caption { margin: 10px 0 0; font-size: 11px; line-height: 1.7; }
+.assistant-sidebar-focused .at-review { padding: 16px 0 0; }
+.assistant-sidebar-focused .aw-result-switcher { margin: 0 0 16px; padding: 0; background: none; border: 0; }
+.assistant-sidebar-focused .assistant-article-preview { padding: 0; margin: 22px 0; font-size: 14px; }
+.assistant-sidebar-focused .as-more { position: relative; margin-left: auto; }
+.assistant-sidebar-focused .as-more > summary { list-style: none; cursor: pointer; color: var(--am-muted); font-size: 12px; padding: 6px 0 6px 12px; }
+.assistant-sidebar-focused .as-more > summary::-webkit-details-marker { display: none; }
+.assistant-sidebar-focused .as-menu { position: absolute; z-index: 10; top: 100%; right: 0; width: 160px; padding: 6px; border: 1px solid var(--am-line); border-radius: 12px; background: var(--am-paper); box-shadow: 0 8px 28px #0002; }
+.assistant-sidebar-focused .as-menu button { display: block; width: 100%; text-align: left; padding: 9px 10px; background: transparent; border: 0; border-radius: 7px; font-size: 13px; }
+.assistant-sidebar-focused .as-menu button:hover { background: var(--am-soft); }
