@@ -1,4 +1,3 @@
-/* agent: codex (2026-10-03) — morning design system */
 /* General View Styles */
 .ai-assistant-view-container {
     padding: 10px;
@@ -1894,7 +1893,6 @@
 }
 
 
-/* agent: codex (2026-09-20) — discoverable settings navigation */
 .plugin-settings-entry { min-height: 30px; padding: 4px 10px; font-size: var(--font-ui-small); white-space: nowrap; flex-shrink: 0; }
 .plugin-settings-workspace .plugin-settings-jump { position: sticky; top: 0; z-index: 2; padding: 10px 0; background: var(--background-primary); border-bottom: 1px solid var(--background-modifier-border); margin-bottom: 16px; }
 .plugin-settings-jump label { display: flex; align-items: center; gap: 12px; color: var(--text-muted); font-size: var(--font-ui-small); }
@@ -1907,7 +1905,6 @@
 .ai-assistant-workspace-heading .plugin-settings-entry { grid-column: 2; grid-row: 1; margin: 0; }
 .ai-assistant-workspace-heading > :is(p,.ai-assistant-note-context) { grid-column: 1 / -1; }
 
-/* agent: codex (2026-09-20) — review workbench, scoped to the plugin */
 .ai-assistant-view-container .assistant-workflow { margin: 12px 0; }
 .assistant-workflow label { display: block; margin-bottom: 6px; color: var(--text-muted); font-size: var(--font-ui-small); }
 .assistant-workflow select { width: 100%; min-height: 34px; }
@@ -1947,7 +1944,6 @@
  --am-gold:#eac894; --am-shadow:0 12px 32px #07141728;
  --interactive-accent-hover:#c8e6ce; --text-on-accent:#203335;
 }
-/* agent: codex (2026-10-03) — editorial workbench; grouping follows the task. */
 .ai-assistant-view-container.assistant-workbench { padding:0; min-height:100%; height:auto; overflow:visible; background:var(--am-paper); container-type:inline-size; }
 .assistant-workbench :is(h2,h3,h4,p) { color:var(--am-ink); }
 .assistant-workbench button { cursor:pointer; box-shadow:none; font:inherit; }
@@ -2030,3 +2026,99 @@
 .assistant-review-modal .assistant-review-columns pre { white-space:pre-wrap; overflow-wrap:anywhere; padding:16px; border-radius:6px; font:13px/1.8 var(--font-text); }
 .assistant-review-modal .assistant-review-before { background:color-mix(in srgb,#bd7a69 8%,var(--am-paper)); }
 .assistant-review-modal .assistant-review-after { background:var(--am-soft); }
+
+/* Atelier layout: a reading surface with a quiet, contextual assistant. */
+.ai-assistant-view-container.atelier-workbench {
+ --am-base:#f2f3ed; --am-paper:#fffef9; --am-soft:#edf1e9; --am-ink:#283c3a;
+ --am-muted:#687873; --am-line:#e2e6de; --am-accent:#376c58; --am-tint:#e5eddd; --am-gold:#b78249;
+ background:var(--am-base); padding:0; min-height:100%;
+}
+.theme-dark .ai-assistant-view-container.atelier-workbench {
+ --am-base:#172b26; --am-paper:#20372f; --am-soft:#30463c; --am-ink:#e0e9dd;
+ --am-muted:#a1b2a7; --am-line:#3e5149; --am-accent:#bdd8ad; --am-tint:#3c5541; --am-gold:#e2ba84;
+}
+.atelier-workbench * { box-sizing:border-box; }
+.atelier-workbench .aw-header { padding:22px 22px 18px; gap:12px; border-bottom:1px solid var(--am-line); }
+.atelier-workbench .aw-brand { gap:11px; }
+.atelier-workbench .aw-brand h2 { font-size:17px; font-weight:500; letter-spacing:.03em; }
+.atelier-workbench .aw-orb { width:30px; height:30px; box-shadow:inset 0 0 7px #fff7; }
+.atelier-workbench .at-brand-caption { display:block; font-size:9px; color:var(--am-muted); letter-spacing:.14em; margin-top:3px; }
+.atelier-workbench .at-chrome { display:flex; gap:15px; flex-shrink:0; }
+.atelier-workbench .aw-navigation { padding:0 22px; gap:24px; }
+.atelier-workbench .aw-nav-button { font-size:12px; min-height:44px; }
+.atelier-workbench .aw-body { padding:26px 20px 30px; max-width:1180px; }
+.atelier-workbench .at-hero { display:flex; justify-content:space-between; gap:20px; align-items:center; margin-bottom:26px; }
+.atelier-workbench .at-title { font-size:24px; font-weight:500; letter-spacing:-.035em; line-height:1.5; margin:0; }
+.atelier-workbench .at-hero .aw-caption { font-size:12px; margin:10px 0 0; }
+.atelier-workbench .at-art { display:none; position:relative; isolation:isolate; width:160px; height:100px; flex-shrink:0; }
+.atelier-workbench .at-art::before,.atelier-workbench .at-art::after { content:''; position:absolute; border-radius:55% 45% 60% 40%; }
+.atelier-workbench .at-art::before { inset:5px 32px 0 10px; background:linear-gradient(125deg,#e3c38c,#cbd6b0 40%,#6d9c8f 85%); box-shadow:inset 2px 3px 12px #fff9; transform:rotate(-28deg); }
+.atelier-workbench .at-art::after { inset:30px 5px 9px 55px; background:linear-gradient(140deg,#f8dfcc88,#d8b9adcc 45%,#789a9577); backdrop-filter:blur(6px); border:1px solid #ffffff80; transform:rotate(28deg); }
+.atelier-workbench .at-surface { background:var(--am-paper); border-radius:18px; box-shadow:0 12px 45px #344b3910; overflow:clip; }
+.atelier-workbench .at-docbar { padding:18px 22px; border-bottom:1px solid var(--am-line); display:flex; align-items:center; flex-wrap:wrap; gap:10px 18px; }
+.atelier-workbench .at-doc-picker { display:flex; align-items:center; gap:14px; width:100%; text-align:left; padding:0; border:0; background:transparent; min-height:40px; height:auto; border-radius:6px; }
+.atelier-workbench .at-doc-picker > div { flex:1; min-width:0; }
+.atelier-workbench .at-doc-picker strong { display:block; font-size:13px; font-weight:500; overflow-wrap:anywhere; line-height:1.6; }
+.atelier-workbench .at-doc-picker small { display:block; font-size:11px; color:var(--am-muted); margin-top:3px; overflow-wrap:anywhere; }
+.atelier-workbench .at-doc-status { color:var(--am-muted); font-size:10px; }
+.atelier-workbench .at-doc-status::before { content:'●'; font-size:8px; color:var(--am-accent); margin-right:7px; }
+.atelier-workbench .at-desk { display:grid; grid-template-columns:minmax(0,1fr); }
+.atelier-workbench .at-document { display:none; min-width:0; padding:36px 40px; }
+.atelier-workbench .at-document-title { font-family:var(--font-text); font-size:25px; font-weight:500; line-height:1.5; margin:0 0 24px; overflow-wrap:anywhere; }
+.atelier-workbench .at-markdown { font-family:var(--font-text); font-size:15px; line-height:1.95; color:var(--am-ink); }
+.atelier-workbench .at-markdown :is(p,ul,ol) { margin:0 0 20px; }
+.atelier-workbench .at-markdown :is(h1,h2,h3,h4) { line-height:1.5; margin:24px 0 14px; overflow-wrap:anywhere; }
+.atelier-workbench .at-markdown h1 { font-size:27px; }
+.atelier-workbench .at-markdown h2 { font-size:22px; }
+.atelier-workbench .at-markdown h3 { font-size:19px; }
+.atelier-workbench .at-markdown blockquote { border-left:2px solid var(--am-gold); color:var(--am-muted); margin-left:0; padding-left:20px; }
+.atelier-workbench .at-markdown :is(pre,table) { max-width:100%; overflow:auto; }
+.atelier-workbench .at-markdown :is(img,video) { max-width:100%; }
+.atelier-workbench .at-markdown a { overflow-wrap:anywhere; }
+.atelier-workbench .at-assistant { min-width:0; padding:26px 22px; background:linear-gradient(160deg,var(--am-paper) 5%,var(--am-soft) 140%); }
+.atelier-workbench .at-assistant-title { font-size:20px; font-weight:500; line-height:1.5; margin:0; }
+.atelier-workbench .aw-preset { border:0; border-radius:10px; padding:13px 12px; min-height:62px; margin:3px 0; }
+.atelier-workbench .aw-preset[aria-pressed=true] { background:var(--am-tint); }
+.atelier-workbench .aw-preset > span { font-size:13px; }
+.atelier-workbench .aw-options { margin-top:18px; border-top:1px solid var(--am-line); padding-top:10px; }
+.atelier-workbench .aw-start { background:transparent; border:0; padding:20px 0 0; border-radius:0; }
+.atelier-workbench .at-selected-steps { color:var(--am-muted); font-size:11px; line-height:1.8; margin:0 0 12px; }
+.atelier-workbench .aw-start .aw-caption { font-size:11px; margin:12px 0 0; }
+.atelier-workbench .aw-primary { border-radius:26px; font-size:13px; min-height:44px; }
+.atelier-workbench .at-underbar { display:flex; flex-wrap:wrap; align-items:center; gap:10px 22px; padding:14px 2px; }
+.atelier-workbench .at-underbar .aw-text-button { font-size:11px; }
+.atelier-workbench .at-review { padding:26px 22px; }
+.atelier-workbench .assistant-review-hunks { max-height:none; overflow:visible; }
+.atelier-workbench .assistant-review-before { background:color-mix(in srgb,#b88570 12%,var(--am-paper)); color:var(--am-muted); }
+.atelier-workbench .assistant-review-after { background:var(--am-tint); }
+.atelier-workbench .assistant-review-columns pre { font-size:14px; line-height:1.9; border-radius:8px; }
+.atelier-workbench .at-history,.atelier-workbench .at-tools { background:var(--am-paper); border-radius:18px; padding:22px; }
+.atelier-workbench .at-history-actions { display:flex; flex-wrap:wrap; gap:14px; border-bottom:1px solid var(--am-line); padding-bottom:14px; }
+.assistant-atelier-modal { width:min(480px,92vw); border-radius:20px; padding:28px; }
+.assistant-atelier-modal h2 { font-size:22px; font-weight:500; }
+.assistant-atelier-modal p { color:var(--text-muted); font-size:13px; line-height:1.8; }
+.assistant-atelier-modal .at-settings-row { display:flex; align-items:center; gap:12px; padding:12px 0; }
+.assistant-atelier-modal .at-settings-actions { display:flex; flex-wrap:wrap; gap:12px; margin-top:24px; }
+.assistant-atelier-modal .at-custom-action { display:block; width:100%; text-align:left; height:auto; padding:14px 10px; background:transparent; border-bottom:1px solid var(--background-modifier-border); border-radius:0; }
+@container (min-width:700px) {
+ .atelier-workbench .aw-header { padding:24px 36px; }
+ .atelier-workbench .aw-navigation { padding:0 36px; }
+ .atelier-workbench .aw-body { padding:40px 36px; }
+ .atelier-workbench .at-title { font-size:30px; }
+ .atelier-workbench .at-art { display:block; }
+ .atelier-workbench .at-desk { grid-template-columns:minmax(0,1fr) 280px; }
+ .atelier-workbench .at-document { display:block; }
+ .atelier-workbench .at-assistant { border-left:1px solid var(--am-line); padding:30px 24px; }
+ .atelier-workbench .at-doc-picker { width:auto; flex:1; min-width:0; }
+ .atelier-workbench .at-docbar { padding:22px 30px; }
+ .atelier-workbench .at-review { padding:32px 36px; }
+ .atelier-workbench .assistant-review-columns { grid-template-columns:repeat(2,minmax(0,1fr)); }
+}
+@container (max-width:330px) {
+ .atelier-workbench .aw-header { padding:18px 14px; }
+ .atelier-workbench .aw-navigation { padding:0 14px; gap:18px; }
+ .atelier-workbench .aw-body { padding:22px 14px; }
+ .atelier-workbench .at-title { font-size:21px; }
+ .atelier-workbench .at-chrome { gap:10px; }
+ .atelier-workbench .at-assistant,.atelier-workbench .at-docbar,.atelier-workbench .at-review { padding:20px 18px; }
+}

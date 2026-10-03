@@ -1,10 +1,8 @@
-// agent: codex (2026-10-03) — task-led workbench, focused review and secondary navigation
-// agent: codex (2026-09-20) — keyboard-accessible compact actions
-// agent: codex (2026-09-19)
 const escapeHtmlText = value => String(value).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;"); // guarded writes and focused workspace
-const { Plugin, Notice, PluginSettingTab, Setting, FuzzySuggestModal, Modal, ItemView, TFile } = require('obsidian');
+const { Plugin, Notice, PluginSettingTab, Setting, FuzzySuggestModal, Modal, ItemView, TFile, MarkdownRenderer } = require('obsidian');
 
 const ASSISTANT_VIEW_TYPE = "ai-assistant-view";
+const ASSISTANT_WORKBENCH_TYPE = "ai-assistant-workbench-view";
 const REDACTED_API_KEY = '[REDACTED]';
 
 let SharedUtils = {};
@@ -332,24 +330,34 @@ const DEFAULT_SETTINGS = {
 };
 
 class AssistantView extends ItemView {
-    constructor(leaf, plugin) {
+    constructor(leaf, plugin, expanded = false) {
         super(leaf);
         this.plugin = plugin;
-        this.tasks = []; // Array to hold all active tasks
+        this.expanded = expanded;
+        plugin.assistantSession ||= { tasks: [] };
+        for (const key of ['tasks','workbenchPage','selectedTaskId','sessionActions','sessionPreset','workbenchRunning','workbenchCancelled','workbenchOptionsOpen','pinnedFile']) {
+            Object.defineProperty(this, key, { get: () => plugin.assistantSession[key], set: value => { plugin.assistantSession[key] = value; }, configurable: true });
+        }
         this.currentFile = null; // 跟踪当前文件
         this.setupFileWatcher(); // 设置文件监听
     }
 
-    getViewType() { return ASSISTANT_VIEW_TYPE; }
-    getDisplayText() { return "AI Assistant"; }
+    getViewType() { return this.expanded ? ASSISTANT_WORKBENCH_TYPE : ASSISTANT_VIEW_TYPE; }
+    getDisplayText() { return this.expanded ? "笔记工作台" : "笔记助手"; }
     getIcon() { return "anchor"; }
 
     async onOpen() {
         if (!this.fileWatcherRef) this.setupFileWatcher();
         this.render();
+        this.contentEl?.style.setProperty('overflow-y', 'auto');
     }
 
     onClose() {
+        this.documentRenderVersion = (this.documentRenderVersion || 0) + 1;
+        if (this.plugin.view === this) {
+            const otherType = this.expanded ? ASSISTANT_VIEW_TYPE : ASSISTANT_WORKBENCH_TYPE;
+            this.plugin.view = this.plugin.app.workspace.getLeavesOfType(otherType)[0]?.view || null;
+        }
         // 清理文件监听
         if (this.refreshTimeout) clearTimeout(this.refreshTimeout);
         if (this.fileWatcherRef) {
@@ -364,6 +372,7 @@ class AssistantView extends ItemView {
             const newFile = this.plugin.app.workspace.getActiveFile();
             if (newFile !== this.currentFile) {
                 this.currentFile = newFile;
+                if (newFile?.extension === 'md') { this.pinnedFile = null; this.plugin.assistantLastFile = newFile; }
                 // 延迟刷新以避免频繁更新
                 if (this.refreshTimeout) {
                     clearTimeout(this.refreshTimeout);
@@ -378,6 +387,7 @@ class AssistantView extends ItemView {
     clear() {
         this.tasks = [];
         this.render();
+        this.plugin.refreshAssistantViews?.(this);
     }
 
     addTask(task) {
@@ -385,6 +395,7 @@ class AssistantView extends ItemView {
         this.selectedTaskId = task.id;
         this.workbenchPage = 'review';
         this.render();
+        this.plugin.refreshAssistantViews?.(this);
     }
 
     updateTask(taskId, newProps) {
@@ -392,6 +403,7 @@ class AssistantView extends ItemView {
         if (taskIndex > -1) {
             this.tasks[taskIndex] = { ...this.tasks[taskIndex], ...newProps };
             this.render();
+            this.plugin.refreshAssistantViews?.(this);
         }
     }
 
@@ -402,115 +414,195 @@ class AssistantView extends ItemView {
     removeTask(taskId) {
         this.tasks = this.tasks.filter(t => t.id !== taskId);
         this.render();
+        this.plugin.refreshAssistantViews?.(this);
     }
 
     render() {
         const container = this.containerEl.children[1];
         container.empty();
-        const root = container.createDiv({ cls: 'ai-assistant-view-container assistant-workbench' });
+        const root = container.createDiv({ cls: 'ai-assistant-view-container assistant-workbench atelier-workbench' });
+        if (this.expanded) root.addClass('atelier-expanded');
         const page = this.workbenchPage || 'prepare';
         const activeNote = this.plugin.app.workspace.getActiveFile();
-        const file = activeNote?.extension === 'md' ? activeNote : null;
+        if (activeNote?.extension === 'md') this.plugin.assistantLastFile = activeNote;
+        const file = this.pinnedFile || (activeNote?.extension === 'md' ? activeNote : activeNote ? null : this.plugin.assistantLastFile || null);
         const busy = !!this.workbenchRunning || this.tasks.some(t => t.status === 'loading');
         const header = root.createDiv({ cls: 'aw-header' });
         const brand = header.createDiv({ cls: 'aw-brand' });
-        brand.createSpan({ cls: 'aw-orb', attr: { 'aria-hidden': 'true' } });
-        brand.createEl('h2', { text: '笔记助手' });
-        header.createEl('button', { text: '设置', cls: 'aw-text-button', attr: { 'aria-label': '打开笔记助手设置' } }).onclick = () => {
-            this.plugin.app.setting.open();
-            this.plugin.app.setting.openTabById(this.plugin.manifest.id);
-        };
-        const nav = root.createEl('nav', { cls: 'aw-navigation', attr: { 'aria-label': '笔记助手导航' } });
-        for (const [id, label] of [['prepare','整理'],['review',`审阅${this.tasks.length ? ' · '+this.tasks.length : ''}`],['history','记录'],['tools','工具']]) {
-            const button = nav.createEl('button', { text: label, cls: 'aw-nav-button', attr: { 'aria-current': page === id ? 'page' : 'false' } });
-            button.onclick = () => { this.workbenchPage = id; this.render(); this.containerEl.children[1].querySelector?.('[aria-current=page]')?.focus(); };
+        brand.createSpan({ cls: 'aw-orb', attr: { 'aria-hidden':'true' } });
+        const identity = brand.createDiv();
+        identity.createEl('h2', { text:'笔记助手' });
+        identity.createEl('small', { text:'NOTE ASSISTANT', cls:'at-brand-caption' });
+        const chrome = header.createDiv({ cls:'at-chrome' });
+        chrome.createEl('button', { text:this.expanded?'侧栏 ↗':'展开 ↗', cls:'aw-text-button', attr:{'aria-label':this.expanded?'打开助手侧栏':'展开笔记工作台'} }).onclick = () => this.plugin.activateView(!this.expanded);
+        chrome.createEl('button', { text:'设置', cls:'aw-text-button', attr:{'aria-label':'打开笔记助手设置'} }).onclick = () => this.openAtelierSettings();
+        const nav = root.createEl('nav', { cls:'aw-navigation', attr:{'aria-label':'笔记助手导航'} });
+        for (const [id,label] of [['prepare','整理'],['review',`审阅${this.tasks.length?' · '+this.tasks.length:''}`],['history','记录'],['tools','工具']]) {
+            const b = nav.createEl('button', { text:label, cls:'aw-nav-button', attr:{'aria-current':page===id?'page':'false'} });
+            b.onclick = () => { this.workbenchPage=id; this.render(); this.plugin.refreshAssistantViews?.(this); container.querySelector?.('[aria-current=page]')?.focus(); };
         }
-        const body = root.createDiv({ cls: 'aw-body' });
-        if (page === 'history') {
-            body.createEl('h3', { text: '整理过的笔记', cls: 'aw-page-title' });
-            body.createEl('p', { text: '继续阅读，或回到上次整理的位置。', cls: 'aw-caption' });
-            if (!this.plugin.getRecentHistory().length) this.renderWorkbenchEmpty(body, '还没有处理记录', '完成一次整理后，可以在这里找回笔记。');
-            else this.renderRecentHistory(body);
+        const body = root.createDiv({ cls:'aw-body' });
+        const hero = body.createDiv({ cls:'at-hero' });
+        const heading = hero.createDiv();
+        heading.createDiv({ text:'YOUR QUIET WORKSPACE', cls:'aw-eyebrow' });
+        heading.createEl('h3', { text:page==='review'?'让每一处修改，都由你决定。':page==='history'?'每一步，都有来处。':page==='tools'?'按自己的方式，继续整理。':'给思考，一点整理的空间。', cls:'at-title' });
+        heading.createEl('p', { text:page==='review'?'对照原文，留下真正有帮助的部分。':page==='history'?'找回处理过的笔记，撤回或重新应用最近的修改。':page==='tools'?'批量处理、自定义动作与运行信息。':'从手边这篇笔记开始，把线索连成自己的理解。', cls:'aw-caption' });
+        hero.createDiv({ cls:'at-art', attr:{'aria-hidden':'true'} });
+        if (page==='history') {
+            const history = body.createDiv({ cls:'at-history' });
+            const actions = history.createDiv({ cls:'at-history-actions' });
+            actions.createEl('button',{text:'回滚上次修改',cls:'aw-text-button'}).onclick=()=>this.plugin.rollbackLastChange();
+            actions.createEl('button',{text:'重新应用刚才的回滚',cls:'aw-text-button'}).onclick=()=>this.plugin.redoLastRollback();
+            if (!this.plugin.getRecentHistory().length) this.renderWorkbenchEmpty(history,'还没有处理记录','完成一次整理后，可以在这里找回笔记。');
+            else this.renderRecentHistory(history);
             return;
         }
-        if (page === 'tools') {
-            body.createEl('h3', { text: '更多处理方式', cls: 'aw-page-title' });
-            body.createEl('p', { text: '批量整理、自定义操作，以及最近修改的回滚。', cls: 'aw-caption' });
-            this.renderQuickActions(body);
-            const diagnostics = body.createEl('details', { cls: 'ai-assistant-diagnostics' });
-            diagnostics.createEl('summary', { text: '使用情况与连接信息' });
+        if (page==='tools') {
+            const tools = body.createDiv({cls:'at-tools'});
+            this.renderQuickActions(tools);
+            const diagnostics = tools.createEl('details',{cls:'ai-assistant-diagnostics'});
+            diagnostics.createEl('summary',{text:'使用情况与连接信息'});
             this.renderUsageStats(diagnostics); this.renderFileInfo(diagnostics); this.renderAIStatus(diagnostics);
             return;
         }
-        if (page === 'review') {
-            this.renderCurrentRequestBanner(body);
+        const surface = body.createDiv({cls:'at-surface'});
+        const docbar = surface.createDiv({cls:'at-docbar'});
+        const noteButton = docbar.createEl('button',{cls:'at-doc-picker',attr:{'aria-label':'选择要整理的笔记'}});
+        const noteLabel = noteButton.createDiv();
+        noteLabel.createEl('strong',{text:file?file.basename:'选择一篇笔记'});
+        noteLabel.createEl('small',{text:file?(file.parent?.path==='/'?'笔记库根目录':file.parent?.path||file.path):'打开或选择 Markdown 文件'});
+        noteButton.createSpan({text:'⌄',attr:{'aria-hidden':'true'}});
+        noteButton.onclick=()=>this.chooseAtelierNote();
+        docbar.createSpan({text:busy?'正在生成 · 原文未改':page==='review'?'逐项确认后应用':'当前笔记',cls:'at-doc-status'});
+        if (page==='review') {
+            const review = surface.createDiv({cls:'at-review'});
+            this.renderCurrentRequestBanner(review);
             if (!this.tasks.length) {
-                this.renderWorkbenchEmpty(body, this.workbenchRunning ? '正在准备建议' : '这里留给你的判断', this.workbenchRunning ? '正在读取笔记和准备处理步骤。生成的结果会出现在这里。' : '生成建议后，在这里对照原文、选择要接受的修改。');
-                body.createEl('button', { text: '选择要整理的内容', cls: 'aw-primary' }).onclick = () => { this.workbenchPage = 'prepare'; this.render(); };
-                return;
+                this.renderWorkbenchEmpty(review,this.workbenchRunning?'正在准备建议':'这里留给你的判断',this.workbenchRunning?'正在读取笔记和准备处理步骤。':'生成建议后，在这里对照原文、选择要接受的修改。');
+                review.createEl('button',{text:'选择要整理的内容',cls:'aw-primary'}).onclick=()=>{this.workbenchPage='prepare';this.render()};
+            } else {
+                const task = this.tasks.find(t=>t.id===this.selectedTaskId)||this.tasks[this.tasks.length-1];
+                this.selectedTaskId=task.id;
+                const rail=review.createDiv({cls:'aw-result-switcher'});
+                rail.createEl('label',{text:'本次查看',attr:{for:'aw-result-select'}});
+                const select=rail.createEl('select',{attr:{id:'aw-result-select','aria-label':'选择处理结果'}});
+                for(const t of this.tasks) select.createEl('option',{value:t.id,text:`${t.status==='loading'?'生成中 · ':t.content?.applied?'已接受 · ':''}${t.title||'处理结果'}`});
+                select.value=task.id;
+                select.onchange=()=>{this.selectedTaskId=select.value;this.render();container.querySelector?.('#aw-result-select')?.focus()};
+                this.renderTask(review,task);
             }
-            const task = this.tasks.find(t => t.id === this.selectedTaskId) || this.tasks[this.tasks.length - 1];
-            this.selectedTaskId = task.id;
-            const rail = body.createDiv({ cls: 'aw-result-switcher' });
-            rail.createEl('label', { text: '本次查看', attr: { for: 'aw-result-select' } });
-            const select = rail.createEl('select', { attr: { id: 'aw-result-select', 'aria-label': '选择处理结果' } });
-            for (const t of this.tasks) select.createEl('option', { value: t.id, text: `${t.status === 'loading' ? '生成中 · ' : t.content?.applied ? '已接受 · ' : ''}${t.title || '处理结果'}` });
-            select.value = task.id;
-            select.onchange = () => { this.selectedTaskId = select.value; this.render(); this.containerEl.children[1].querySelector?.('#aw-result-select')?.focus(); };
-            this.renderTask(body, task);
-            return;
+        } else {
+            const desk=surface.createDiv({cls:'at-desk'});
+            const paper=desk.createEl('article',{cls:'at-document',attr:{'aria-label':'当前笔记预览'}});
+            this.renderAtelierDocument(paper,file);
+            const side=desk.createDiv({cls:'at-assistant'});
+            this.renderAtelierPreparation(side,file,busy);
         }
-        const intro = body.createDiv({ cls: 'aw-note' });
-        intro.createDiv({ text: '当前笔记', cls: 'aw-eyebrow' });
-        intro.createEl('h3', { text: file ? file.basename : '从一篇笔记开始', cls: 'aw-note-title' });
-        intro.createEl('p', { text: file ? (file.parent?.path === '/' ? '笔记库根目录' : file.parent?.path || file.path) : '打开一篇 Markdown 笔记，再选择你想做的整理。', cls: 'aw-caption' });
-        if (file) intro.createEl('button', { text: '回到原文 ↗', cls: 'aw-text-button' }).onclick = () => this.plugin.app.workspace.getLeaf().openFile(file);
-        const workspace = body.createDiv({ cls: 'aw-prepare-layout' });
-        const choices = workspace.createDiv({ cls: 'aw-choices' });
-        choices.createEl('h3', { text: '这次想做什么？', cls: 'aw-section-title' });
-        const workflow = choices.createDiv({ cls: 'aw-presets' });
-        const presets = [['default','日常整理','沿用你的默认步骤'],['reading','阅读笔记','结构、属性与标签'],['archive','归档收纳','标签与存放位置']];
-        for (const [id, label, desc] of presets) {
-            const button = workflow.createEl('button', { cls: 'aw-preset', attr: { 'aria-pressed': String((this.sessionPreset || 'default') === id) } });
-            button.createSpan({ text: label }); button.createEl('small', { text: desc });
-            button.onclick = () => {
-                this.sessionPreset = id;
-                this.sessionActions = id === 'default' ? null : id === 'reading'
-                    ? { structurizer:true, furigana:false, meta:true, tagger:true, mover:false }
-                    : { structurizer:false, furigana:false, meta:false, tagger:true, mover:true };
-                this.render();
+        const under=body.createDiv({cls:'at-underbar'});
+        under.createEl('button',{text:'批量整理 ↗',cls:'aw-text-button'}).onclick=()=>this.showBatchProcessingModal();
+        under.createEl('button',{text:'自定义动作',cls:'aw-text-button'}).onclick=()=>this.showAtelierCustomActions();
+        if(file) under.createEl('button',{text:'回到原文 ↗',cls:'aw-text-button'}).onclick=()=>this.plugin.app.workspace.getLeaf(false).openFile(file);
+    }
+
+    renderAtelierDocument(container,file) {
+        container.createDiv({text:'原文 · Markdown',cls:'aw-eyebrow'});
+        container.createEl('h3',{text:file?file.basename:'从一篇笔记开始',cls:'at-document-title'});
+        const preview=container.createDiv({cls:'at-markdown markdown-rendered'});
+        if(!file){preview.createEl('p',{text:'打开一篇笔记，即可生成整理建议。'});return;}
+        if(!this.plugin.app.vault?.read)return;
+        const version=this.documentRenderVersion=(this.documentRenderVersion||0)+1;
+        preview.createEl('p',{text:'正在读取笔记…',cls:'aw-caption'});
+        this.plugin.app.vault.read(file).then(async raw=>{
+            if(version!==this.documentRenderVersion||preview.isConnected===false)return;
+            preview.empty();
+            // The preview uses Obsidian's renderer, so links, lists and code retain native behavior.
+            const cache=this.plugin.app.metadataCache?.getFileCache(file);
+            const start=cache?.frontmatter?.position?.end?.offset;
+            const body=typeof start==='number'?raw.slice(start).trimStart():raw;
+            if(MarkdownRenderer?.render)await MarkdownRenderer.render(this.plugin.app,body,preview,file.path,this);
+            else preview.createEl('pre',{text:body});
+        }).catch(()=>{if(version===this.documentRenderVersion){preview.empty();preview.createEl('p',{text:'暂时无法读取这篇笔记，请重新选择文件。',cls:'aw-caption'})}});
+    }
+
+    renderAtelierPreparation(side,file,busy) {
+        side.createDiv({text:'WITH A LITTLE HELP',cls:'aw-eyebrow'});
+        side.createEl('h3',{text:'这篇笔记，想怎样继续？',cls:'at-assistant-title'});
+        side.createEl('p',{text:'选一个方向，也可以只调整其中一步。',cls:'aw-caption'});
+        const presets=side.createDiv({cls:'aw-presets'});
+        for(const [id,label,desc] of [['default','日常整理','沿用你的默认步骤'],['reading','读得更深','结构 · 属性 · 标签'],['archive','收纳妥当','标签 · 存放位置'],['language','语言精读','日文注音 · 属性']]){
+            const b=presets.createEl('button',{cls:'aw-preset',attr:{'aria-pressed':String((this.sessionPreset||'default')===id)}});
+            b.createSpan({text:label});b.createEl('small',{text:desc});
+            b.onclick=()=>{
+                this.sessionPreset=id;
+                this.sessionActions=id==='default'?null:id==='reading'?{structurizer:true,meta:true,tagger:true}:id==='archive'?{tagger:true,mover:true}:{furigana:true,meta:true};
+                this.render();this.plugin.refreshAssistantViews?.(this);
             };
         }
-        const chosen = this.sessionActions || this.plugin.settings.oneClickProcessActions;
-        const actions = [['structurizer','整理结构','梳理段落与标题'],['furigana','标注假名','辅助日文阅读'],['meta','补全属性','标题、摘要与一句话总结'],['tagger','补充标签','连接已有的分类'],['mover','建议位置','找到适合存放的文件夹']];
-        const options = choices.createEl('details', { cls: 'aw-options' });
-        if (this.workbenchOptionsOpen || this.sessionPreset === 'custom') options.open = true;
-        options.ontoggle = () => { this.workbenchOptionsOpen = options.open; };
-        options.createEl('summary', { text: `调整步骤 · 已选 ${actions.filter(([key]) => chosen[key]).length} 项` });
-        for (const [key,label,desc] of actions) {
-            const row = options.createEl('label', { cls: 'aw-option' });
-            const check = row.createEl('input', { type:'checkbox', attr:{ 'data-action':key } }); check.checked = !!chosen[key];
-            const text = row.createSpan(); text.createSpan({ text:label }); text.createEl('small', { text:desc });
-            check.onchange = () => {
-                this.sessionActions = { ...chosen, [key]:check.checked }; this.sessionPreset = 'custom'; this.workbenchOptionsOpen = true; this.render(); this.containerEl.children[1].querySelector?.(`[data-action=${key}]`)?.focus();
-            };
+        const chosen=this.sessionActions||this.plugin.settings.oneClickProcessActions||{};
+        const actions=[['structurizer','整理结构','梳理段落与标题'],['furigana','标注假名','辅助日文阅读'],['meta','补全属性','标题、摘要与一句话总结'],['tagger','补充标签','连接已有的分类'],['mover','建议位置','找到适合存放的文件夹']];
+        const options=side.createEl('details',{cls:'aw-options'});
+        if(this.workbenchOptionsOpen||this.sessionPreset==='custom')options.open=true;
+        options.ontoggle=()=>{this.workbenchOptionsOpen=options.open};
+        options.createEl('summary',{text:`调整步骤 · 已选 ${actions.filter(([key])=>chosen[key]).length} 项`});
+        for(const [key,label,desc] of actions){
+            const row=options.createEl('label',{cls:'aw-option'});
+            const check=row.createEl('input',{type:'checkbox',attr:{'data-action':key}});check.checked=!!chosen[key];
+            const text=row.createSpan();text.createSpan({text:label});text.createEl('small',{text:desc});
+            check.onchange=()=>{this.sessionActions={...chosen,[key]:check.checked};this.sessionPreset='custom';this.workbenchOptionsOpen=true;this.render();this.containerEl.children[1].querySelector?.(`[data-action=${key}]`)?.focus()};
         }
-        const start = workspace.createDiv({ cls: 'aw-start' });
-        start.createDiv({ text: '本次整理', cls: 'aw-eyebrow' });
-        const selected = actions.filter(([key]) => chosen[key]);
-        const plan = start.createEl('ul', { cls: 'aw-plan' });
-        for (const [,label] of selected) plan.createEl('li', { text:label });
-        if (!selected.length) start.createEl('p', { text:'请至少选择一个步骤。', cls:'aw-caption' });
-        start.createEl('p', { text:'正文建议逐项审阅，属性与位置分别确认。本次选择不改变默认设置。', cls:'aw-caption' });
-        const run = start.createEl('button', { text: busy ? '正在生成建议…' : '生成修改建议 →', cls:'aw-primary', attr:{ 'aria-label':'为当前笔记生成修改建议' } });
-        run.disabled = !file || !selected.length || busy;
-        run.onclick = async () => {
-            if (this.workbenchRunning || !file) return;
-            this.workbenchRunning = true; this.workbenchCancelled = false; this.workbenchPage = 'review'; this.render();
-            try { await this.plugin.runOneClickSmartProcess(file, { ...chosen }, () => this.workbenchCancelled); }
-            finally { this.workbenchRunning = false; this.render(); }
+        const start=side.createDiv({cls:'aw-start'});
+        const selected=actions.filter(([key])=>chosen[key]);
+        start.createEl('p',{text:selected.length?selected.map(([,label])=>label).join(' · '):'请至少选择一个步骤。',cls:'at-selected-steps'});
+        const run=start.createEl('button',{text:busy?'正在生成建议…':'生成修改建议 →',cls:'aw-primary',attr:{'aria-label':'为当前笔记生成修改建议'}});
+        run.disabled=!file||!selected.length||busy;
+        run.onclick=async()=>{
+            if(this.workbenchRunning||!file)return;
+            this.workbenchRunning=true;this.workbenchCancelled=false;this.workbenchPage='review';this.render();this.plugin.refreshAssistantViews?.(this);
+            try{await this.plugin.runOneClickSmartProcess(file,{...chosen},()=>this.workbenchCancelled)}
+            finally{this.workbenchRunning=false;this.render();this.plugin.refreshAssistantViews?.(this)}
         };
-        if (busy) start.createEl('button', { text:'查看生成进度', cls:'aw-text-button' }).onclick = () => { this.workbenchPage = 'review'; this.render(); };
+        start.createEl('p',{text:'先生成预览，正文逐项审阅。属性、标签与位置分别确认。',cls:'aw-caption'});
+        if(busy)start.createEl('button',{text:'查看生成进度',cls:'aw-text-button'}).onclick=()=>{this.workbenchPage='review';this.render()};
+    }
+
+    chooseAtelierNote() {
+        const view=this;
+        class NotePicker extends FuzzySuggestModal {
+            getItems(){return view.plugin.app.vault.getMarkdownFiles()}
+            getItemText(file){return file.path}
+            onChooseItem(file){view.plugin.assistantLastFile=file;view.pinnedFile=file;view.workbenchPage='prepare';view.render();view.plugin.refreshAssistantViews?.(view)}
+        }
+        const picker=new NotePicker(this.plugin.app);picker.setPlaceholder('选择要整理的笔记…');picker.open();
+    }
+
+    showAtelierCustomActions() {
+        const modal=new Modal(this.plugin.app);modal.modalEl.addClass('assistant-atelier-modal');
+        modal.contentEl.createEl('h2',{text:'按自己的方式处理'});
+        const actions=(this.plugin.settings.customActions||[]).filter(a=>a.enabled!==false);
+        if(!actions.length)modal.contentEl.createEl('p',{text:'在插件设置中添加常用要求，保存为自定义动作。'});
+        for(const action of actions){
+            const button=modal.contentEl.createEl('button',{text:action.name||'自定义动作',cls:'at-custom-action'});
+            button.onclick=()=>{modal.close();this.plugin.runCustomAction(action.id, this.pinnedFile || this.plugin.assistantLastFile)};
+        }
+        modal.contentEl.createEl('button',{text:'管理自定义动作',cls:'at-custom-action'}).onclick=()=>{modal.close();this.plugin.app.setting.open();this.plugin.app.setting.openTabById(this.plugin.manifest.id)};
+        modal.open();
+    }
+
+    openAtelierSettings() {
+        const modal=new Modal(this.plugin.app);modal.modalEl.addClass('assistant-atelier-modal');
+        modal.contentEl.createEl('h2',{text:'处理偏好'});
+        modal.contentEl.createEl('p',{text:'调整默认步骤。模型、提示词和全部高级选项可在完整设置中管理。'});
+        const chosen={...(this.plugin.settings.oneClickProcessActions||{})};
+        for(const [key,label] of [['structurizer','整理结构'],['furigana','日文注音'],['meta','补全属性'],['tagger','补充标签'],['mover','建议位置']]){
+            const row=modal.contentEl.createEl('label',{cls:'at-settings-row'});
+            const check=row.createEl('input',{type:'checkbox'});check.checked=!!chosen[key];
+            row.createSpan({text:label});check.onchange=()=>{chosen[key]=check.checked};
+        }
+        const buttons=modal.contentEl.createDiv({cls:'at-settings-actions'});
+        const save=buttons.createEl('button',{text:'保存默认步骤',cls:'mod-cta'});
+        save.onclick=async()=>{save.disabled=true;this.plugin.settings.oneClickProcessActions=chosen;await this.plugin.saveSettings();modal.close();this.render();this.plugin.refreshAssistantViews?.(this);new Notice('默认处理步骤已保存。')};
+        buttons.createEl('button',{text:'完整设置 ↗'}).onclick=()=>{modal.close();this.plugin.app.setting.open();this.plugin.app.setting.openTabById(this.plugin.manifest.id)};
+        modal.open();
     }
 
     renderWorkbenchEmpty(container, title, description) {
@@ -2354,6 +2446,9 @@ class AiAssistantSuite extends Plugin {
             (leaf) => (this.view = new AssistantView(leaf, this))
         );
 
+        this.registerView(ASSISTANT_WORKBENCH_TYPE, leaf => (this.view = new AssistantView(leaf, this, true)));
+        this.addCommand({ id: 'open-ai-assistant-workbench', name: 'Open Note Workbench (展开笔记工作台)', callback: () => this.activateView(true) });
+
         this.addRibbonIcon("anchor", "打开 AI 助手面板", () => {
             this.activateView();
         });
@@ -2670,19 +2765,27 @@ class AiAssistantSuite extends Plugin {
         return `${file.stat.ctime}-${file.path.replace(/[^a-zA-Z0-9]/g, '_')}`;
     }
 
-    async activateView() {
-        const leaves = this.app.workspace.getLeavesOfType(ASSISTANT_VIEW_TYPE);
-        // If view is not open, create it
-        if (leaves.length === 0) {
-            await this.app.workspace.getRightLeaf(false).setViewState({
-                type: ASSISTANT_VIEW_TYPE,
-                active: true,
-            });
+    refreshAssistantViews(source = null) {
+        for (const type of [ASSISTANT_VIEW_TYPE, ASSISTANT_WORKBENCH_TYPE]) {
+            for (const leaf of this.app.workspace.getLeavesOfType(type)) {
+                if (leaf.view !== source && leaf.view instanceof AssistantView) leaf.view.render();
+            }
         }
-        // Whether it was open or we just created it, reveal it
-        this.app.workspace.revealLeaf(
-            this.app.workspace.getLeavesOfType(ASSISTANT_VIEW_TYPE)[0]
-        );
+    }
+
+    async activateView(expanded = null) {
+        expanded ??= !!this.view?.expanded;
+        const type = expanded ? ASSISTANT_WORKBENCH_TYPE : ASSISTANT_VIEW_TYPE;
+        let leaf = this.app.workspace.getLeavesOfType(type)[0];
+        if (!leaf) {
+            leaf = expanded ? this.app.workspace.getLeaf('tab') : this.app.workspace.getRightLeaf(false);
+            await leaf.setViewState({ type, active: true });
+        }
+        this.view = leaf.view;
+        await this.app.workspace.revealLeaf(leaf);
+        if (expanded) this.app.workspace.rightSplit?.collapse();
+        else this.app.workspace.rightSplit?.expand();
+        this.refreshAssistantViews();
     }
 
     // 通用API请求方法（支持多 Config 顺序 Fallback、取消和 OpenAI-compatible streaming）
@@ -4471,13 +4574,13 @@ ${content}`
         return labels[mode] || labels.sidebar;
     }
 
-    async getCurrentActionContext() {
-        const currentFile = this.app.workspace.getActiveFile();
+    async getCurrentActionContext(targetFile = null) {
+        const currentFile = targetFile || this.app.workspace.getActiveFile() || this.assistantLastFile;
         if (!currentFile) {
             throw new Error('没有活动的笔记文件。');
         }
 
-        const editor = this.app.workspace.activeEditor?.editor;
+        const editor = this.app.workspace.getActiveFile() === currentFile ? this.app.workspace.activeEditor?.editor : null;
         const originalContent = await this.app.vault.read(currentFile);
         let selection = '';
         let selectionStartOffset = null;
@@ -4544,7 +4647,7 @@ ${content}`
         return candidate;
     }
 
-    async runCustomAction(actionId) {
+    async runCustomAction(actionId, targetFile = null) {
         const action = (this.settings.customActions || []).find(item => item.id === actionId);
         if (!action || action.enabled === false) {
             new Notice('未找到启用的自定义 AI Action。', 3000);
@@ -4560,7 +4663,7 @@ ${content}`
         let progressNotice = new Notice(`正在执行 ${action.name || '自定义动作'}...`, 0);
 
         try {
-            const context = await this.getCurrentActionContext();
+            const context = await this.getCurrentActionContext(targetFile);
             const prompt = this.renderCustomPrompt(action.prompt, context);
             if (!prompt.trim()) {
                 throw new Error('自定义 Action 的 Prompt 为空。');
@@ -5096,11 +5199,11 @@ class AiAssistantSettingTab extends PluginSettingTab {
 
         containerEl.createEl('h3', { text: '一键智能处理 (One-Click Smart Process)' });
         new Setting(containerEl)
-            .setDesc('选择"一键处理"命令要执行的步骤。启用"优化结构"会首先修改笔记内容，然后其他启用的步骤会基于新内容在一个统一的侧边栏卡片中提供建议。');
+            .setDesc('选择生成建议的默认步骤。正文先生成对照预览，接受后才写入；属性、标签和位置分别确认。');
 
         new Setting(containerEl)
             .setName('优化结构 (Structurizer)')
-            .setDesc('首先运行，直接修改笔记内容以优化格式。')
+            .setDesc('生成结构与表达的修改建议，逐项审阅后再应用。')
             .addToggle(toggle => toggle
                 .setValue(this.plugin.settings.oneClickProcessActions.structurizer)
                 .onChange(async (value) => {
