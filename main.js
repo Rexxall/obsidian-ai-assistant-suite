@@ -1321,10 +1321,17 @@ class AssistantView extends ItemView {
         const content = task.content || {};
         if (!content.reviewHunks) content.reviewHunks = this.plugin.buildReviewHunks(content.originalContent || '', content.proposedContent || '');
         if (!Array.isArray(content.reviewSelected)) content.reviewSelected = content.reviewHunks.map(h => h.id);
+        if (content.reviewMode !== 'changes') {
+            this.renderFullArticlePreview(card, task, expanded);
+            return;
+        }
         card.addClass('assistant-review-surface');
         card.createDiv({ text: content.file?.path || '当前笔记', cls: 'assistant-review-path' });
         const summary = card.createDiv({ cls: 'assistant-review-summary', attr: { 'aria-live': 'polite' } });
         const controls = card.createDiv({ cls: 'assistant-review-toolbar' });
+        controls.createEl('button', { text: '整文预览' }).onclick = () => {
+            content.reviewMode = 'article'; card.empty(); this.renderDiffPreviewTask(card, task, expanded);
+        };
         if (!expanded) controls.createEl('button', { text: '展开审阅' }).onclick = () => {
             const modal = new Modal(this.plugin.app);
             modal.modalEl.addClass('assistant-review-modal');
@@ -1378,6 +1385,49 @@ class AssistantView extends ItemView {
         if (!content.applied) buttons.createEl('button', { text: '全不选' }).onclick = () => { if (content.applying) return; content.reviewSelected = []; checks.forEach(c => { c.checked = false; c.dispatchEvent(new Event('change')); }); updateSummary(); };
         card.createEl('p', { text: '只应用勾选的正文差异。笔记有新编辑时将停止应用；属性与位置建议单独确认。', cls: 'assistant-review-muted' });
         updateSummary();
+    }
+
+    renderFullArticlePreview(card, task, expanded = false) {
+        const content = task.content;
+        card.addClass('assistant-review-surface', 'assistant-article-surface');
+        const toolbar = card.createDiv({ cls: 'assistant-article-toolbar' });
+        const repaint = () => { card.empty(); this.renderDiffPreviewTask(card, task, expanded); };
+        const original = content.articleSource === 'original';
+        const tabs = toolbar.createDiv({ cls: 'assistant-article-tabs' });
+        for (const [value, name] of [['result', '优化后'], ['original', '原文']]) {
+            const button = tabs.createEl('button', { text: name, attr: { 'aria-pressed': String(original === (value === 'original')) } });
+            button.onclick = () => { content.articleSource = value; repaint(); };
+        }
+        toolbar.createEl('button', { text: '查看具体修改', cls: 'assistant-article-text-button' }).onclick = () => {
+            content.reviewMode = 'changes'; repaint();
+        };
+        if (!expanded) toolbar.createEl('button', { text: '展开阅读', cls: 'assistant-article-text-button' }).onclick = () => {
+            const modal = new Modal(this.plugin.app);
+            modal.modalEl.addClass('assistant-review-modal');
+            modal.onOpen = () => this.renderDiffPreviewTask(modal.contentEl, task, true);
+            modal.open();
+        };
+        const selected = content.reviewSelected;
+        card.createEl('p', { text: content.applied ? '已应用，可撤回本次修改。' : selected.length === content.reviewHunks.length ? '整篇排版预览 · 原笔记尚未修改' : '当前预览包含你选择的修改 · 原笔记尚未修改', cls: 'assistant-review-muted' });
+        const article = card.createDiv({ cls: 'assistant-article-preview markdown-rendered' });
+        const text = original ? content.originalContent : this.plugin.composeReviewContent(content.originalContent, content.reviewHunks, selected);
+        const body = (text || '').replace(/^---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/, '');
+        if (MarkdownRenderer?.render) {
+            Promise.resolve(MarkdownRenderer.render(this.plugin.app, body, article, content.file?.path || '', this)).catch(() => {
+                article.empty(); article.createEl('pre', { text: body });
+            });
+        } else article.createEl('pre', { text: body });
+        const actions = card.createDiv({ cls: 'assistant-review-actions' });
+        const apply = actions.createEl('button', { text: content.applied ? '撤回本次修改' : content.applying ? '正在应用…' : selected.length === content.reviewHunks.length ? '应用整篇优化' : '应用所选修改', cls: 'mod-cta' });
+        apply.disabled = !!content.applying || (!content.applied && !selected.length);
+        apply.onclick = async () => {
+            if (content.applying) return;
+            content.applying = true; apply.disabled = true; apply.setText('正在处理…');
+            try {
+                if (content.applied) await this.plugin.undoReviewTask(task.id);
+                else await this.plugin.applyDiffPreview(task.id);
+            } finally { content.applying = false; repaint(); this.render(); }
+        };
     }
 
     renderResultTask(card, task) {
