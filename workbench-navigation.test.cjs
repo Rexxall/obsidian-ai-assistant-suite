@@ -1,7 +1,7 @@
 const {test}=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm');
 class El {
  constructor(tag='div',o={}){this.tag=tag;this.options=o;this.children=[];this.style={};this.events={};this.attrs=o.attr||{};}
- createEl(t,o={}){let e=new El(t,o);this.children.push(e);return e;} createDiv(o){return this.createEl('div',o);} createSpan(o){return this.createEl('span',o);} empty(){this.children=[];} addClass(){} setText(t){this.options.text=t;} setAttr(k,v){this.attrs[k]=v;} setAttribute(k,v){this.attrs[k]=v;} addEventListener(k,v){this.events[k]=v;}
+ createEl(t,o={}){let e=new El(t,o);this.children.push(e);return e;} createDiv(o){return this.createEl('div',o);} createSpan(o){return this.createEl('span',o);} empty(){this.children=[];} addClass(){} toggleClass(){} setText(t){this.options.text=t;} setAttr(k,v){this.attrs[k]=v;} setAttribute(k,v){this.attrs[k]=v;} addEventListener(k,v){this.events[k]=v;}
 }
 function fixture(file={basename:'Example',path:'Example.md',extension:'md',parent:{path:'/'}}){
  const module={exports:{}};vm.runInNewContext(fs.readFileSync(__dirname+'/main.js','utf8')+'\nmodule.exports=AssistantView;',{module,console,require:()=>Object.fromEntries(['Plugin','Notice','PluginSettingTab','Setting','FuzzySuggestModal','Modal','ItemView','TFile'].map(k=>[k,class{}]))});

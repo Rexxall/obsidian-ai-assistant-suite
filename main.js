@@ -524,6 +524,7 @@ class AssistantView extends ItemView {
             const row=options.createEl('label',{cls:'aw-option'});
             const check=row.createEl('input',{type:'checkbox',attr:{'data-action':key}});check.checked=!!chosen[key];
             const text=row.createSpan();text.createSpan({text:label});text.createEl('small',{text:desc});
+            row.toggleClass('is-selected', check.checked);
             check.onchange=()=>{this.sessionActions={...chosen,[key]:check.checked};this.sessionPreset='custom';this.workbenchOptionsOpen=true;this.render();this.containerEl.children[1].querySelector?.(`[data-action=${key}]`)?.focus()};
         }
         const start=side.createDiv({cls:'aw-start'});

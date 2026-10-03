@@ -2201,3 +2201,32 @@
 .assistant-sidebar-focused .as-menu { position: absolute; z-index: 10; top: 100%; right: 0; width: 160px; padding: 6px; border: 1px solid var(--am-line); border-radius: 12px; background: var(--am-paper); box-shadow: 0 8px 28px #0002; }
 .assistant-sidebar-focused .as-menu button { display: block; width: 100%; text-align: left; padding: 9px 10px; background: transparent; border: 0; border-radius: 7px; font-size: 13px; }
 .assistant-sidebar-focused .as-menu button:hover { background: var(--am-soft); }
+
+/* Refined sidebar proportions and restrained, tactile selection rows. */
+.assistant-sidebar-focused { background: var(--am-paper); }
+.assistant-sidebar-focused .aw-header { padding: 22px 22px 16px; }
+.assistant-sidebar-focused .aw-brand h2 { font-size: 19px; letter-spacing: -.04em; font-weight: 600; }
+.assistant-sidebar-focused .aw-navigation { padding: 0 22px; gap: 22px; border-bottom: 0; }
+.assistant-sidebar-focused .aw-nav-button { font-size: 12px; padding: 8px 0; }
+.assistant-sidebar-focused .aw-body { padding: 22px; }
+.assistant-sidebar-focused .at-docbar { padding: 0 0 20px; border: 0; }
+.assistant-sidebar-focused .at-doc-picker strong { font-size: 16px; font-weight: 550; letter-spacing: -.025em; }
+.assistant-sidebar-focused .at-doc-picker small { margin-top: 5px; font-size: 11px; }
+.assistant-sidebar-focused .at-doc-status { display: none; }
+.assistant-sidebar-focused .at-assistant { padding: 0; }
+.assistant-sidebar-focused .as-section-label { margin: 0 0 12px; font-size: 11px; letter-spacing: .02em; }
+.assistant-sidebar-focused .as-action-list { display: grid; gap: 7px; }
+.assistant-sidebar-focused .as-action-list .as-section-label { margin-bottom: 3px; }
+.assistant-sidebar-focused .aw-option { position: relative; display: flex; padding: 12px 14px; margin: 0; border: 1px solid transparent; border-radius: 11px; background: var(--am-soft); transition: background .15s ease, border-color .15s ease; cursor: pointer; }
+.assistant-sidebar-focused .aw-option.is-selected { background: var(--am-tint); border-color: var(--am-line); }
+.assistant-sidebar-focused .aw-option > input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+.assistant-sidebar-focused .aw-option:focus-within { outline: 2px solid var(--am-accent); outline-offset: 2px; }
+.assistant-sidebar-focused .aw-option > span { flex: 1; min-width: 0; }
+.assistant-sidebar-focused .aw-option > span > span { display: block; font-size: 13px; font-weight: 550; }
+.assistant-sidebar-focused .aw-option small { display: block; font-size: 11px; line-height: 1.5; margin-top: 2px; }
+.assistant-sidebar-focused .aw-option::after { content: '+'; flex-shrink: 0; color: var(--am-muted); font-size: 18px; font-weight: 400; margin-left: 10px; }
+.assistant-sidebar-focused .aw-option.is-selected::after { content: '✓'; color: var(--am-accent); font-size: 15px; }
+.assistant-sidebar-focused .aw-start { margin-top: 20px; }
+.assistant-sidebar-focused .aw-primary { height: 44px; border-radius: 11px; font-size: 13px; font-weight: 550; }
+.assistant-sidebar-focused .aw-start > .aw-caption { font-size: 10px; color: var(--am-muted); }
+.assistant-sidebar-focused .at-doc-picker { color: var(--am-ink); }
