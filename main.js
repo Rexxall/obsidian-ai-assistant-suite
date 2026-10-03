@@ -1,4 +1,4 @@
-// agent: codex (2026-09-20) — task presets, selective review and guarded undo
+// agent: codex (2026-10-03) — morning workspace; preserves selective review and guarded undo
 // agent: codex (2026-09-20) — keyboard-accessible compact actions
 // agent: codex (2026-09-19)
 const escapeHtmlText = value => String(value).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;"); // guarded writes and focused workspace
@@ -407,7 +407,8 @@ class AssistantView extends ItemView {
         container.empty();
         const viewContainer = container.createDiv({ cls: "ai-assistant-view-container" });
         const heading = viewContainer.createDiv({ cls: 'ai-assistant-workspace-heading' });
-        heading.createEl('h2', { text: '整理笔记' });
+        heading.createEl('div', { text: 'NOTE ASSISTANT', cls: 'assistant-eyebrow' });
+        heading.createEl('h2', { text: '笔记助手' });
         heading.createEl('p', { text: '选择要整理的内容，逐项审阅结果。' });
         const activeNote = this.plugin.app.workspace.getActiveFile();
         heading.createDiv({ cls: 'ai-assistant-note-context', text: activeNote ? activeNote.basename : '先打开一篇笔记' });
@@ -418,7 +419,10 @@ class AssistantView extends ItemView {
         });
         this.renderCurrentRequestBanner(viewContainer);
 
-        const workflow = viewContainer.createDiv({ cls: 'assistant-workflow' });
+        const studio = viewContainer.createDiv({ cls: 'assistant-studio-grid' });
+        const request = studio.createDiv({ cls: 'assistant-request-panel' });
+        request.createEl('h3', { text: '选择处理' });
+        const workflow = request.createDiv({ cls: 'assistant-workflow' });
         workflow.createEl('label', { text: '本次流程', attr: { for: 'assistant-workflow-select' } });
         const presets = workflow.createEl('select', { attr: { id: 'assistant-workflow-select', 'aria-label': '本次整理流程' } });
         for (const [value, text] of [['default','沿用默认流程'], ['reading','整理阅读笔记'], ['archive','归档这篇笔记'], ['custom','自定义操作']]) {
@@ -438,7 +442,7 @@ class AssistantView extends ItemView {
         workflow.createEl('p', { text: '本次选择不修改默认设置。生成后再决定接受哪些建议。', cls: 'assistant-review-muted' });
 
         // --- One-Click Process Toggles ---
-        const buttonGroup = viewContainer.createDiv({ cls: "ai-assistant-button-group" });
+        const buttonGroup = request.createDiv({ cls: "ai-assistant-button-group" });
         buttonGroup.style.display = 'flex';
         buttonGroup.style.gap = '8px';
         buttonGroup.style.flexWrap = 'wrap';
@@ -485,7 +489,7 @@ class AssistantView extends ItemView {
         // --- End of Toggles ---
 
         // --- 处理结果区域 (优先显示) ---
-        const tasksContainer = viewContainer.createDiv({ cls: "ai-assistant-tasks-container" });
+        const tasksContainer = studio.createDiv({ cls: "ai-assistant-tasks-container" });
         if (this.tasks.length === 0) {
             const placeholder = tasksContainer.createEl("p", { text: "结果会显示在这里。先选择上方操作，再开始整理。" });
             placeholder.style.textAlign = "center";
@@ -542,7 +546,7 @@ class AssistantView extends ItemView {
         });
 
         // Create a header container
-        const header = card.createDiv();
+        const header = card.createDiv({ cls: "assistant-task-heading" });
         header.style.display = 'flex';
         header.style.justifyContent = 'space-between';
         header.style.alignItems = 'center';
@@ -4735,7 +4739,7 @@ class AiAssistantSettingTab extends PluginSettingTab {
     display() {
         this.renderSettingsBody();
         const root = this.containerEl;
-        root.addClass('plugin-settings-workspace');
+        root.addClass('plugin-settings-workspace', 'assistant-settings-morning');
         const nav = root.createDiv({ cls: 'plugin-settings-jump' });
         const label = nav.createEl('label', { text: '快速定位' });
         const select = label.createEl('select', { attr: { 'aria-label': '跳转到设置分组' } });
