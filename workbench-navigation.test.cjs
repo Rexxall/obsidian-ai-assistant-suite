@@ -42,4 +42,20 @@ test('a custom action for a picked note cannot inherit another editor selection'
  const c=await p.getCurrentActionContext(picked);assert.equal(c.file,picked);assert.equal(c.selection,'');assert.equal(c.originalContent,'Picked note content');
 });
 
-test('sidebar puts five functions directly on the main surface and keeps secondary entries in More',()=>{const f=fixture();assert.equal(f.all().filter(e=>e.attrs['data-action']).length,5);assert.equal(f.all().filter(e=>e.options.cls==='aw-nav-button').length,2);assert.ok(!f.all().some(e=>['at-art','at-document','aw-presets','aw-orb'].includes(e.options.cls)));const more=f.all().find(e=>e.options.cls==='as-more');assert.ok(more);assert.ok(more.children.some(e=>e.options.text==='更多'));assert.ok(f.all(more).some(e=>e.options.text==='设置'));});
+test('sidebar puts five functions directly on the main surface and keeps secondary entries in More',()=>{const f=fixture();assert.equal(f.all().filter(e=>e.attrs['data-action']).length,5);assert.equal(f.all().filter(e=>e.options.cls==='aw-nav-button').length,4);assert.ok(!f.all().some(e=>['at-art','at-document','aw-presets','aw-orb'].includes(e.options.cls)));const more=f.all().find(e=>e.options.cls==='as-more');assert.ok(more);assert.ok(more.children.some(e=>e.options.text==='更多'));assert.ok(f.all(more).some(e=>e.options.text==='设置'));});
+
+test('note review expands metadata and tags together and retains edits across render',()=>{
+ const file={basename:'Note',path:'Note.md',extension:'md',parent:{path:'/'}};const f=fixture(file);
+ f.v.addTask({id:'combined',type:'one-click',status:'displaying',content:{file,originalContent:'Body',suggestions:{meta:{title:'Suggested',summary:'Summary',tldr:'Short'},tags:[{final:'topic'}]}}});
+ assert.ok(f.all().some(e=>e.options.cls==='sn-section sn-paper'));
+ assert.ok(f.all().some(e=>e.options.cls==='sn-tag-flow'));
+ const title=f.all().find(e=>e.tag==='textarea');title.value='My title';title.oninput();f.v.render();assert.equal(f.all().find(e=>e.tag==='textarea').value,'My title');
+ assert.ok(f.button('确认这篇笔记 →'));
+ f.v.workbenchPage='queue';f.v.render();assert.equal(f.all().filter(e=>e.options.cls==='sn-queue-row').length,1);
+});
+test('existing non-note tools remain reachable when note results exist',()=>{
+ const file={path:'a.md',basename:'a',parent:{path:'/'}};const f=fixture();
+ f.v.tasks=[{id:'note',type:'one-click',content:{file,suggestions:{}}}];
+ f.v.addTask({id:'custom',type:'custom-action',status:'displaying',content:{text:'Result'}});
+ assert.ok(f.all().some(e=>e.tag==='article'&&e.options.text==='custom'));
+});

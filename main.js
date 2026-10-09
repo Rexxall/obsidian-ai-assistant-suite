@@ -1,5 +1,5 @@
 const escapeHtmlText = value => String(value).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;"); // guarded writes and focused workspace
-const { Plugin, Notice, PluginSettingTab, Setting, FuzzySuggestModal, Modal, ItemView, TFile, MarkdownRenderer } = require('obsidian');
+const { Plugin, Notice, PluginSettingTab, Setting, FuzzySuggestModal, Modal, ItemView, TFile, MarkdownRenderer, parseYaml, stringifyYaml } = require('obsidian');
 
 const ASSISTANT_VIEW_TYPE = "ai-assistant-view";
 const ASSISTANT_WORKBENCH_TYPE = "ai-assistant-workbench-view";
@@ -329,13 +329,31 @@ const DEFAULT_SETTINGS = {
 
 };
 
+class AssistantNotePreview extends ItemView {
+    constructor(leaf,plugin){super(leaf);this.plugin=plugin;}
+    getViewType(){return 'ai-assistant-note-preview';}
+    getDisplayText(){return '笔记整文预览';}
+    getIcon(){return 'file-check';}
+    async onOpen(){this.contentEl.createEl('p',{text:'在笔记助手中选择正文建议。'});}
+    async showTask(task){
+        this.contentEl.empty();
+        this.contentEl.addClass('sn-document-preview');
+        this.contentEl.createEl('p',{text:'整文预览 · 原笔记尚未修改',cls:'sn-muted'});
+        this.contentEl.createEl('h2',{text:task.content.file.basename});
+        const body=this.contentEl.createDiv({cls:'markdown-rendered'});
+        const c=task.content,h=c.reviewHunks||this.plugin.buildReviewHunks(c.originalContent,c.proposedContent);
+        const text=this.plugin.composeReviewContent(c.originalContent,h,c.reviewSelected||h.map(v=>v.id)).replace(/^---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/,'');
+        await MarkdownRenderer.render(this.app,text,body,task.content.file.path,this);
+    }
+}
+
 class AssistantView extends ItemView {
     constructor(leaf, plugin, expanded = false) {
         super(leaf);
         this.plugin = plugin;
         this.expanded = expanded;
         plugin.assistantSession ||= { tasks: [] };
-        for (const key of ['tasks','workbenchPage','selectedTaskId','sessionActions','sessionPreset','workbenchRunning','workbenchCancelled','workbenchOptionsOpen','pinnedFile']) {
+        for (const key of ['tasks','workbenchPage','selectedTaskId','sessionActions','sessionPreset','workbenchRunning','workbenchCancelled','workbenchOptionsOpen','pinnedFile','noteApplying']) {
             Object.defineProperty(this, key, { get: () => plugin.assistantSession[key], set: value => { plugin.assistantSession[key] = value; }, configurable: true });
         }
         this.currentFile = null; // 跟踪当前文件
@@ -393,7 +411,7 @@ class AssistantView extends ItemView {
     addTask(task) {
         this.tasks.push(task);
         this.selectedTaskId = task.id;
-        this.workbenchPage = 'review';
+        this.workbenchPage = this.tasks.some(t=>t.type==='batch-process'&&t.content?.canInterrupt) ? 'queue' : 'review';
         this.render();
         this.plugin.refreshAssistantViews?.(this);
     }
@@ -420,7 +438,8 @@ class AssistantView extends ItemView {
     render() {
         const container = this.containerEl.children[1];
         container.empty();
-        const root = container.createDiv({ cls: 'ai-assistant-view-container assistant-workbench atelier-workbench assistant-sidebar-focused' });
+        const root = container.createDiv({ cls: 'ai-assistant-view-container assistant-workbench atelier-workbench assistant-sidebar-focused soft-note-sidebar' });
+        if(this.plugin.settings.sidebarCompact!==false)root.addClass('sn-compact');
         if (this.expanded) root.addClass('atelier-expanded');
         const page = this.workbenchPage || 'prepare';
         const activeNote = this.plugin.app.workspace.getActiveFile();
@@ -441,11 +460,15 @@ class AssistantView extends ItemView {
             ['其他工具', () => { this.workbenchPage = 'tools'; this.render(); }]
         ]) menu.createEl('button', { text: label }).onclick = () => { more.open = false; action(); };
         const nav = root.createEl('nav', { cls:'aw-navigation', attr:{'aria-label':'笔记助手导航'} });
-        for (const [id,label] of [['prepare','整理笔记'],['review',`处理结果${this.tasks.length?' · '+this.tasks.length:''}`]]) {
+        for (const [id,label] of [['prepare','处理'],['review','本篇建议'],['queue',`任务 · ${this.getNoteGroups().length}`],['settings','设置']]) {
             const b = nav.createEl('button', { text:label, cls:'aw-nav-button', attr:{'aria-current':page===id?'page':'false'} });
             b.onclick = () => { this.workbenchPage=id; this.render(); this.plugin.refreshAssistantViews?.(this); container.querySelector?.('[aria-current=page]')?.focus(); };
         }
         const body = root.createDiv({ cls:'aw-body' });
+        if(page==='settings'){const settings=new AiAssistantSettingTab(this.plugin.app,this.plugin);settings.containerEl=body.createDiv({cls:'sn-settings'});settings.display();return;}
+        if(page==='queue'){this.renderNoteQueue(body);return;}
+        const noteGroups=this.getNoteGroups();
+        if(page==='review'&&noteGroups.length&&(!this.selectedTaskId||noteGroups.some(g=>g.tasks.some(t=>t.id===this.selectedTaskId)))){const group=noteGroups.find(g=>g.tasks.some(t=>t.id===this.selectedTaskId))||noteGroups.at(-1);this.renderCurrentRequestBanner(body);this.renderNoteReview(body,group);return;}
         if (page==='history') {
             const history = body.createDiv({ cls:'at-history' });
             const actions = history.createDiv({ cls:'at-history-actions' });
@@ -476,7 +499,7 @@ class AssistantView extends ItemView {
             const review = surface.createDiv({cls:'at-review'});
             this.renderCurrentRequestBanner(review);
             if (!this.tasks.length) {
-                this.renderWorkbenchEmpty(review,this.workbenchRunning?'正在准备建议':'这里留给你的判断',this.workbenchRunning?'正在读取笔记和准备处理步骤。':'生成后在这里查看完整排版，再应用到笔记。');
+                this.renderWorkbenchEmpty(review,this.workbenchRunning?'正在准备建议':'这里留给你的判断',this.workbenchRunning?'正在读取笔记和准备处理步骤。':'生成后集中查看标题、摘要、标签与归档建议。');
                 review.createEl('button',{text:'选择要整理的内容',cls:'aw-primary'}).onclick=()=>{this.workbenchPage='prepare';this.render()};
             } else {
                 const task = this.tasks.find(t=>t.id===this.selectedTaskId)||this.tasks[this.tasks.length-1];
@@ -493,6 +516,129 @@ class AssistantView extends ItemView {
             const side=surface.createDiv({cls:'at-assistant'});
             this.renderAtelierPreparation(side,file,busy);
         }
+    }
+
+    getNoteGroups() {
+        const groups = new Map();
+        for (const task of this.tasks) {
+            const file = task.content?.file;
+            if (!file || !['one-click','diff-preview','error'].includes(task.type)) continue;
+            const key = file.path;
+            if (!groups.has(key)) groups.set(key, { file, tasks: [] });
+            groups.get(key).tasks.push(task);
+        }
+        return [...groups.values()].map(group=>{const last=group.tasks.findLastIndex(t=>t.content.noteApplied);if(last>=0&&last<group.tasks.length-1)group.tasks=group.tasks.slice(last+1);return group;});
+    }
+
+    noteDraft(group) {
+        const latest = group.tasks.filter(t => t.type === 'one-click').at(-1);
+        const anchor = latest || group.tasks.at(-1);
+        const suggestions = latest?.content.suggestions || {};
+        const diffs = group.tasks.filter(t => t.type === 'diff-preview' && !t.content.applied && !t.content.noteApplied);
+        const signature = group.tasks.map(t => t.id).join('|');
+        if (!anchor.content.noteDraft || anchor.content.noteDraft.signature !== signature) {
+            anchor.content.noteDraft = { signature, meta: { ...suggestions.meta },
+                tags: (suggestions.tags || []).map(t => t.final || t.display || t),
+                folder: suggestions.mover?.[0]?.path || group.file.parent?.path || '/',
+                useMeta: !!suggestions.meta, useTags: !!suggestions.tags?.length, useFolder: !!suggestions.mover?.length,
+                rename: false, diffId: diffs.at(-1)?.id || '', originalTaskId: latest?.id };
+        }
+        return anchor.content.noteDraft;
+    }
+
+    noteStatus(group) {
+        if (group.tasks.at(-1)?.content.noteApplied) return '已确认';
+        if (group.tasks.at(-1)?.type === 'error') return '需重试';
+        return '待确认';
+    }
+
+    renderNoteQueue(container) {
+        const groups = this.getNoteGroups();
+        container.createEl('h3', { text: '慢慢整理好', cls: 'sn-title' });
+        container.createEl('p', { text: `${groups.filter(g=>this.noteStatus(g)==='待确认').length} 篇待确认 · ${groups.filter(g=>this.noteStatus(g)==='已确认').length} 篇已确认 · ${groups.filter(g=>this.noteStatus(g)==='需重试').length} 篇需重试`, cls: 'sn-muted' });
+        container.createEl('button', { text: '＋ 批量整理笔记', cls: 'aw-text-button' }).onclick = () => this.showBatchProcessingModal();
+        this.queueSelection ||= new Set();
+        for (const group of groups) {
+            const row = container.createDiv({ cls: 'sn-queue-row' });
+            const check = row.createEl('input', { type: 'checkbox', attr: { 'aria-label': `选择 ${group.file.basename}` } });
+            check.checked = this.queueSelection.has(group.file.path);
+            check.disabled = this.noteStatus(group) !== '待确认';
+            check.onchange = () => { check.checked ? this.queueSelection.add(group.file.path) : this.queueSelection.delete(group.file.path); };
+            const copy = row.createDiv();
+            copy.createEl('strong', { text: group.file.basename });
+            copy.createEl('small', { text: this.noteStatus(group) });
+            row.createEl('button', { text: '查看 ↗' }).onclick = () => { this.selectedTaskId = group.tasks.at(-1).id; this.workbenchPage = 'review'; this.render(); };
+        }
+        if (!groups.length) container.createEl('p', { text: '生成的建议会按笔记集中在这里。', cls: 'sn-muted' });
+        if (groups.length) {
+            const actions = container.createDiv({cls:'sn-actions'});
+            const apply = actions.createEl('button', { text:'接受勾选的笔记', cls:'aw-primary' });
+            apply.onclick = async () => {
+                if(this.noteApplying)return;
+                const chosen=groups.filter(g=>this.queueSelection.has(g.file.path)&&this.noteStatus(g)==='待确认');
+                if(!chosen.length){new Notice('先勾选要接受的笔记。');return;}
+                this.noteApplying=true;apply.disabled=true;let done=0;
+                try { for(const g of chosen){try{await this.plugin.applyNoteGroup(g,this.noteDraft(g));done++;}catch(e){new Notice(`${g.file.basename}：${e.message}`,6000);}} }
+                finally {this.noteApplying=false;this.queueSelection.clear();this.render();new Notice(`已确认 ${done} / ${chosen.length} 篇。`);}
+            };
+        }
+        for(const task of this.tasks.filter(t=>t.type==='batch-process'&&t.content?.canInterrupt)) this.renderTask(container,task);
+    }
+
+    renderNoteReview(container, group) {
+        const draft=this.noteDraft(group),suggestions=group.tasks.filter(t=>t.type==='one-click').at(-1)?.content.suggestions||{};
+        const done=this.noteStatus(group)==='已确认';
+        const nav=container.createDiv({cls:'sn-review-nav'});
+        nav.createEl('button',{text:'← 全部任务'}).onclick=()=>{this.workbenchPage='queue';this.render();};
+        nav.createSpan({text:this.noteStatus(group),cls:'sn-muted'});
+        container.createEl('h3',{text:group.file.basename,cls:'sn-title'});
+        container.createEl('p',{text:'建议集中在这里，可直接改写。',cls:'sn-muted'});
+        const section=(key,title,cls)=>{
+            const el=container.createDiv({cls:`sn-section ${cls||''}`}),label=el.createEl('label',{cls:'sn-section-label'});
+            const check=label.createEl('input',{type:'checkbox'});check.checked=draft[key];check.disabled=done||!!this.noteApplying;
+            label.createSpan({text:title});check.onchange=()=>{draft[key]=check.checked;};return el;
+        };
+        if(suggestions.meta){
+            const el=section('useMeta','标题与摘要','sn-paper');
+            for(const [key,label] of [['title','标题'],['summary','摘要'],['tldr','一句话总结']]){
+                const wrap=el.createEl('label',{cls:`sn-field sn-field-${key}`});wrap.createSpan({text:label});
+                const input=wrap.createEl('textarea',{cls:'sn-edit',attr:{rows:key==='title'?'2':'3'}});input.value=draft.meta[key]||'';input.disabled=done;
+                input.oninput=()=>{draft.meta[key]=input.value;};
+            }
+            const rename=el.createEl('label',{cls:'sn-rename'}),check=rename.createEl('input',{type:'checkbox'});check.checked=draft.rename;check.disabled=done;
+            rename.createSpan({text:'同时用标题重命名文件'});check.onchange=()=>{draft.rename=check.checked;};
+        }
+        if(suggestions.tags?.length){
+            const el=section('useTags','标签','sn-tags'),flow=el.createDiv({cls:'sn-tag-flow'});
+            for(const tag of suggestions.tags){const value=tag.final||tag.display||tag,label=flow.createEl('label',{cls:'sn-tag'}),check=label.createEl('input',{type:'checkbox'});check.checked=draft.tags.includes(value);check.disabled=done;label.createSpan({text:value});check.onchange=()=>{draft.tags=check.checked?[...new Set([...draft.tags,value])]:draft.tags.filter(t=>t!==value);};}
+        }
+        if(suggestions.mover?.length){
+            const el=section('useFolder','归档','sn-path');el.createEl('small',{text:`从 ${group.file.parent?.path||'/'}`,cls:'sn-muted'});
+            const select=el.createEl('select',{attr:{'aria-label':'目标文件夹'}});
+            const paths=[...new Set([...suggestions.mover.map(v=>v.path),...this.plugin.app.vault.getAllLoadedFiles().filter(f=>f.children).map(f=>f.path)])];
+            for(const path of paths)select.createEl('option',{value:path,text:path});select.value=draft.folder;select.disabled=done;select.onchange=()=>{draft.folder=select.value;};
+        }
+        const diffs=group.tasks.filter(t=>t.type==='diff-preview'&&!t.content.applied&&!t.content.noteApplied);
+        if(diffs.length&&!done){
+            const el=container.createDiv({cls:'sn-section sn-body-choice'});
+            el.createEl('p',{text:'正文 · 在主编辑区查看整文',cls:'sn-muted'});
+            const select=el.createEl('select',{attr:{'aria-label':'选择正文版本'}});select.createEl('option',{value:'',text:'保留当前正文'});
+            for(const task of diffs)select.createEl('option',{value:task.id,text:task.content.action||task.title});select.value=draft.diffId;
+            select.onchange=()=>{draft.diffId=select.value;};
+            el.createEl('button',{text:'打开整文预览 ↗',cls:'aw-text-button'}).onclick=()=>{const task=diffs.find(t=>t.id===draft.diffId);if(task)this.plugin.openNotePreview(task);else new Notice('先选择一个正文版本。');};
+            if(diffs.length>1)el.createEl('small',{text:'多个正文版本分别生成，选择一个应用，避免相互覆盖。',cls:'sn-muted'});
+        }
+        const error=group.tasks.at(-1)?.type==='error'?group.tasks.at(-1):null;
+        if(error){container.createEl('p',{text:error.content.message,cls:'sn-muted'});container.createEl('button',{text:'重新生成本篇建议'}).onclick=async()=>{if(this.workbenchRunning)return;this.workbenchRunning=true;try{await this.plugin.runOneClickSmartProcess(group.file);}finally{this.workbenchRunning=false;this.render();}};}
+        const actions=container.createDiv({cls:'sn-actions'});
+        const accept=actions.createEl('button',{text:done?'撤销本篇修改':'确认这篇笔记 →',cls:'aw-primary'});accept.disabled=!!this.noteApplying||!!this.workbenchRunning;
+        accept.onclick=async()=>{
+            if(this.noteApplying)return;this.noteApplying=true;accept.disabled=true;
+            try{if(done)await this.plugin.undoNoteGroup(group);else await this.plugin.applyNoteGroup(group,draft);
+                if(!done&&this.plugin.settings.sidebarAutoNext!==false){const next=this.getNoteGroups().find(g=>g.file!==group.file&&this.noteStatus(g)==='待确认');if(next)this.selectedTaskId=next.tasks.at(-1).id;}
+            }catch(e){new Notice(e.message,7000);}finally{this.noteApplying=false;this.render();this.plugin.refreshAssistantViews?.(this);}
+        };
+        actions.createEl('button',{text:'稍后处理',cls:'aw-text-button'}).onclick=()=>{this.workbenchPage='queue';this.render();};
     }
 
     renderAtelierDocument(container,file) {
@@ -517,7 +663,7 @@ class AssistantView extends ItemView {
 
     renderAtelierPreparation(side,file,busy) {
         const chosen=this.sessionActions||this.plugin.settings.oneClickProcessActions||{};
-        const actions=[['structurizer','整理结构','梳理段落与标题'],['furigana','标注假名','辅助日文阅读'],['meta','补全属性','标题、摘要与一句话总结'],['tagger','补充标签','连接已有的分类'],['mover','建议位置','找到适合存放的文件夹']];
+        const actions=[['meta','标题与摘要','补全笔记属性'],['tagger','标签','连接已有分类'],['mover','归档','建议存放位置'],['structurizer','整理正文','梳理段落与标题'],['furigana','假名','辅助日文阅读']];
         const options=side.createDiv({cls:'aw-options as-action-list',attr:{'role':'group','aria-label':'选择处理功能'}});
         options.createEl('p',{text:'选择处理功能',cls:'as-section-label'});
         for(const [key,label,desc] of actions){
@@ -538,7 +684,7 @@ class AssistantView extends ItemView {
             try{await this.plugin.runOneClickSmartProcess(file,{...chosen},()=>this.workbenchCancelled)}
             finally{this.workbenchRunning=false;this.render();this.plugin.refreshAssistantViews?.(this)}
         };
-        start.createEl('p',{text:'先预览整篇排版，再应用。属性、标签和位置分别确认。',cls:'aw-caption'});
+        start.createEl('p',{text:'建议按笔记集中确认，正文可在主编辑区预览。',cls:'aw-caption'});
         if(busy)start.createEl('button',{text:'查看生成进度',cls:'aw-text-button'}).onclick=()=>{this.workbenchPage='review';this.render()};
     }
 
@@ -2476,6 +2622,7 @@ class AiAssistantSuite extends Plugin {
             (leaf) => (this.view = new AssistantView(leaf, this))
         );
 
+        this.registerView('ai-assistant-note-preview', leaf => new AssistantNotePreview(leaf,this));
         this.registerView(ASSISTANT_WORKBENCH_TYPE, leaf => (this.view = new AssistantView(leaf, this, true)));
 
         this.addRibbonIcon("anchor", "打开 AI 助手面板", () => {
@@ -3167,6 +3314,88 @@ class AiAssistantSuite extends Plugin {
         return result + lines.slice(cursor).join('');
     }
 
+    async openNotePreview(task) {
+        const leaves=this.app.workspace.getLeavesOfType('ai-assistant-note-preview');
+        const leaf=leaves[0]||this.app.workspace.getLeaf('tab');
+        await leaf.setViewState({type:'ai-assistant-note-preview',active:true});
+        await leaf.view.showTask(task);
+        this.app.workspace.revealLeaf(leaf);
+    }
+
+    composeNoteGroup(group, draft, current) {
+        const source=group.tasks.find(t=>t.id===draft.originalTaskId);
+        const diff=group.tasks.find(t=>t.id===draft.diffId);
+        if(source?.content.originalContent!==undefined&&source.content.originalContent!==current)throw new Error('笔记已有新修改，请重新生成建议。');
+        if(diff&&diff.content.originalContent!==current)throw new Error('正文预览已过期，请重新生成。');
+        let text=diff?this.composeReviewContent(current,diff.content.reviewHunks||this.buildReviewHunks(current,diff.content.proposedContent),diff.content.reviewSelected|| (diff.content.reviewHunks||this.buildReviewHunks(current,diff.content.proposedContent)).map(h=>h.id)):current;
+        if(draft.useMeta||draft.useTags){
+            const match=text.match(/^---\r?\n([\s\S]*?)\r?\n(?:---|\.\.\.)(?:\r?\n|$)/);
+            const fm=match?(parseYaml(match[1])||{}):{};
+            if(typeof fm!=='object'||Array.isArray(fm))throw new Error('笔记属性不是有效的 YAML 对象，未写入。');
+            if(draft.useMeta)for(const key of ['title','summary','tldr'])if(draft.meta[key]!==undefined)fm[key]=String(draft.meta[key]).trim();
+            if(draft.useTags){const old=Array.isArray(fm.tags)?fm.tags:(fm.tags?[String(fm.tags)]:[]);fm.tags=[...new Set([...old,...draft.tags])];}
+            const newline=current.includes('\r\n')?'\r\n':'\n';
+            text=`---${newline}${stringifyYaml(fm).trimEnd().replace(/\r?\n/g,newline)}${newline}---${newline}${match?text.slice(match[0].length):text}`;
+        }
+        return text;
+    }
+
+    applyNoteGroup(group,draft) {
+        return this.queueContentWrite(async()=>{
+            if(group.tasks.at(-1)?.content.noteApplied)return;
+            if(this.assistantSession?.workbenchRunning||(this.assistantSession?.tasks||[]).some(t=>t.type==='batch-process'&&t.content?.canInterrupt))throw new Error('请等待当前生成任务结束后再确认。');
+            const file=group.file,originalPath=file.path,current=await this.app.vault.read(file);
+            const proposed=this.composeNoteGroup(group,draft,current);
+            let folder=draft.useFolder?draft.folder:(file.parent?.path||'/');
+            folder=String(folder).replace(/^\/+|\/+$/g,'');
+            if(folder.split('/').some(p=>p==='..'||p==='.')||/[\\:*?"<>|]/.test(folder))throw new Error('目标文件夹路径无效。');
+            let name=file.name||originalPath.split('/').at(-1);
+            if(draft.useMeta&&draft.rename){const title=String(draft.meta.title||'').trim().replace(/[/\\:?*"<>|]/g,'-').slice(0,this.settings.metaFileNameMaxLength||100);if(!title||/^\.+$/.test(title))throw new Error('请填写有效的文件名。');name=title+'.md';}
+            const destination=folder?folder+'/'+name:name;
+            if(destination!==originalPath&&this.app.vault.getAbstractFileByPath(destination))throw new Error('目标位置已有同名文件，未做修改。');
+            if(proposed===current&&destination===originalPath)throw new Error('没有选中需要应用的修改。');
+            if(folder&&!this.app.vault.getAbstractFileByPath(folder))await this.app.vault.createFolder(folder);
+            const snapshot=await this.saveRollbackSnapshot({file,action:'笔记集中确认',originalContent:current,appliedContent:proposed});
+            snapshot.originalPath=originalPath;snapshot.filePath=destination;
+            await this.saveSettings();
+            let wrote=false;
+            try{
+                await this.guardedWrite(file,current,proposed);wrote=true;
+                if(destination!==originalPath)await this.app.fileManager.renameFile(file,destination);
+            }catch(error){
+                let restored=!wrote;
+                if(wrote&&file.path===originalPath){try{await this.guardedWrite(file,proposed,current);restored=true;}catch{}}
+                if(restored)this.settings.rollbackHistory=this.settings.rollbackHistory.filter(s=>s.id!==snapshot.id);
+                else{snapshot.filePath=file.path;for(const task of group.tasks){task.content.noteSnapshotId=snapshot.id;task.content.noteApplied=true;}}
+                await this.saveSettings();throw error;
+            }
+            snapshot.filePath=file.path;
+            for(const task of group.tasks){task.content.noteSnapshotId=snapshot.id;task.content.noteApplied=true;}
+            await this.saveSettings();
+            this.addToHistory(file.basename,file.path,'笔记集中确认',this.generateFileId(file));
+            new Notice('本篇建议已应用，可在任务中撤销。');
+        });
+    }
+
+    undoNoteGroup(group) {
+        return this.queueContentWrite(async()=>{
+            const id=group.tasks.find(t=>t.content.noteApplied)?.content.noteSnapshotId;
+            const snapshot=(this.settings.rollbackHistory||[]).find(s=>s.id===id);
+            if(!snapshot)throw new Error('撤销记录已过期或已撤销。');
+            const file=this.app.vault.getAbstractFileByPath(snapshot.filePath);
+            if(!file)throw new Error('笔记已移动或删除，请先恢复位置。');
+            const target=snapshot.originalPath||snapshot.filePath;
+            if(target!==file.path&&this.app.vault.getAbstractFileByPath(target))throw new Error('原位置已有文件，无法撤销归档。');
+            if(await this.app.vault.read(file)!==snapshot.appliedContent)throw new Error('笔记有后续编辑，已保留当前内容，无法直接撤销。');
+            await this.guardedWrite(file,snapshot.appliedContent,snapshot.originalContent);
+            try{if(target!==file.path)await this.app.fileManager.renameFile(file,target);}catch(error){await this.guardedWrite(file,snapshot.originalContent,snapshot.appliedContent);throw error;}
+            this.settings.rollbackHistory=this.settings.rollbackHistory.filter(s=>s.id!==id);
+            this.settings.rollbackRedoHistory=[];
+            for(const task of group.tasks){task.content.noteApplied=false;delete task.content.noteSnapshotId;}
+            await this.saveSettings();new Notice('已恢复本篇修改前的内容和位置。');
+        });
+    }
+
     async undoReviewTask(taskId) {
         const task = this.view?.getTask(taskId), content = task?.content;
         if (!content?.applied || !content.reviewSnapshotId) return;
@@ -3307,6 +3536,8 @@ class AiAssistantSuite extends Plugin {
     }
 
     async rollbackLastChange() {
+        const latest=this.settings.rollbackHistory?.[0];
+        if(latest?.originalPath){const tasks=(this.assistantSession?.tasks||[]).filter(t=>t.content?.noteSnapshotId===latest.id);const group={tasks:tasks.length?tasks:[{content:{noteApplied:true,noteSnapshotId:latest.id}}]};try{await this.undoNoteGroup(group);this.view?.render();}catch(e){new Notice(e.message,6000);}return;}
         return this.queueContentWrite(async () => {
             const history = this.settings.rollbackHistory || [];
             const snapshot = history[0];
@@ -3415,9 +3646,10 @@ class AiAssistantSuite extends Plugin {
                 // await this.app.workspace.getLeaf().openFile(file); // 注释掉自动跳转功能
 
                 // 运行一键处理
+                const beforeIds=new Set(this.view.tasks.map(t=>t.id));
                 await this.runOneClickSmartProcess(file);
-
-                processedCount++;
+                const failed=this.view.tasks.some(t=>!beforeIds.has(t.id)&&t.type==='error'&&t.content?.file===file);
+                if(failed)errorCount++;else processedCount++;
 
                 // 添加延迟以避免API限制
                 await new Promise(resolve => setTimeout(resolve, 1000));
@@ -4131,6 +4363,7 @@ class AiAssistantSuite extends Plugin {
             // --- 2. Prepare for combined AI call ---
             progressNotice.setMessage("正在准备组合式 AI 请求...");
             let contentToProcess = await app.vault.read(currentFile);
+            const noteOriginalContent = contentToProcess;
             const fileCache = app.metadataCache.getFileCache(currentFile);
 
             // 检查现有的frontmatter
@@ -4279,6 +4512,7 @@ ${contextForPrompt}
                 status: 'displaying',
                 title: `智能处理建议: ${currentFile.basename}`,
                 content: {
+                    originalContent: noteOriginalContent,
                     suggestions: {
                         meta: parsedContent.meta,
                         tags: tagSuggestions.length > 0 ? tagSuggestions : null,
@@ -5272,9 +5506,11 @@ class AiAssistantSettingTab extends PluginSettingTab {
                     await this.plugin.saveSettings();
                 }));
 
+        new Setting(containerEl).setName('紧凑侧栏').setDesc('缩短建议之间的距离，适合窄侧栏。').addToggle(t=>t.setValue(this.plugin.settings.sidebarCompact!==false).onChange(async value=>{this.plugin.settings.sidebarCompact=value;await this.plugin.saveSettings();this.plugin.refreshAssistantViews?.();}));
+        new Setting(containerEl).setName('确认后进入下一篇').setDesc('批量审阅时自动显示下一篇待确认笔记。').addToggle(t=>t.setValue(this.plugin.settings.sidebarAutoNext!==false).onChange(async value=>{this.plugin.settings.sidebarAutoNext=value;await this.plugin.saveSettings();}));
         containerEl.createEl('h3', { text: '默认处理步骤' });
         new Setting(containerEl)
-            .setDesc('选择生成建议的默认步骤。正文先生成对照预览，接受后才写入；属性、标签和位置分别确认。');
+            .setDesc('选择默认生成哪些建议。按笔记集中确认，正文在主编辑区预览后采用。');
 
         new Setting(containerEl)
             .setName('优化结构 (Structurizer)')
