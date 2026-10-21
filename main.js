@@ -3104,6 +3104,24 @@ class AiAssistantSuite extends Plugin {
         return resultText;
     }
 
+    // Wraps the caller's cancel signal with a timeout, so a silent server cannot hang the panel forever.
+    createRequestTimeout(signal, timeoutMs = 120000) {
+        const controller = new AbortController();
+        let timedOut = false;
+        if (signal?.aborted) controller.abort();
+        else signal?.addEventListener?.('abort', () => controller.abort(), { once: true });
+        const timer = setTimeout(() => {
+            timedOut = true;
+            controller.abort();
+        }, timeoutMs);
+        return {
+            signal: controller.signal,
+            clear: () => clearTimeout(timer),
+            timedOut: () => timedOut,
+            error: () => new Error(`AI 请求超过 ${Math.round(timeoutMs / 1000)} 秒未响应，已停止等待。`)
+        };
+    }
+
     async executeJsonRequest(url, requestOptions, options = {}) {
         if (options.signal?.aborted) {
             throw this.createAbortError();
@@ -3124,16 +3142,27 @@ class AiAssistantSuite extends Plugin {
                 return JSON.parse(response.text);
             }
 
-            const response = await fetch(url, {
-                ...requestOptions,
-                signal: options.signal
-            });
-            const text = await response.text();
+            const timeout = this.createRequestTimeout(options.signal, options.timeout || 120000);
+            let text;
+            let response;
+            try {
+                response = await fetch(url, {
+                    ...requestOptions,
+                    signal: timeout.signal
+                });
+                text = await response.text();
+            } catch (error) {
+                if (timeout.timedOut()) throw timeout.error();
+                throw error;
+            } finally {
+                timeout.clear();
+            }
             if (!response.ok) {
                 throw new Error(`HTTP ${response.status} ${response.statusText}. ${text.substring(0, 200)}`);
             }
             return JSON.parse(text);
         } catch (error) {
+            if (/秒未响应/.test(error?.message || '')) throw error;
             if (options.signal?.aborted || this.isCancellationError(error)) {
                 throw this.createAbortError();
             }
@@ -3145,10 +3174,20 @@ class AiAssistantSuite extends Plugin {
     }
 
     async callOpenAiStreaming(url, requestOptions, options = {}) {
-        const response = await fetch(url, {
-            ...requestOptions,
-            signal: options.signal
-        });
+        // 只限制“等服务器开始回答”的时间；开始输出后长回答不会被截断，仍可手动取消
+        const timeout = this.createRequestTimeout(options.signal, options.timeout || 120000);
+        let response;
+        try {
+            response = await fetch(url, {
+                ...requestOptions,
+                signal: timeout.signal
+            });
+        } catch (error) {
+            if (timeout.timedOut()) throw timeout.error();
+            throw error;
+        } finally {
+            timeout.clear();
+        }
 
         if (!response.ok) {
             const errorText = await response.text();
@@ -3206,10 +3245,20 @@ class AiAssistantSuite extends Plugin {
     }
 
     async callGeminiStreaming(url, requestOptions, options = {}) {
-        const response = await fetch(url, {
-            ...requestOptions,
-            signal: options.signal
-        });
+        // 只限制“等服务器开始回答”的时间；开始输出后长回答不会被截断，仍可手动取消
+        const timeout = this.createRequestTimeout(options.signal, options.timeout || 120000);
+        let response;
+        try {
+            response = await fetch(url, {
+                ...requestOptions,
+                signal: timeout.signal
+            });
+        } catch (error) {
+            if (timeout.timedOut()) throw timeout.error();
+            throw error;
+        } finally {
+            timeout.clear();
+        }
 
         if (!response.ok) {
             const errorText = await response.text();
