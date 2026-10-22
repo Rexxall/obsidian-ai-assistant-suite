@@ -438,84 +438,73 @@ class AssistantView extends ItemView {
     render() {
         const container = this.containerEl.children[1];
         container.empty();
-        const root = container.createDiv({ cls: 'ai-assistant-view-container assistant-workbench atelier-workbench assistant-sidebar-focused soft-note-sidebar' });
-        if(this.plugin.settings.sidebarCompact!==false)root.addClass('sn-compact');
-        if (this.expanded) root.addClass('atelier-expanded');
+        const root = container.createDiv({ cls: 'mist-sidebar' });
+        if (this.plugin.settings.sidebarCompact !== false) root.addClass('mist-compact');
         const page = this.workbenchPage || 'prepare';
         const activeNote = this.plugin.app.workspace.getActiveFile();
         if (activeNote?.extension === 'md') this.plugin.assistantLastFile = activeNote;
         const file = this.pinnedFile || (activeNote?.extension === 'md' ? activeNote : activeNote ? null : this.plugin.assistantLastFile || null);
         const busy = !!this.workbenchRunning || this.tasks.some(t => t.status === 'loading');
-        const header = root.createDiv({ cls: 'aw-header' });
-        const brand = header.createDiv({ cls: 'aw-brand' });
-        brand.createEl('h2', { text: '笔记助手' });
-        const more = header.createEl('details', { cls: 'as-more' });
+        const groups = this.getNoteGroups();
+
+        const head = root.createDiv({ cls: 'mist-head' });
+        head.createEl('h3', { text: '笔记助手', cls: 'mist-title' });
+        const more = head.createEl('details', { cls: 'mist-more' });
         more.createEl('summary', { text: '更多', attr: { 'aria-label': '笔记助手更多功能' } });
-        const menu = more.createDiv({ cls: 'as-menu' });
-        for (const [label, action] of [
-            ['设置', () => { this.plugin.app.setting.open(); this.plugin.app.setting.openTabById(this.plugin.manifest.id); }],
-            ['处理记录', () => { this.workbenchPage = 'history'; this.render(); }],
-            ['批量整理', () => this.showBatchProcessingModal()],
-            ['自定义动作', () => this.showAtelierCustomActions()],
-            ['其他工具', () => { this.workbenchPage = 'tools'; this.render(); }]
-        ]) menu.createEl('button', { text: label }).onclick = () => { more.open = false; action(); };
-        const nav = root.createEl('nav', { cls:'aw-navigation', attr:{'aria-label':'笔记助手导航'} });
-        for (const [id,label] of [['prepare','处理'],['review','本篇建议'],['queue',`任务 · ${this.getNoteGroups().length}`],['settings','设置']]) {
-            const b = nav.createEl('button', { text:label, cls:'aw-nav-button', attr:{'aria-current':page===id?'page':'false'} });
-            b.onclick = () => { this.workbenchPage=id; this.render(); this.plugin.refreshAssistantViews?.(this); container.querySelector?.('[aria-current=page]')?.focus(); };
+        const menu = more.createDiv({ cls: 'mist-menu' });
+        for (const [label, action] of this.mistSecondaryEntries()) {
+            menu.createEl('button', { text: label }).onclick = () => { more.open = false; action(); };
         }
-        const body = root.createDiv({ cls:'aw-body' });
-        if(page==='settings'){const settings=new AiAssistantSettingTab(this.plugin.app,this.plugin);settings.containerEl=body.createDiv({cls:'sn-settings'});settings.display();return;}
-        if(page==='queue'){this.renderNoteQueue(body);return;}
-        const noteGroups=this.getNoteGroups();
-        if(page==='review'&&noteGroups.length&&(!this.selectedTaskId||noteGroups.some(g=>g.tasks.some(t=>t.id===this.selectedTaskId)))){const group=noteGroups.find(g=>g.tasks.some(t=>t.id===this.selectedTaskId))||noteGroups.at(-1);this.renderCurrentRequestBanner(body);this.renderNoteReview(body,group);return;}
-        if (page==='history') {
-            const history = body.createDiv({ cls:'at-history' });
-            const actions = history.createDiv({ cls:'at-history-actions' });
-            actions.createEl('button',{text:'回滚上次修改',cls:'aw-text-button'}).onclick=()=>this.plugin.rollbackLastChange();
-            actions.createEl('button',{text:'重新应用刚才的回滚',cls:'aw-text-button'}).onclick=()=>this.plugin.redoLastRollback();
-            if (!this.plugin.getRecentHistory().length) this.renderWorkbenchEmpty(history,'还没有处理记录','完成一次整理后，可以在这里找回笔记。');
+
+        // Only two places in daily use: choosing what to do, and reviewing what the AI proposed.
+        const pending = groups.filter(g => this.noteStatus(g) === '待确认').length;
+        const views = root.createEl('nav', { cls: 'mist-views', attr: { 'aria-label': '笔记助手视图' } });
+        for (const [id, label] of [['prepare', '整理'], ['review', pending ? `本篇建议 · ${pending}` : '本篇建议']]) {
+            const button = views.createEl('button', { text: label, cls: 'mist-view', attr: { 'aria-current': page === id ? 'page' : 'false' } });
+            button.onclick = () => { this.workbenchPage = id; this.render(); this.plugin.refreshAssistantViews?.(this); };
+        }
+
+        const body = root.createDiv({ cls: 'mist-body' });
+        if (!['prepare', 'review'].includes(page)) {
+            body.createEl('button', { text: '← 回到整理', cls: 'mist-back' }).onclick = () => { this.workbenchPage = 'prepare'; this.render(); };
+        }
+        if (page === 'settings') {
+            const settings = new AiAssistantSettingTab(this.plugin.app, this.plugin);
+            settings.containerEl = body.createDiv({ cls: 'mist-settings' });
+            settings.display();
+            return;
+        }
+        if (page === 'queue') { this.renderNoteQueue(body); return; }
+        if (page === 'history') {
+            const history = body.createDiv({ cls: 'mist-history' });
+            const actions = history.createDiv({ cls: 'mist-links' });
+            actions.createEl('button', { text: '回滚上次修改', cls: 'mist-link' }).onclick = () => this.plugin.rollbackLastChange();
+            actions.createEl('button', { text: '重新应用刚才的回滚', cls: 'mist-link' }).onclick = () => this.plugin.redoLastRollback();
+            if (!this.plugin.getRecentHistory().length) this.renderMistEmpty(history, '还没有处理记录', '完成一次整理后，可以在这里找回笔记。');
             else this.renderRecentHistory(history);
             return;
         }
-        if (page==='tools') {
-            const tools = body.createDiv({cls:'at-tools'});
+        if (page === 'tools') {
+            const tools = body.createDiv({ cls: 'mist-tools' });
             this.renderQuickActions(tools);
-            const diagnostics = tools.createEl('details',{cls:'ai-assistant-diagnostics'});
-            diagnostics.createEl('summary',{text:'使用情况与连接信息'});
+            const diagnostics = tools.createEl('details', { cls: 'ai-assistant-diagnostics' });
+            diagnostics.createEl('summary', { text: '使用情况与连接信息' });
             this.renderUsageStats(diagnostics); this.renderFileInfo(diagnostics); this.renderAIStatus(diagnostics);
             return;
         }
-        const surface = body.createDiv({cls:'at-surface'});
-        const docbar = surface.createDiv({cls:'at-docbar'});
-        const noteButton = docbar.createEl('button',{cls:'at-doc-picker',attr:{'aria-label':'选择要整理的笔记'}});
-        const noteLabel = noteButton.createDiv();
-        noteLabel.createEl('strong',{text:file?file.basename:'选择一篇笔记'});
-        noteLabel.createEl('small',{text:file?(file.parent?.path==='/'?'笔记库根目录':file.parent?.path||file.path):'打开或选择 Markdown 文件'});
-        noteButton.createSpan({text:'⌄',attr:{'aria-hidden':'true'}});
-        noteButton.onclick=()=>this.chooseAtelierNote();
-        docbar.createSpan({text:busy?'正在生成 · 原文未改':page==='review'?'预览后应用':'当前笔记',cls:'at-doc-status'});
-        if (page==='review') {
-            const review = surface.createDiv({cls:'at-review'});
-            this.renderCurrentRequestBanner(review);
-            if (!this.tasks.length) {
-                this.renderWorkbenchEmpty(review,this.workbenchRunning?'正在准备建议':'这里留给你的判断',this.workbenchRunning?'正在读取笔记和准备处理步骤。':'生成后集中查看标题、摘要、标签与归档建议。');
-                review.createEl('button',{text:'选择要整理的内容',cls:'aw-primary'}).onclick=()=>{this.workbenchPage='prepare';this.render()};
-            } else {
-                const task = this.tasks.find(t=>t.id===this.selectedTaskId)||this.tasks[this.tasks.length-1];
-                this.selectedTaskId=task.id;
-                const rail=review.createDiv({cls:'aw-result-switcher'});
-                rail.createEl('label',{text:'本次查看',attr:{for:'aw-result-select'}});
-                const select=rail.createEl('select',{attr:{id:'aw-result-select','aria-label':'选择处理结果'}});
-                for(const t of this.tasks) select.createEl('option',{value:t.id,text:`${t.status==='loading'?'生成中 · ':t.content?.applied?'已接受 · ':''}${t.title||'处理结果'}`});
-                select.value=task.id;
-                select.onchange=()=>{this.selectedTaskId=select.value;this.render();container.querySelector?.('#aw-result-select')?.focus()};
-                this.renderTask(review,task);
-            }
-        } else {
-            const side=surface.createDiv({cls:'at-assistant'});
-            this.renderAtelierPreparation(side,file,busy);
-        }
+        if (page === 'review') { this.renderMistReview(body, file, groups); return; }
+        this.renderMistPrepare(body, file, busy);
+    }
+
+    mistSecondaryEntries() {
+        return [
+            ['处理记录', () => { this.workbenchPage = 'history'; this.render(); }],
+            ['批量整理', () => this.showBatchProcessingModal()],
+            ['任务列表', () => { this.workbenchPage = 'queue'; this.render(); }],
+            ['自定义动作', () => this.showAtelierCustomActions()],
+            ['其他工具', () => { this.workbenchPage = 'tools'; this.render(); }],
+            ['设置', () => { this.plugin.app.setting.open(); this.plugin.app.setting.openTabById(this.plugin.manifest.id); }]
+        ];
     }
 
     getNoteGroups() {
@@ -554,138 +543,231 @@ class AssistantView extends ItemView {
 
     renderNoteQueue(container) {
         const groups = this.getNoteGroups();
-        container.createEl('h3', { text: '慢慢整理好', cls: 'sn-title' });
-        container.createEl('p', { text: `${groups.filter(g=>this.noteStatus(g)==='待确认').length} 篇待确认 · ${groups.filter(g=>this.noteStatus(g)==='已确认').length} 篇已确认 · ${groups.filter(g=>this.noteStatus(g)==='需重试').length} 篇需重试`, cls: 'sn-muted' });
-        container.createEl('button', { text: '＋ 批量整理笔记', cls: 'aw-text-button' }).onclick = () => this.showBatchProcessingModal();
+        const count = status => groups.filter(g => this.noteStatus(g) === status).length;
+        container.createEl('p', { text: `${count('待确认')} 篇待确认 · ${count('已确认')} 篇已确认 · ${count('需重试')} 篇需重试`, cls: 'mist-caption' });
+        container.createEl('button', { text: '＋ 批量整理笔记', cls: 'mist-link' }).onclick = () => this.showBatchProcessingModal();
         this.queueSelection ||= new Set();
         for (const group of groups) {
-            const row = container.createDiv({ cls: 'sn-queue-row' });
+            const row = container.createDiv({ cls: 'mist-queue-row' });
             const check = row.createEl('input', { type: 'checkbox', attr: { 'aria-label': `选择 ${group.file.basename}` } });
             check.checked = this.queueSelection.has(group.file.path);
             check.disabled = this.noteStatus(group) !== '待确认';
             check.onchange = () => { check.checked ? this.queueSelection.add(group.file.path) : this.queueSelection.delete(group.file.path); };
-            const copy = row.createDiv();
+            const copy = row.createDiv({ cls: 'mist-queue-name' });
             copy.createEl('strong', { text: group.file.basename });
             copy.createEl('small', { text: this.noteStatus(group) });
-            row.createEl('button', { text: '查看 ↗' }).onclick = () => { this.selectedTaskId = group.tasks.at(-1).id; this.workbenchPage = 'review'; this.render(); };
+            row.createEl('button', { text: '查看', cls: 'mist-link' }).onclick = () => { this.selectedTaskId = group.tasks.at(-1).id; this.workbenchPage = 'review'; this.render(); };
         }
-        if (!groups.length) container.createEl('p', { text: '生成的建议会按笔记集中在这里。', cls: 'sn-muted' });
+        if (!groups.length) this.renderMistEmpty(container, '还没有待确认的笔记', '生成的建议会按笔记集中在这里。');
         if (groups.length) {
-            const actions = container.createDiv({cls:'sn-actions'});
-            const apply = actions.createEl('button', { text:'接受勾选的笔记', cls:'aw-primary' });
+            const foot = container.createDiv({ cls: 'mist-foot' });
+            const apply = foot.createEl('button', { text: '接受勾选的笔记', cls: 'mist-primary' });
             apply.onclick = async () => {
-                if(this.noteApplying)return;
-                const chosen=groups.filter(g=>this.queueSelection.has(g.file.path)&&this.noteStatus(g)==='待确认');
-                if(!chosen.length){new Notice('先勾选要接受的笔记。');return;}
-                this.noteApplying=true;apply.disabled=true;let done=0;
-                try { for(const g of chosen){try{await this.plugin.applyNoteGroup(g,this.noteDraft(g));done++;}catch(e){new Notice(`${g.file.basename}：${e.message}`,6000);}} }
-                finally {this.noteApplying=false;this.queueSelection.clear();this.render();new Notice(`已确认 ${done} / ${chosen.length} 篇。`);}
+                if (this.noteApplying) return;
+                const chosen = groups.filter(g => this.queueSelection.has(g.file.path) && this.noteStatus(g) === '待确认');
+                if (!chosen.length) { new Notice('先勾选要接受的笔记。'); return; }
+                this.noteApplying = true; apply.disabled = true; let done = 0;
+                try {
+                    for (const g of chosen) {
+                        try { await this.plugin.applyNoteGroup(g, this.noteDraft(g)); done++; }
+                        catch (e) { new Notice(`${g.file.basename}：${e.message}`, 6000); }
+                    }
+                } finally { this.noteApplying = false; this.queueSelection.clear(); this.render(); new Notice(`已确认 ${done} / ${chosen.length} 篇。`); }
             };
         }
-        for(const task of this.tasks.filter(t=>t.type==='batch-process'&&t.content?.canInterrupt)) this.renderTask(container,task);
+        for (const task of this.tasks.filter(t => t.type === 'batch-process' && t.content?.canInterrupt)) this.renderTask(container, task);
     }
 
-    renderNoteReview(container, group) {
-        const draft=this.noteDraft(group),suggestions=group.tasks.filter(t=>t.type==='one-click').at(-1)?.content.suggestions||{};
-        const done=this.noteStatus(group)==='已确认';
-        const nav=container.createDiv({cls:'sn-review-nav'});
-        nav.createEl('button',{text:'← 全部任务'}).onclick=()=>{this.workbenchPage='queue';this.render();};
-        nav.createSpan({text:this.noteStatus(group),cls:'sn-muted'});
-        container.createEl('h3',{text:group.file.basename,cls:'sn-title'});
-        container.createEl('p',{text:'建议集中在这里，可直接改写。',cls:'sn-muted'});
-        const section=(key,title,cls)=>{
-            const el=container.createDiv({cls:`sn-section ${cls||''}`}),label=el.createEl('label',{cls:'sn-section-label'});
-            const check=label.createEl('input',{type:'checkbox'});check.checked=draft[key];check.disabled=done||!!this.noteApplying;
-            label.createSpan({text:title});check.onchange=()=>{draft[key]=check.checked;};return el;
+    // The note this panel is about: shown on both pages so the user always knows what will change.
+    renderMistNote(container, file, allowSwap = true) {
+        const note = container.createDiv({ cls: 'mist-note' });
+        note.createDiv({ cls: 'mist-note-glyph', attr: { 'aria-hidden': 'true' } });
+        const copy = note.createDiv({ cls: 'mist-note-copy' });
+        copy.createEl('strong', { text: file ? file.basename : '选择一篇笔记' });
+        copy.createEl('small', { text: file ? (file.parent?.path === '/' ? '笔记库根目录' : (file.parent?.path || file.path)) : '打开或选择 Markdown 文件' });
+        if (allowSwap) note.createEl('button', { text: '换一篇', cls: 'mist-link', attr: { 'aria-label': '选择要整理的笔记' } }).onclick = () => this.chooseAtelierNote();
+    }
+
+    renderMistEmpty(container, title, text) {
+        const empty = container.createDiv({ cls: 'mist-empty' });
+        empty.createEl('strong', { text: title });
+        empty.createEl('p', { text });
+    }
+
+    renderMistPrepare(body, file, busy) {
+        const chosen = this.sessionActions || this.plugin.settings.oneClickProcessActions || {};
+        const actions = [['meta', '标题与摘要', '补全笔记属性'], ['tagger', '标签', '连接已有分类'], ['mover', '归档', '建议存放位置'], ['structurizer', '整理正文', '梳理段落与标题'], ['furigana', '假名', '给日文加读音']];
+        this.renderMistNote(body, file);
+        body.createEl('p', { text: '想做什么', cls: 'mist-label' });
+        const list = body.createDiv({ cls: 'mist-acts', attr: { role: 'group', 'aria-label': '选择处理功能' } });
+        for (const [key, label, hint] of actions) {
+            const on = !!chosen[key];
+            const pill = list.createEl('button', { cls: on ? 'mist-act is-on' : 'mist-act', attr: { 'data-action': key, 'aria-pressed': String(on), title: hint } });
+            pill.createSpan({ text: label });
+            if (key === 'mover') pill.createEl('small', { text: '建议放哪' });
+            pill.onclick = () => { this.sessionActions = { ...chosen, [key]: !on }; this.render(); };
+        }
+        const ask = body.createEl('label', { cls: 'mist-ask' });
+        ask.createSpan({ text: '补充一句（可不填）' });
+        const input = ask.createEl('textarea', { attr: { rows: '2', placeholder: '例如：标签尽量用库里已有的', 'aria-label': '补充要求' } });
+        input.value = this.sessionInstruction || '';
+        input.oninput = () => { this.sessionInstruction = input.value; };
+
+        const selected = actions.filter(([key]) => chosen[key]);
+        const go = body.createDiv({ cls: 'mist-go' });
+        go.createEl('small', { text: !file ? '先打开一篇 Markdown 笔记' : selected.length ? '结果集中在这篇，原文先不动' : '至少选一件事', cls: 'mist-caption' });
+        const run = go.createEl('button', { text: busy ? '正在生成…' : '生成建议 →', cls: 'mist-primary', attr: { 'aria-label': '为当前笔记生成修改建议' } });
+        run.disabled = !file || !selected.length || busy;
+        run.onclick = async () => {
+            if (this.workbenchRunning || !file) return;
+            this.workbenchRunning = true; this.workbenchCancelled = false; this.workbenchPage = 'review';
+            this.render(); this.plugin.refreshAssistantViews?.(this);
+            try { await this.plugin.runOneClickSmartProcess(file, { ...chosen }, () => this.workbenchCancelled, this.sessionInstruction || ''); }
+            finally { this.workbenchRunning = false; this.render(); this.plugin.refreshAssistantViews?.(this); }
         };
-        if(suggestions.meta){
-            const el=section('useMeta','标题与摘要','sn-paper');
-            for(const [key,label] of [['title','标题'],['summary','摘要'],['tldr','一句话总结']]){
-                const wrap=el.createEl('label',{cls:`sn-field sn-field-${key}`});wrap.createSpan({text:label});
-                const input=wrap.createEl('textarea',{cls:'sn-edit',attr:{rows:key==='title'?'2':'3'}});input.value=draft.meta[key]||'';input.disabled=done;
-                input.oninput=()=>{draft.meta[key]=input.value;};
+        if (busy) this.renderCurrentRequestBanner(body);
+
+        const quiet = body.createDiv({ cls: 'mist-links mist-quiet' });
+        for (const [label, action] of this.mistSecondaryEntries().filter(([label]) => ['处理记录', '批量整理', '自定义动作', '设置'].includes(label))) {
+            quiet.createEl('button', { text: label, cls: 'mist-link' }).onclick = action;
+        }
+    }
+
+    renderMistReview(body, file, groups) {
+        this.renderCurrentRequestBanner(body);
+        const loose = this.tasks.filter(t => !groups.some(g => g.tasks.includes(t)));
+        const selectedLoose = loose.find(t => t.id === this.selectedTaskId);
+        const group = selectedLoose ? null
+            : groups.find(g => g.tasks.some(t => t.id === this.selectedTaskId)) || groups.find(g => file && g.file.path === file.path) || groups.at(-1);
+        if (group) { this.renderMistNoteReview(body, group, groups); return; }
+        if (loose.length) {
+            // Results from single tools and custom actions keep their own cards.
+            const task = selectedLoose || loose.at(-1);
+            this.selectedTaskId = task.id;
+            if (loose.length > 1) {
+                const select = body.createEl('select', { cls: 'mist-select', attr: { 'aria-label': '选择处理结果' } });
+                for (const t of loose) select.createEl('option', { value: t.id, text: `${t.status === 'loading' ? '生成中 · ' : t.content?.applied ? '已接受 · ' : ''}${t.title || '处理结果'}` });
+                select.value = task.id;
+                select.onchange = () => { this.selectedTaskId = select.value; this.render(); };
             }
-            const rename=el.createEl('label',{cls:'sn-rename'}),check=rename.createEl('input',{type:'checkbox'});check.checked=draft.rename;check.disabled=done;
-            rename.createSpan({text:'同时用标题重命名文件'});check.onchange=()=>{draft.rename=check.checked;};
+            this.renderTask(body, task);
+            return;
         }
-        if(suggestions.tags?.length){
-            const el=section('useTags','标签','sn-tags'),flow=el.createDiv({cls:'sn-tag-flow'});
-            for(const tag of suggestions.tags){const value=tag.final||tag.display||tag,label=flow.createEl('label',{cls:'sn-tag'}),check=label.createEl('input',{type:'checkbox'});check.checked=draft.tags.includes(value);check.disabled=done;label.createSpan({text:value});check.onchange=()=>{draft.tags=check.checked?[...new Set([...draft.tags,value])]:draft.tags.filter(t=>t!==value);};}
-        }
-        if(suggestions.mover?.length){
-            const el=section('useFolder','归档','sn-path');el.createEl('small',{text:`从 ${group.file.parent?.path||'/'}`,cls:'sn-muted'});
-            const select=el.createEl('select',{attr:{'aria-label':'目标文件夹'}});
-            const paths=[...new Set([...suggestions.mover.map(v=>v.path),...this.plugin.app.vault.getAllLoadedFiles().filter(f=>f.children).map(f=>f.path)])];
-            for(const path of paths)select.createEl('option',{value:path,text:path});select.value=draft.folder;select.disabled=done;select.onchange=()=>{draft.folder=select.value;};
-        }
-        const diffs=group.tasks.filter(t=>t.type==='diff-preview'&&!t.content.applied&&!t.content.noteApplied);
-        if(diffs.length&&!done){
-            const el=container.createDiv({cls:'sn-section sn-body-choice'});
-            el.createEl('p',{text:'正文 · 在主编辑区查看整文',cls:'sn-muted'});
-            const select=el.createEl('select',{attr:{'aria-label':'选择正文版本'}});select.createEl('option',{value:'',text:'保留当前正文'});
-            for(const task of diffs)select.createEl('option',{value:task.id,text:task.content.action||task.title});select.value=draft.diffId;
-            select.onchange=()=>{draft.diffId=select.value;};
-            el.createEl('button',{text:'打开整文预览 ↗',cls:'aw-text-button'}).onclick=()=>{const task=diffs.find(t=>t.id===draft.diffId);if(task)this.plugin.openNotePreview(task);else new Notice('先选择一个正文版本。');};
-            if(diffs.length>1)el.createEl('small',{text:'多个正文版本分别生成，选择一个应用，避免相互覆盖。',cls:'sn-muted'});
-        }
-        const error=group.tasks.at(-1)?.type==='error'?group.tasks.at(-1):null;
-        if(error){container.createEl('p',{text:error.content.message,cls:'sn-muted'});container.createEl('button',{text:'重新生成本篇建议'}).onclick=async()=>{if(this.workbenchRunning)return;this.workbenchRunning=true;try{await this.plugin.runOneClickSmartProcess(group.file);}finally{this.workbenchRunning=false;this.render();}};}
-        const actions=container.createDiv({cls:'sn-actions'});
-        const accept=actions.createEl('button',{text:done?'撤销本篇修改':'确认这篇笔记 →',cls:'aw-primary'});accept.disabled=!!this.noteApplying||!!this.workbenchRunning;
-        accept.onclick=async()=>{
-            if(this.noteApplying)return;this.noteApplying=true;accept.disabled=true;
-            try{if(done)await this.plugin.undoNoteGroup(group);else await this.plugin.applyNoteGroup(group,draft);
-                if(!done&&this.plugin.settings.sidebarAutoNext!==false){const next=this.getNoteGroups().find(g=>g.file!==group.file&&this.noteStatus(g)==='待确认');if(next)this.selectedTaskId=next.tasks.at(-1).id;}
-            }catch(e){new Notice(e.message,7000);}finally{this.noteApplying=false;this.render();this.plugin.refreshAssistantViews?.(this);}
-        };
-        actions.createEl('button',{text:'稍后处理',cls:'aw-text-button'}).onclick=()=>{this.workbenchPage='queue';this.render();};
+        this.renderMistEmpty(body, this.workbenchRunning ? '正在准备建议' : '这里会出现这篇的建议', this.workbenchRunning ? '正在读取笔记，原文不会被改动。' : '在“整理”里选好要做的事，生成后集中在这里确认。');
+        if (!this.workbenchRunning) body.createEl('button', { text: '去整理', cls: 'mist-link' }).onclick = () => { this.workbenchPage = 'prepare'; this.render(); };
     }
 
-    renderAtelierDocument(container,file) {
-        container.createDiv({text:'原文 · Markdown',cls:'aw-eyebrow'});
-        container.createEl('h3',{text:file?file.basename:'从一篇笔记开始',cls:'at-document-title'});
-        const preview=container.createDiv({cls:'at-markdown markdown-rendered'});
-        if(!file){preview.createEl('p',{text:'打开一篇笔记，即可生成整理建议。'});return;}
-        if(!this.plugin.app.vault?.read)return;
-        const version=this.documentRenderVersion=(this.documentRenderVersion||0)+1;
-        preview.createEl('p',{text:'正在读取笔记…',cls:'aw-caption'});
-        this.plugin.app.vault.read(file).then(async raw=>{
-            if(version!==this.documentRenderVersion||preview.isConnected===false)return;
-            preview.empty();
-            // The preview uses Obsidian's renderer, so links, lists and code retain native behavior.
-            const cache=this.plugin.app.metadataCache?.getFileCache(file);
-            const start=cache?.frontmatter?.position?.end?.offset;
-            const body=typeof start==='number'?raw.slice(start).trimStart():raw;
-            if(MarkdownRenderer?.render)await MarkdownRenderer.render(this.plugin.app,body,preview,file.path,this);
-            else preview.createEl('pre',{text:body});
-        }).catch(()=>{if(version===this.documentRenderVersion){preview.empty();preview.createEl('p',{text:'暂时无法读取这篇笔记，请重新选择文件。',cls:'aw-caption'})}});
-    }
+    renderMistNoteReview(body, group, groups) {
+        const draft = this.noteDraft(group);
+        const suggestions = group.tasks.filter(t => t.type === 'one-click').at(-1)?.content.suggestions || {};
+        const status = this.noteStatus(group);
+        const done = status === '已确认';
+        this.renderMistNote(body, group.file, false);
+        const others = groups.filter(g => g !== group && this.noteStatus(g) === '待确认').length;
+        const state = body.createDiv({ cls: 'mist-state' });
+        state.createSpan({ text: done ? '已确认 · 可以撤销' : status === '需重试' ? '生成失败 · 原文没有改动' : '建议已生成 · 原文还没改', cls: done ? 'mist-dot is-done' : 'mist-dot' });
+        if (others) state.createEl('button', { text: `还有 ${others} 篇`, cls: 'mist-link' }).onclick = () => { this.workbenchPage = 'queue'; this.render(); };
 
-    renderAtelierPreparation(side,file,busy) {
-        const chosen=this.sessionActions||this.plugin.settings.oneClickProcessActions||{};
-        const actions=[['meta','标题与摘要','补全笔记属性'],['tagger','标签','连接已有分类'],['mover','归档','建议存放位置'],['structurizer','整理正文','梳理段落与标题'],['furigana','假名','辅助日文阅读']];
-        const options=side.createDiv({cls:'aw-options as-action-list',attr:{'role':'group','aria-label':'选择处理功能'}});
-        options.createEl('p',{text:'选择处理功能',cls:'as-section-label'});
-        for(const [key,label,desc] of actions){
-            const row=options.createEl('label',{cls:'aw-option'});
-            const check=row.createEl('input',{type:'checkbox',attr:{'data-action':key}});check.checked=!!chosen[key];
-            const text=row.createSpan();text.createSpan({text:label});text.createEl('small',{text:desc});
-            row.toggleClass('is-selected', check.checked);
-            check.onchange=()=>{this.sessionActions={...chosen,[key]:check.checked};this.sessionPreset='custom';this.workbenchOptionsOpen=true;this.render();this.containerEl.children[1].querySelector?.(`[data-action=${key}]`)?.focus()};
-        }
-        const start=side.createDiv({cls:'aw-start'});
-        const selected=actions.filter(([key])=>chosen[key]);
-        if(!selected.length)start.createEl('p',{text:'请至少选择一个功能。',cls:'at-selected-steps'});
-        const run=start.createEl('button',{text:busy?'正在生成建议…':'生成修改建议 →',cls:'aw-primary',attr:{'aria-label':'为当前笔记生成修改建议'}});
-        run.disabled=!file||!selected.length||busy;
-        run.onclick=async()=>{
-            if(this.workbenchRunning||!file)return;
-            this.workbenchRunning=true;this.workbenchCancelled=false;this.workbenchPage='review';this.render();this.plugin.refreshAssistantViews?.(this);
-            try{await this.plugin.runOneClickSmartProcess(file,{...chosen},()=>this.workbenchCancelled)}
-            finally{this.workbenchRunning=false;this.render();this.plugin.refreshAssistantViews?.(this)}
+        const part = (key, title, hint) => {
+            const el = body.createDiv({ cls: 'mist-part' });
+            const toggle = el.createEl('button', { cls: draft[key] ? 'mist-part-head is-on' : 'mist-part-head', attr: { 'aria-pressed': String(!!draft[key]) } });
+            toggle.createSpan({ text: draft[key] ? '✓' : '', cls: 'mist-tick', attr: { 'aria-hidden': 'true' } });
+            toggle.createSpan({ text: title });
+            if (hint) toggle.createEl('small', { text: hint });
+            toggle.disabled = done || !!this.noteApplying;
+            toggle.onclick = () => { draft[key] = !draft[key]; this.render(); };
+            return el;
         };
-        start.createEl('p',{text:'建议按笔记集中确认，正文可在主编辑区预览。',cls:'aw-caption'});
-        if(busy)start.createEl('button',{text:'查看生成进度',cls:'aw-text-button'}).onclick=()=>{this.workbenchPage='review';this.render()};
+        if (suggestions.meta) {
+            const paper = part('useMeta', '标题与摘要', '可以直接改').createDiv({ cls: 'mist-paper' });
+            for (const [key, label] of [['title', '标题'], ['summary', '摘要'], ['tldr', '一句话总结']]) {
+                const input = paper.createEl('textarea', { cls: `mist-edit mist-edit-${key}`, attr: { rows: key === 'title' ? '1' : '2', 'aria-label': label, placeholder: label } });
+                input.value = draft.meta[key] || ''; input.disabled = done;
+                input.oninput = () => { draft.meta[key] = input.value; };
+            }
+            const rename = paper.createEl('label', { cls: 'mist-rename' });
+            const check = rename.createEl('input', { type: 'checkbox' }); check.checked = draft.rename; check.disabled = done;
+            rename.createSpan({ text: '同时用标题重命名文件' });
+            check.onchange = () => { draft.rename = check.checked; };
+        }
+        if (suggestions.tags?.length) {
+            const chips = part('useTags', '标签', '点一下去掉').createDiv({ cls: 'mist-chips' });
+            for (const tag of suggestions.tags) {
+                const value = tag.final || tag.display || tag;
+                const kept = draft.tags.includes(value);
+                const chip = chips.createEl('button', { text: `#${value}`, cls: kept ? 'mist-chip' : 'mist-chip is-off', attr: { 'aria-pressed': String(kept) } });
+                chip.disabled = done;
+                chip.onclick = () => { draft.tags = kept ? draft.tags.filter(t => t !== value) : [...draft.tags, value]; this.render(); };
+            }
+        }
+        if (suggestions.mover?.length) {
+            const el = part('useFolder', '归档');
+            const path = el.createDiv({ cls: 'mist-path' });
+            path.createSpan({ text: `${group.file.parent?.path || '/'}/`.replace('//', '/'), cls: 'mist-from' });
+            path.createSpan({ text: '→', attr: { 'aria-hidden': 'true' } });
+            path.createSpan({ text: draft.folder, cls: 'mist-to' });
+            const alts = suggestions.mover.map(v => v.path).filter(p => p && p !== draft.folder);
+            if (alts.length && !done) {
+                const row = el.createDiv({ cls: 'mist-alts' });
+                row.createSpan({ text: '也可以放：' });
+                for (const p of alts) row.createEl('button', { text: p, cls: 'mist-alt' }).onclick = () => { draft.folder = p; this.render(); };
+            }
+            if (!done) {
+                const other = el.createEl('select', { cls: 'mist-select', attr: { 'aria-label': '其他文件夹' } });
+                other.createEl('option', { value: '', text: '其他文件夹…' });
+                for (const f of this.plugin.app.vault.getAllLoadedFiles().filter(f => f.children)) other.createEl('option', { value: f.path, text: f.path });
+                other.onchange = () => { if (other.value) { draft.folder = other.value; this.render(); } };
+            }
+        }
+        const diffs = group.tasks.filter(t => t.type === 'diff-preview' && !t.content.applied && !t.content.noteApplied);
+        if (diffs.length && !done) {
+            const el = body.createDiv({ cls: 'mist-part' });
+            const head = el.createDiv({ cls: 'mist-part-head is-static' });
+            head.createSpan({ text: draft.diffId ? '✓' : '', cls: 'mist-tick' });
+            head.createSpan({ text: '正文' });
+            const note = el.createDiv({ cls: 'mist-body-note' });
+            if (diffs.length > 1 || !draft.diffId) {
+                const select = note.createEl('select', { cls: 'mist-select', attr: { 'aria-label': '选择正文版本' } });
+                select.createEl('option', { value: '', text: '保留当前正文' });
+                for (const task of diffs) select.createEl('option', { value: task.id, text: task.content.action || task.title });
+                select.value = draft.diffId;
+                select.onchange = () => { draft.diffId = select.value; this.render(); };
+            } else {
+                note.createSpan({ text: diffs[0].content.action || diffs[0].title || '已生成整理后的正文' });
+            }
+            note.createEl('button', { text: '在左边看 ↗', cls: 'mist-link is-strong' }).onclick = () => {
+                const task = diffs.find(t => t.id === draft.diffId);
+                if (task) this.plugin.openNotePreview(task); else new Notice('先选择一个正文版本。');
+            };
+        }
+        const error = group.tasks.at(-1)?.type === 'error' ? group.tasks.at(-1) : null;
+        if (error) {
+            body.createEl('p', { text: error.content.message, cls: 'mist-caption' });
+            body.createEl('button', { text: '重新生成本篇建议', cls: 'mist-link is-strong' }).onclick = async () => {
+                if (this.workbenchRunning) return;
+                this.workbenchRunning = true;
+                try { await this.plugin.runOneClickSmartProcess(group.file); } finally { this.workbenchRunning = false; this.render(); }
+            };
+        }
+        const count = [draft.useMeta && suggestions.meta, draft.useTags && draft.tags.length, draft.useFolder && suggestions.mover?.length, draft.diffId].filter(Boolean).length;
+        const foot = body.createDiv({ cls: 'mist-foot' });
+        foot.createEl('button', { text: '稍后再看', cls: 'mist-link' }).onclick = () => { this.workbenchPage = 'queue'; this.render(); };
+        const accept = foot.createEl('button', { text: done ? '撤销这篇' : `确认这篇 · ${count} 项`, cls: done ? 'mist-primary is-quiet' : 'mist-primary' });
+        accept.disabled = !!this.noteApplying || !!this.workbenchRunning || (!done && !count);
+        accept.onclick = async () => {
+            if (this.noteApplying) return;
+            this.noteApplying = true; accept.disabled = true;
+            try {
+                if (done) await this.plugin.undoNoteGroup(group);
+                else await this.plugin.applyNoteGroup(group, draft);
+                if (!done && this.plugin.settings.sidebarAutoNext !== false) {
+                    const next = this.getNoteGroups().find(g => g.file !== group.file && this.noteStatus(g) === '待确认');
+                    if (next) this.selectedTaskId = next.tasks.at(-1).id;
+                }
+            } catch (e) { new Notice(e.message, 7000); }
+            finally { this.noteApplying = false; this.render(); this.plugin.refreshAssistantViews?.(this); }
+        };
+        if (!done) body.createEl('p', { text: '确认后可以一键撤销', cls: 'mist-caption' });
     }
 
     chooseAtelierNote() {
@@ -4370,7 +4452,22 @@ class AiAssistantSuite extends Plugin {
         }
     }
 
-    async runOneClickSmartProcess(targetFile = null, selectedActions = null, shouldStop = () => false) {
+    // The sidebar passes the user's one-line request; every prompt built during this run includes it.
+    async runOneClickSmartProcess(targetFile = null, selectedActions = null, shouldStop = () => false, instruction = '') {
+        this.currentUserInstruction = String(instruction || '').trim();
+        try {
+            return await this.runOneClickSmartProcessSteps(targetFile, selectedActions, shouldStop);
+        } finally {
+            this.currentUserInstruction = '';
+        }
+    }
+
+    userInstructionBlock() {
+        if (!this.currentUserInstruction) return '';
+        return `\n\n**用户的补充要求（在不编造内容的前提下优先遵守）:**\n${this.currentUserInstruction}`;
+    }
+
+    async runOneClickSmartProcessSteps(targetFile = null, selectedActions = null, shouldStop = () => false) {
         const app = this.app;
         let currentFile = targetFile || app.workspace.getActiveFile();
 
@@ -4472,7 +4569,7 @@ ${oneClickProcessActions.meta ? this.getMetaTaskDescription(hasExistingSummary, 
 \`\`\`json
 ${JSON.stringify(jsonStructure, null, 2)}
 \`\`\`
-${contextForPrompt}
+${contextForPrompt}${this.userInstructionBlock()}
 
 **需要处理的文本如下：**
 \n\n${contentToProcess}`;
@@ -4687,7 +4784,7 @@ ${content}
     }
 
     getStructurizerPrompt(contentToProcess) {
-        return this.settings.structurizerPrompt.replace('{{content}}', contentToProcess);
+        return this.settings.structurizerPrompt.replace('{{content}}', contentToProcess) + this.userInstructionBlock();
     }
 
     getFuriganaPrompt(contentToProcess) {
