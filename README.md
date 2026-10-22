@@ -1,515 +1,56 @@
-# 🤖 AI Assistant Suite
+# AI Assistant Suite
 
-> 一个全面的AI驱动的Obsidian笔记处理套件，让你的笔记管理更智能、更高效
+An Obsidian plugin that lets an AI **propose** changes to a note — tags, metadata, structure, the folder it belongs in, furigana for Japanese — while the person decides what is applied.
 
-[![Version](https://img.shields.io/badge/version-1.3.6-blue.svg)](https://github.com/your-repo/ai-assistant-suite)
-[![Obsidian](https://img.shields.io/badge/Obsidian-1.2.0+-purple.svg)](https://obsidian.md/)
-[![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+一个 Obsidian 插件：AI 只负责**提议**（标签、元数据、结构、该放哪个文件夹、日文假名），改不改由人决定。
 
-## 🌟 最新更新 (v1.3.6)
+## The problem / 解决什么问题
 
-### 🎨 **界面优化**
-- **文件选择界面重构**：解决文字重叠问题，增加间距和层次感
-- **Prompt编辑器增强**：支持Markdown预览模式，占位符高亮显示
-- **响应式设计**：更好的移动端和小屏幕适配
+My notes grew faster than I could tidy them: inconsistent tags, no summaries, notes in the wrong folder. Doing it by hand was slow; letting an AI rewrite notes directly was risky, because it could silently change what I wrote.
 
-### 🔧 **功能增强**
-- **处理历史持久化**：修复总处理次数清零问题，数据永久保存
-- **智能文件选择**：优化批量处理文件选择体验
-- **文件夹全选优化**：支持文件夹级别的批量选择操作
+笔记越来越多，标签不统一、没有摘要、放错文件夹。手工整理太慢，直接让 AI 改又怕它悄悄改掉我写的内容。
 
-### 📊 **数据管理**
-- **统计数据保护**：使用插件设置存储，不再依赖localStorage
-- **历史记录扩容**：支持100条历史记录，提供更丰富的使用分析
-- **自动数据迁移**：无缝从旧版本升级，保护用户数据
+## Design choices / 设计取舍
 
-## ✨ 核心功能概览
+| Choice | Why | Cost |
+|---|---|---|
+| AI results go to a review panel, never straight into the note | The person keeps the final say | One extra click per change |
+| Full-document preview is the default view | Comparing changes line by line did not show how the whole note would look | Long notes take more screen space |
+| Folder and tag suggestions come as several options | Filing is a judgement call; the AI offers candidates, the person picks | The AI's top choice is not applied automatically |
+| Batch results are grouped per note, one note at a time | Batch runs produced many scattered result cards | Reviewing a whole batch still takes time |
+| Before writing, the note is compared with the version the AI saw | If the note changed meanwhile, the write stops instead of overwriting new text | The user may need to regenerate |
+| Undo / redo for every applied change | Mistakes are cheap to reverse | Snapshots are stored in plugin data |
+| Several API configurations with automatic fallback (OpenAI-compatible, DeepSeek, Gemini); the one that answered last is tried first; every request has a timeout | One provider being down or silent should not block the work | The same note may be sent to a second provider; the plugin shows a notice when that happens |
 
-**AI Assistant Suite** 是一个强大的Obsidian插件，集成了完整的AI笔记处理生态系统，提供从内容优化到文件管理的全方位智能化解决方案。
+## Install / 安装
 
-### 🎯 五大核心功能模块
+1. Copy `main.js`, `manifest.json` and `styles.css` into `<vault>/.obsidian/plugins/ai-assistant-suite/`.
+2. Enable **AI Assistant Suite** in Settings → Community plugins.
+3. In the plugin settings, add at least one API configuration (provider, key, model). Keys are stored in this vault's plugin data; do not commit `data.json` to Git.
 
-#### 📝 AI Structurizer (结构优化器)
-- **智能重排与格式化**：优化笔记的逻辑结构和可读性
-- **保留原始措辞**：不重写内容，只重新组织和格式化
-- **链接保护**：完美处理Obsidian链接和嵌入内容
-- **Markdown增强**：自动添加标题、列表、粗体等格式
-- **选择性处理**：支持选中文本的局部优化
+No build step: `main.js` is the source.
 
-#### 🏷️ AI Tagger (智能标签)
-- **层级标签系统**：生成符合你现有标签体系的层级标签
-- **智能翻译**：自动翻译长英文标签为中文
-- **上下文感知**：基于笔记内容智能推荐相关标签
-- **批量标签管理**：支持选择性添加多个标签
-- **标签数量可配置**：自定义生成标签的数量
+## Two-minute demo / 两分钟演示
 
-#### 📁 AI Mover (智能移动)
-- **文件夹智能推荐**：基于内容分析推荐最佳存放位置
-- **自动创建文件夹**：可以创建新的文件夹结构
-- **现有结构感知**：优先使用现有文件夹，保持组织一致性
-- **多选项建议**：提供多个移动选项供选择
-- **✨ 自定义位置选择**：除AI建议外，可手动浏览选择任意文件夹
-- **文件夹过滤**：支持忽略特定文件夹
+Use a test vault, not your daily vault.
 
-#### 📋 AI Meta (元数据生成)
-- **智能标题生成**：创建简洁有力的文件标题
-- **自动摘要**：生成2-3句话的内容摘要
-- **一句话总结**：提供25字以内的核心要点
-- **文件重命名**：可选择是否根据生成的标题重命名文件
-- **✨ 可编辑元数据**：在侧边栏直接编辑AI生成的标题、摘要和总结
-- **🔍 智能字段检测**：自动检测已有的summary/tldr字段，避免重复生成
-- **文件名长度控制**：可配置生成文件名的最大长度
+1. Open a messy note → command **Run AI Suite: Tag current note**.
+2. The suggestions appear in the side panel; accept only some of them.
+3. Edit the note, then try to apply an old suggestion → the plugin refuses and asks to regenerate.
+4. Undo the last applied change.
+5. Run a batch on a folder → review the results note by note.
 
-#### ⚡ AI Quick Actions (快速操作)
-- **📝 智能总结**：对选中内容进行简洁总结
-- **✨ 内容优化**：优化文本表达方式和结构
-- **快捷键支持**：`Ctrl+Shift+S`总结，`Ctrl+Shift+O`优化
+## Development / 开发
 
-### 🚀 一键智能处理
-- **组合式处理**：一次性执行多个AI模块
-- **可配置流程**：自由选择启用的处理步骤
-- **智能优化顺序**：先结构优化，再进行其他处理
-- **快捷键支持**：`Cmd/Ctrl + Shift + A` 快速启动
-- **进度显示**：实时显示处理进度和状态
-
-### 📦 批量处理系统
-- **✨ 智能文件选择**：优先推荐当前文件所在文件夹的文件
-- **📁 文件夹浏览**：手动浏览其他文件夹选择文件
-- **🎯 文件夹全选**：支持文件夹级别的批量选择操作
-- **📋 选择状态管理**：清晰显示已选文件数量和状态
-- **🔄 进度监控**：实时显示处理进度和状态
-- **⏸️ 中断恢复**：支持随时中断和恢复处理
-- **📊 批量统计**：显示批量处理的详细统计信息
-
-### 🎨 智能用户界面
-- **AI助手面板**：统一的操作和结果展示界面
-- **📱 响应式设计**：适配不同屏幕尺寸，优化移动端体验
-- **🎯 实时状态监控**：显示API状态、模型信息、性能数据
-- **📚 处理历史记录**：查看最近的AI处理历史，支持100条记录
-- **📊 使用统计分析**：统计各功能使用频率，提供数据洞察
-- **📄 文件信息展示**：显示当前文件的字数、字符数等详细信息
-- **🎨 界面优化**：解决文字重叠问题，增加间距和层次感
-
-### 🛠️ 高级设置与定制
-- **🎨 Prompt编辑器**：支持Markdown预览模式，占位符高亮显示
-- **⚙️ 模型配置**：支持主模型和辅助模型分别配置
-- **🔧 参数调优**：可调整各模块的生成参数
-- **📁 文件夹管理**：配置忽略文件夹，自定义文件组织规则
-- **🌐 多语言支持**：标签翻译，支持多种目标语言
-- **💾 数据管理**：设置导入导出，数据备份恢复
-
-## 🛠️ 安装与配置
-
-### 安装方法
-
-#### 方法一：手动安装
-1. 下载最新版本的插件文件 (v1.3.6)
-2. 解压到 `.obsidian/plugins/ai-assistant-suite/` 目录
-3. 在Obsidian设置中启用插件
-
-#### 方法二：BRAT安装
-1. 安装BRAT插件
-2. 添加仓库地址：`your-repo/ai-assistant-suite`
-3. 安装并启用插件
-
-### 基础配置
-
-#### 1. API设置 (必需)
-```
-API Key: 填入你的AI服务API密钥
-API URL: https://your-ai-service.com/v1/chat/completions
-主模型: gemini-2.5-pro (高质量处理)
-辅助模型: gemini-2.5-flash (快速操作)
-```
-
-#### 2. 功能配置
-- **一键处理配置**：选择启用的AI模块
-- **标签设置**：配置标签翻译和生成数量
-- **文件夹设置**：设置忽略的文件夹
-- **元数据设置**：配置文件名长度限制
-
-#### 3. 高级设置
-- **Prompt定制**：使用Markdown预览编辑器自定义提示词
-- **性能优化**：配置并发请求数量和缓存策略
-- **数据管理**：设置历史记录保留数量和备份策略
-
-## 🎮 使用指南
-
-### 基本使用流程
-
-1. **打开AI助手面板**
-   - 点击左侧工具栏的锚点图标
-   - 或使用快捷键 `Cmd/Ctrl + Alt + A`
-
-2. **选择处理方式**
-   - **单模块处理**：使用命令面板或快捷键
-   - **一键处理**：在助手面板中配置并点击🚀运行
-   - **快速操作**：使用快捷键执行总结和优化
-   - **批量处理**：在助手面板中选择批量处理
-
-3. **查看和应用结果**
-   - 在助手面板中查看AI处理结果
-   - **✨ 编辑元数据**：直接在输入框中修改AI生成的标题、摘要和总结
-   - 选择性应用建议的修改
-
-### 快捷键列表
-
-| 功能 | 快捷键 | 说明 |
-|------|--------|------|
-| 打开/关闭助手面板 | `Cmd/Ctrl + Alt + A` | 切换AI助手面板显示 |
-| 一键智能处理 | `Cmd/Ctrl + Shift + A` | 执行完整的AI处理流程 |
-| 快速总结 | `Ctrl + Shift + S` | 对选中内容进行总结 |
-| 快速优化 | `Ctrl + Shift + O` | 优化选中文本的表达 |
-
-## 🎯 核心特性详解
-
-### 🎨 Prompt编辑器增强
-
-#### Markdown预览模式
-- **双模式切换**：编辑模式和预览模式一键切换
-- **实时渲染**：编辑时预览内容同步更新
-- **占位符高亮**：`{{content}}`、`{{count}}`等占位符自动高亮显示
-- **语法支持**：支持粗体、斜体、代码块等基础Markdown语法
-
-#### 使用体验
-```
-┌─────────────────────────────────────────┐
-│ 📝 编辑优化结构 Prompt        [预览模式] │
-├─────────────────────────────────────────┤
-│                                         │
-│  [编辑区域] 或 [预览区域]                │
-│                                         │
-├─────────────────────────────────────────┤
-│                           [取消] [保存] │
-└─────────────────────────────────────────┘
-```
-
-### 📊 数据持久化保障
-
-#### 处理历史永久保存
-- **数据迁移**：从localStorage自动迁移到插件设置
-- **永久保存**：不再受浏览器缓存清理影响
-- **容量扩展**：支持100条历史记录
-- **统计准确**：总处理次数、使用频率等数据准确统计
-
-#### 备份与同步
-- **随配置备份**：历史数据随Obsidian配置一起备份
-- **跨设备同步**：支持Obsidian云同步功能
-- **数据安全**：本地存储，保护用户隐私
-
-### 🎨 界面优化升级
-
-#### 文件选择体验
-- **间距优化**：解决文字重叠问题，增加视觉层次
-- **响应式布局**：适配不同屏幕尺寸
-- **清晰分层**：文件名和路径分层显示，主次分明
-
-#### 视觉效果对比
-```
-优化前：☐文件结构40 - Obsidian/主页/文件结构.md
-优化后：☐ 文件结构
-        40 - Obsidian/主页/文件结构.md
-```
-
-## ✨ 可编辑元数据功能详解
-
-### 功能概述
-当AI生成元数据建议时，你现在可以直接在侧边栏中编辑这些内容，无需接受AI的原始建议。这让你能够：
-- 🎯 **精确控制**：根据个人需求调整AI生成的内容
-- ⚡ **快速修改**：无需重新运行AI，直接编辑即可
-- 🔄 **实时更新**：编辑内容会实时反映在文件重命名预览中
-
-### 可编辑字段
-
-#### 📝 标题字段
-- **用途**：用于文件重命名和frontmatter中的title字段
-- **特性**：
-  - 实时字符计数和长度限制
-  - 自动过滤非法文件名字符
-  - 重命名预览功能
-- **编辑方式**：单行文本输入框
-
-#### 📄 摘要字段
-- **用途**：添加到frontmatter中的summary字段
-- **特性**：
-  - 支持多行编辑
-  - 自动调整高度
-  - 保留换行格式
-- **编辑方式**：可调整大小的文本区域
-
-#### 💡 一句话总结
-- **用途**：添加到frontmatter中的tldr字段
-- **特性**：
-  - 建议25字以内
-  - 简洁明了的核心要点
-  - 快速理解笔记内容
-- **编辑方式**：单行文本输入框
-
-### 使用流程
-
-1. **生成AI建议**
-   ```
-   运行AI Meta或一键处理 → AI生成初始建议
-   ```
-
-2. **编辑内容**
-   ```
-   在侧边栏中直接编辑：
-   ┌─────────────────────────────────┐
-   │ 标题: [可编辑输入框]             │
-   │ 摘要: [可编辑文本区域]           │
-   │ 总结: [可编辑输入框]             │
-   └─────────────────────────────────┘
-   ```
-
-3. **应用修改**
-   ```
-   [重命名文件] - 使用编辑后的标题重命名
-   [仅更新元数据] - 只更新frontmatter，保持文件名
-   ```
-
-### 实用技巧
-
-- **标题优化**：根据你的命名规范调整AI生成的标题
-- **摘要完善**：添加AI可能遗漏的关键信息
-- **总结精炼**：确保一句话总结真正抓住要点
-- **批量一致性**：在批量处理时保持命名风格一致
-
-## ✨ 自定义文件夹选择功能
-
-### 功能概述
-在AI Mover建议的文件夹选项下方，新增了"选择其他位置"功能，让你可以手动选择任意文件夹作为移动目标。
-
-### 使用场景
-- **AI建议不合适**：当AI推荐的文件夹不符合你的组织习惯时
-- **特定项目归档**：需要移动到特定的项目文件夹中
-- **个人文件系统**：按照个人的文件组织规则进行归档
-
-### 操作流程
-1. **查看AI建议**：首先查看AI推荐的文件夹选项
-2. **选择自定义位置**：点击"选择其他位置..."下的"浏览"按钮
-3. **搜索文件夹**：在弹出的模态框中输入文件夹名称进行模糊搜索
-4. **确认移动**：选择目标文件夹后自动执行移动操作
-
-### 界面示例
-```
-📁 建议移动位置
-├── 📂 Projects/Notes          [移动]
-├── 📂 Archive/2024           [移动]
-├── 📂 Reference/Articles     [移动]
-└── ─────────────────────────────────
-    📁 选择其他位置...        [浏览]
-```
-
-## � 智能字段检测优化
-
-### 功能概述
-AI元数据生成现在能够智能检测文件frontmatter中已有的`summary`和`tldr`字段，避免重复生成，提高效率并保留用户已有的内容。
-
-### 处理策略
-- **全部已有**：如果summary和tldr都存在，只生成title
-- **部分已有**：如果只有其中一个字段，只生成缺失的字段
-- **全部生成**：如果都不存在，正常生成所有字段
-
-### 实际示例
-
-#### 场景1：文件已有摘要
-```yaml
----
-summary: "这是我手动写的重要摘要"
-tags: [笔记]
----
-```
-**AI行为**：生成title和tldr，保留现有summary
-
-#### 场景2：文件已有完整元数据
-```yaml
----
-summary: "详细的内容摘要"
-tldr: "核心要点总结"
----
-```
-**AI行为**：只生成title，保留现有summary和tldr
-
-### 优势
-- **保护用户内容**：不会覆盖精心编写的元数据
-- **提高效率**：减少不必要的AI生成，节省时间和成本
-- **智能优化**：根据实际需要调整AI请求内容
-
-## 📋 工作流示例
-
-### 新笔记完整处理流程
-1. **创建笔记** → 写入初始内容
-2. **一键处理** → 使用`Cmd/Ctrl + Shift + A`启动智能处理
-3. **编辑元数据** → 在侧边栏直接编辑AI生成的标题、摘要
-4. **应用建议** → 选择性应用AI的各项建议
-5. **文件归档** → 移动到AI推荐或自选的文件夹
-
-### 文献笔记处理流程
-1. **粘贴原始内容** → 从PDF或网页复制内容
-2. **快速总结** → 选中关键段落使用`Ctrl+Shift+S`总结
-3. **结构优化** → 使用`Ctrl+Shift+O`整理格式
-4. **添加个人思考** → 在相关位置添加评论
-5. **智能标签** → 使用AI Tagger添加层级标签
-
-### 批量整理工作流
-1. **智能选择** → 优先选择当前文件夹的相关文件
-2. **文件夹全选** → 使用文件夹级别的批量选择
-3. **扩展选择** → 浏览其他文件夹补充选择文件
-4. **备份数据** → 确保重要内容已备份
-5. **批量处理** → 启动批量AI处理，监控进度
-6. **结果检查** → 逐一检查处理结果
-7. **手动调整** → 对不满意的结果进行微调
-
-### 日常维护工作流
-1. **查看统计** → 在助手面板查看使用统计和处理历史
-2. **性能监控** → 检查API状态和处理效率
-3. **Prompt优化** → 使用Markdown预览编辑器调整提示词
-4. **数据备份** → 导出设置和历史数据进行备份
-
-### 增强版文件选择体验
-```
-📁 当前文件夹 (5个文件) ☐    📁 浏览其他文件夹
-┌─────────────────────────────────────────┐
-│ 📁 Projects/Notes                       │
-│ ☐ meeting-notes.md                      │
-│ ☐ project-plan.md                       │
-│ ☐ requirements.md                       │
-│ [全选当前文件夹] [取消全选]               │
-│                                         │
-│ 已选择: 3个文件                          │
-└─────────────────────────────────────────┘
-```
-
-## 📸 界面预览
-
-### AI助手面板界面
-```
-🎯 处理结果
-┌─────────────────────────────────────┐
-│ 📝 总结结果                          │
-│ ┌─────────────────────────────────┐ │
-│ │ 原始内容: 这是一段很长的文本... │ │
-│ │ AI总结: 本文主要讨论了...       │ │
-│ │ [📋 复制结果] [📝 插入编辑器]   │ │
-│ └─────────────────────────────────┘ │
-└─────────────────────────────────────┘
-
-🚀 快速操作
-┌─────────────────────────────────────┐
-│ [📦 批量处理] [⚙️ 打开设置]         │
-└─────────────────────────────────────┘
-
-📄 当前文件信息
-┌─────────────────────────────────────┐
-│ 文件名: example.md                  │
-│ 路径: /notes/example.md             │
-│ 字数: 1,234                        │
-│ 字符数: 5,678                      │
-└─────────────────────────────────────┘
-```
-
-
-
-## 🔧 故障排除
-
-### 常见问题
-
-**Q: API请求失败怎么办？**
-A: 检查API Key和URL配置，确认网络连接正常，查看API服务状态。在助手面板中可以查看实时API状态。
-
-**Q: 处理结果不理想？**
-A: 可以在设置中使用Markdown预览编辑器自定义提示词，或者调整模型参数。
-
-**Q: 批量处理中断了？**
-A: 插件支持中断恢复，可以重新启动批量处理。处理进度会自动保存。
-
-**Q: 标签翻译不准确？**
-A: 可以在设置中调整翻译提示词或禁用自动翻译功能。
-
-**Q: 总处理次数清零了？**
-A: v1.3.6已修复此问题，处理历史现在永久保存在插件设置中，不会再丢失。
-
-**Q: 界面文字重叠？**
-A: v1.3.6已优化界面间距，解决了文字重叠问题。
-
-**Q: 如何备份我的设置和历史？**
-A: 在设置页面使用"导出设置"功能，可以备份所有配置和处理历史。
-
-### 性能优化建议
-- **模型选择**：快速操作使用轻量级模型(gemini-2.5-flash)
-- **并发控制**：避免同时进行多个AI请求
-- **缓存机制**：重复内容使用缓存结果
-- **分批处理**：大文件分段处理，避免超时
-- **历史清理**：定期清理不需要的处理历史
-- **网络优化**：确保稳定的网络连接
-
-## 🎯 版本特性总览
-
-### v1.3.6 主要特性
-- ✅ **Prompt编辑器增强**：Markdown预览模式，占位符高亮
-- ✅ **数据持久化修复**：处理历史永久保存，支持100条记录
-- ✅ **界面优化升级**：解决文字重叠，增加视觉层次
-- ✅ **文件选择改进**：文件夹全选，智能选择体验
-- ✅ **响应式设计**：更好的移动端和小屏幕适配
-
-### 核心优势
-- 🧠 **智能化程度高**：五大AI模块覆盖笔记处理全流程
-- 🎨 **用户体验优秀**：直观的界面设计，流畅的操作体验
-- 🔧 **高度可定制**：Prompt、参数、工作流都可自定义
-- 📊 **数据驱动**：详细的使用统计和性能监控
-- 🛡️ **稳定可靠**：数据持久化保障，错误处理完善
-- 🚀 **持续更新**：活跃的开发和功能迭代
-
-### 适用场景
-- 📚 **学术研究**：文献整理、笔记结构化、知识管理
-- 💼 **工作笔记**：会议记录、项目文档、知识库建设
-- 📝 **个人知识管理**：日记整理、思考记录、学习笔记
-- 🔄 **内容创作**：文章写作、内容优化、多语言处理
-- 📁 **文件整理**：批量处理、自动分类、标签管理
-
-## 🤝 贡献指南
-
-欢迎提交Issue和Pull Request！
-
-### 开发环境设置
 ```bash
-git clone https://github.com/your-repo/ai-assistant-suite
-cd ai-assistant-suite
-npm install
-npm run dev
+node --check main.js
+for t in *.test.cjs; do node "$t"; done
 ```
 
-### 贡献方式
-- 🐛 **Bug报告**：发现问题请提交详细的Issue
-- 💡 **功能建议**：欢迎提出新功能想法
-- 🔧 **代码贡献**：提交Pull Request改进代码
-- 📖 **文档完善**：帮助改进文档和使用指南
-- 🌐 **翻译支持**：协助多语言本地化
+The tests cover guarded writes, partial acceptance, full-document preview, per-note review, DeepSeek requests, request timeouts and fallback order. They run without Obsidian by loading `main.js` in a sandbox with stub classes.
 
-## 📄 许可证
+## How it was built / 开发方式
 
-MIT License - 详见 [LICENSE](LICENSE) 文件
+Built with AI coding agents. I wrote the requirements, designed the review workflow, tested each release in my own vault and gave the feedback that led to the full-document preview and per-note review.
 
-## 🙏 致谢
-
-感谢Obsidian社区的支持和反馈，让这个插件不断改进和完善。
-
-特别感谢：
-- 🤖 **AI技术支持**：Gemini、GPT等AI模型提供的强大能力
-- 👥 **社区贡献者**：提供宝贵建议和反馈的用户们
-- 🛠️ **Obsidian团队**：提供优秀的插件开发平台
-- 📚 **开源社区**：各种开源库和工具的支持
-
-## 🔗 相关链接
-
-- 📖 **官方文档**：[插件使用指南](https://github.com/your-repo/ai-assistant-suite/wiki)
-- 🐛 **问题反馈**：[GitHub Issues](https://github.com/your-repo/ai-assistant-suite/issues)
-- 💬 **社区讨论**：[Obsidian论坛](https://forum.obsidian.md/)
-- 📺 **视频教程**：[YouTube频道](https://youtube.com/your-channel)
-
----
-
-**🌟 如果这个插件对你有帮助，请给个⭐️支持一下！**
-
-**📢 欢迎分享给更多需要的朋友，让AI助力更多人的知识管理！**
+由 AI 编码代理写出代码；需求、审阅流程设计、每版测试和改版反馈由我完成。
