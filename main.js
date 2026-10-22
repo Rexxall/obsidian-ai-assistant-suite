@@ -1897,11 +1897,12 @@ class AssistantView extends ItemView {
             }
         }
 
-        // 如果历史记录有更新，保存到localStorage
+        // 笔记改名或删除后，把修正过的历史存回插件设置（旧版本存在 localStorage，已迁移）
         if (updatedHistory.length !== history.length ||
             updatedHistory.some((item, index) =>
                 item.filePath !== history[index]?.filePath)) {
-            localStorage.setItem('ai-assistant-history', JSON.stringify(updatedHistory));
+            this.plugin.settings.processingHistory = updatedHistory;
+            void this.plugin.saveSettings();
         }
 
         if (validHistory.length === 0) {
@@ -2393,6 +2394,14 @@ class AiAssistantSuite extends Plugin {
         return activeConfig?.auxiliaryModelName || activeConfig?.modelName || null;
     }
 
+    // Try the configuration that last answered first, so one dead provider does not
+    // add a failed request to every call; the user's order is kept for the rest.
+    orderConfigsForFallback(candidates) {
+        const index = candidates.findIndex(c => c.id === this.lastWorkingConfigId);
+        if (index <= 0) return candidates;
+        return [candidates[index], ...candidates.slice(0, index), ...candidates.slice(index + 1)];
+    }
+
     hasStoredApiKey(config) {
         return !!(config?.apiKey && config.apiKey !== REDACTED_API_KEY);
     }
@@ -2576,7 +2585,6 @@ class AiAssistantSuite extends Plugin {
     }
 
     async onload() {
-        console.log('Loading AI Assistant Suite...');
         await this.loadSettings();
 
         // 兼容和迁移旧版本配置到 apiConfigs
@@ -2771,7 +2779,6 @@ class AiAssistantSuite extends Plugin {
     }
 
     onunload() {
-        console.log('Unloading AI Assistant Suite...');
 
         if (this.currentAbortController && !this.currentAbortController.signal.aborted) {
             this.currentAbortController.abort('插件卸载');
@@ -2978,7 +2985,9 @@ class AiAssistantSuite extends Plugin {
             }
 
             const allConfigs = this.settings.apiConfigs || [];
-            const candidates = allConfigs.filter(c => c.enabled !== false && this.hasStoredApiKey(c));
+            const candidates = this.orderConfigsForFallback(
+                allConfigs.filter(c => c.enabled !== false && this.hasStoredApiKey(c))
+            );
 
             if (candidates.length === 0) {
                 throw new Error("没有可用的 API 配置，请在设置中至少启用一个配置。");
@@ -2992,8 +3001,8 @@ class AiAssistantSuite extends Plugin {
                 const config = candidates[i];
                 const label = config.name || config.id;
                 try {
-                    console.log(`[AI Assistant] 尝试配置 #${i + 1}: ${label}`);
                     const result = await this._callSingleConfig(prompt, modelNameOverride, expectJson, config, requestOptions);
+                    this.lastWorkingConfigId = config.id;
                     if (i > 0) {
                         new Notice(`已切换到备用配置「${label}」并成功`);
                     }
@@ -6266,11 +6275,6 @@ class AdvancedFileSelectionModal extends Modal {
                 break;
             case 'tags':
                 this.filters.tags = value;
-                // 调试标签筛选
-                if (value) {
-                    console.log('标签筛选:', value);
-                    this.debugTagFilter(value);
-                }
                 break;
             case 'properties':
                 this.filters.properties = value;
@@ -6290,62 +6294,6 @@ class AdvancedFileSelectionModal extends Modal {
         }
 
         this.applyFilters();
-    }
-
-    debugTagFilter(searchTag) {
-        console.log('=== 标签筛选调试 ===');
-        console.log('搜索标签:', searchTag);
-
-        const matchingFiles = [];
-        const allTags = new Set();
-
-        this.allFiles.forEach(file => {
-            try {
-                const cache = this.app.metadataCache.getFileCache(file);
-                const fileTags = new Set();
-
-                // 收集文件的所有标签
-                const frontmatterTags = cache?.frontmatter?.tags || [];
-                if (Array.isArray(frontmatterTags)) {
-                    frontmatterTags.forEach(tag => {
-                        if (typeof tag === 'string') {
-                            const formattedTag = tag.startsWith('#') ? tag : '#' + tag;
-                            fileTags.add(formattedTag);
-                            allTags.add(formattedTag);
-                        }
-                    });
-                }
-
-                const contentTags = cache?.tags?.map(tag => tag.tag) || [];
-                contentTags.forEach(tag => {
-                    fileTags.add(tag);
-                    allTags.add(tag);
-                });
-
-                // 检查是否匹配
-                const normalizedSearchTag = searchTag.toLowerCase();
-                const isMatch = Array.from(fileTags).some(fileTag => {
-                    const normalizedFileTag = fileTag.toLowerCase();
-                    return normalizedFileTag === normalizedSearchTag ||
-                        normalizedFileTag.includes(normalizedSearchTag) ||
-                        normalizedSearchTag.includes(normalizedFileTag);
-                });
-
-                if (isMatch) {
-                    matchingFiles.push({
-                        file: file.basename,
-                        tags: Array.from(fileTags)
-                    });
-                }
-            } catch (e) {
-                // 忽略错误
-            }
-        });
-
-        console.log('匹配的文件数量:', matchingFiles.length);
-        console.log('匹配的文件:', matchingFiles);
-        console.log('所有标签:', Array.from(allTags).sort());
-        console.log('==================');
     }
 
     parseDateFilter(value) {
