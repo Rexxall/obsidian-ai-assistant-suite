@@ -6,6 +6,11 @@ An Obsidian plugin that lets an AI suggest changes to a note — tags, propertie
 
 一个 Obsidian 插件：AI 只负责**提议**（标签、属性、结构、该放哪个文件夹、日文假名），改不改由人决定。
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/review-dark.jpg">
+  <img src="docs/screenshots/review.jpg" width="860">
+</picture>
+
 ## The problem
 
 My notes grew faster than I could tidy them: inconsistent tags, no summaries, notes in the wrong folder. Doing it by hand was slow; letting an AI rewrite notes directly was risky, because it could silently change what I wrote.
