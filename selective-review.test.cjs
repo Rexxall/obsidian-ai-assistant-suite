@@ -1,7 +1,7 @@
 const {test}=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm');
 function fixture(text='') {
  const module={exports:{}};
- vm.runInNewContext(fs.readFileSync(__dirname+'/main.js','utf8'),{module,console,TextEncoder,TextDecoder,require:()=>Object.fromEntries(['Plugin','Notice','PluginSettingTab','Setting','FuzzySuggestModal','Modal','ItemView','TFile'].map(k=>[k,class{}]))});
+ vm.runInNewContext(fs.readFileSync(__dirname+'/main.js','utf8'),{window:{setTimeout,clearTimeout,setInterval,clearInterval,crypto:globalThis.crypto},module,console,TextEncoder,TextDecoder,require:()=>Object.fromEntries(['Plugin','Notice','PluginSettingTab','Setting','FuzzySuggestModal','Modal','ItemView','TFile'].map(k=>[k,class{}]))});
  const p=new module.exports(),file={path:'sample.md',basename:'sample'};let current=text,writes=0,task;
  p.settings={rollbackHistory:[],rollbackRedoHistory:[]};p.saveSettings=async()=>{};
  p.app={vault:{read:async()=>current,getAbstractFileByPath:()=>file,process:async(_,fn)=>{current=fn(current);writes++;}}};

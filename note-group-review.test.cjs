@@ -1,7 +1,7 @@
 const {test}=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm');
 function fixture(){
  const module={exports:{}};const classes=Object.fromEntries(['Plugin','Notice','PluginSettingTab','Setting','FuzzySuggestModal','Modal','ItemView','TFile'].map(k=>[k,class{}]));
- vm.runInNewContext(fs.readFileSync(__dirname+'/main.js','utf8'),{module,console,TextEncoder,TextDecoder,require:()=>({...classes,parseYaml:JSON.parse,stringifyYaml:JSON.stringify})});
+ vm.runInNewContext(fs.readFileSync(__dirname+'/main.js','utf8'),{window:{setTimeout,clearTimeout,setInterval,clearInterval,crypto:globalThis.crypto},module,console,TextEncoder,TextDecoder,require:()=>({...classes,parseYaml:JSON.parse,stringifyYaml:JSON.stringify})});
  const p=new module.exports(),file={path:'Inbox/note.md',name:'note.md',basename:'note',parent:{path:'Inbox'}};let text='---\n{"owner":"reader","tags":["existing"]}\n---\nBody',failRename=false,race=false;const folders=new Set(['Inbox','Library']),conflicts=new Set();
  p.settings={rollbackHistory:[],rollbackRedoHistory:[]};p.saveSettings=async()=>{};p.addToHistory=()=>{};p.generateFileId=()=>'';
  p.app={vault:{read:async()=>text,process:async(_,fn)=>{if(race){text+=' user';race=false;}text=fn(text);},getAbstractFileByPath:path=>path===file.path?file:folders.has(path)?{children:[]}:conflicts.has(path)?{}:null,createFolder:async path=>folders.add(path)},fileManager:{renameFile:async(_,path)=>{if(failRename)throw Error('rename failed');file.path=path;file.name=path.split('/').at(-1);file.basename=file.name.slice(0,-3);file.parent.path=path.split('/').slice(0,-1).join('/');}}};

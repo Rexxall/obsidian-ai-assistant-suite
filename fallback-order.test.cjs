@@ -5,7 +5,7 @@ function fixture(){
  const module={exports:{}};
  const obsidian=Object.fromEntries(['Plugin','PluginSettingTab','Setting','FuzzySuggestModal','Modal','ItemView','TFile'].map(k=>[k,class{}]));
  obsidian.Notice=class{constructor(){}};
- vm.runInNewContext(fs.readFileSync(__dirname+'/main.js','utf8'),{module,console,AbortController,setTimeout,clearTimeout,TextEncoder,TextDecoder,require:()=>obsidian});
+ vm.runInNewContext(fs.readFileSync(__dirname+'/main.js','utf8'),{window:{setTimeout,clearTimeout,setInterval,clearInterval,crypto:globalThis.crypto},module,console,AbortController,setTimeout,clearTimeout,TextEncoder,TextDecoder,require:()=>obsidian});
  const p=new module.exports();
  p.settings={apiConfigs:[{id:'a',name:'A',apiKey:'k1',enabled:true},{id:'b',name:'B',apiKey:'k2',enabled:true}]};
  p.beginAiOperation=()=>new AbortController();p.finishAiOperation=()=>{};

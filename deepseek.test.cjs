@@ -3,7 +3,7 @@ const assert=require('node:assert/strict');
 const fs=require('node:fs'),vm=require('node:vm');
 function fixture(){
  const module={exports:{}};
- vm.runInNewContext(fs.readFileSync(__dirname+'/main.js','utf8'),{module,console,require:()=>Object.fromEntries(['Plugin','Notice','PluginSettingTab','Setting','FuzzySuggestModal','Modal','ItemView','TFile'].map(k=>[k,class{}]))});
+ vm.runInNewContext(fs.readFileSync(__dirname+'/main.js','utf8'),{window:{setTimeout,clearTimeout,setInterval,clearInterval,crypto:globalThis.crypto},module,console,require:()=>Object.fromEntries(['Plugin','Notice','PluginSettingTab','Setting','FuzzySuggestModal','Modal','ItemView','TFile'].map(k=>[k,class{}]))});
  const p=new module.exports();p.getApiKey=async()=> 'test-key';return p;
 }
 test('DeepSeek accepts official base, versioned base, full endpoint and custom proxy',()=>{

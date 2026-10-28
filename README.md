@@ -4,7 +4,7 @@
 
 An Obsidian plugin that lets an AI suggest changes to a note — tags, properties, structure, the folder it belongs in, furigana for Japanese — and shows them for review. Nothing is written until you accept it.
 
-一个 Obsidian 插件：AI 只负责**提议**（标签、属性、结构、该放哪个文件夹、日文假名），改不改由人决定。
+一个 Obsidian 插件：AI 只负责**提议**（标签、属性、结构、该放哪个文件夹、日文假名），改不改由人决定。可以用云端 API，也可以用电脑上的本地模型（Ollama、LM Studio），笔记不出电脑。
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/review-dark.jpg">
@@ -35,14 +35,24 @@ My notes grew faster than I could tidy them: inconsistent tags, no summaries, no
 | Before writing, the note is compared with the version the AI saw | If the note changed meanwhile, the write stops instead of overwriting new text | The user may need to regenerate |
 | Undo / redo for every applied change | Mistakes are cheap to reverse | Snapshots are stored in plugin data |
 | Several API configurations with automatic fallback; the one that answered last is tried first; every request has a timeout | One provider being down or silent should not block the work | The same note may be sent to a second provider; the plugin shows a notice when that happens |
+| A local model (Ollama, LM Studio) is a first-class provider | Private notes can be tidied without leaving the computer | Local models are slower and less consistent than large cloud models |
+| *Only existing tags* filters the model's answer against the vault's tags | A settled tag system should not grow new tags by accident | The model may find fewer tags |
+| Before a batch, the plugin says how much text goes where | Batch runs send many notes at once; the person should know where they go | One more line to read |
 
 ## Install
 
-1. Download `main.js`, `manifest.json` and `styles.css` from the latest release into `<vault>/.obsidian/plugins/ai-assistant-suite/`.
-2. Enable **AI Assistant Suite** in *Settings → Community plugins*.
-3. In the plugin settings, add at least one API configuration: provider (OpenAI-compatible, DeepSeek or Gemini), key, model. Test the connection from the settings page.
+1. Install **AI Assistant Suite** from *Settings → Community plugins → Browse*, or download `main.js`, `manifest.json` and `styles.css` from the latest release into `<vault>/<config folder>/plugins/ai-assistant-suite/` (the config folder is `.obsidian` unless you changed it).
+2. Enable it in *Settings → Community plugins*.
+3. In the plugin settings, add at least one configuration: provider (OpenAI-compatible, DeepSeek, Google Gemini, or a local model through Ollama or LM Studio), key if the provider needs one, and model. Test the connection from the settings page.
 
-Works on desktop and mobile. No build step: `main.js` is the source.
+Works on desktop and mobile (a local model on your computer is not reachable from the phone). No build step: `main.js` is the source.
+
+### Local model in two minutes
+
+1. Install [Ollama](https://ollama.com) and run `ollama pull qwen3:8b` (or any chat model).
+2. In the plugin settings choose **本地模型（Ollama、LM Studio）** (local model), leave the address empty (Ollama's `http://localhost:11434/v1/chat/completions` is used), type the model name, test the connection.
+
+LM Studio's server usually listens on `http://localhost:1234/v1/chat/completions`.
 
 ## Two-minute demo
 
@@ -54,11 +64,20 @@ Use a test vault, not your daily vault.
 4. Undo the last applied change.
 5. Run a batch on a folder → review the results note by note.
 
-## Privacy
+## Privacy and network use
+
+The plugin needs an AI model to do anything. It talks only to the services you configure:
+
+| Provider | Address | Needs an account |
+|---|---|---|
+| OpenAI-compatible | the URL you enter (OpenAI, OpenRouter, a proxy, ...) | yes, usually paid |
+| DeepSeek | `https://api.deepseek.com` (or your URL) | yes, paid |
+| Google Gemini | `https://generativelanguage.googleapis.com` | yes, free tier available |
+| Local model | `http://localhost:11434` (Ollama) or the URL you enter | no; nothing leaves the computer |
 
 | What | Where it goes |
 |---|---|
-| Note text you ask the AI about | Sent to the API provider you configured, and only when you press Generate |
+| Note text you ask the AI about | Sent to the provider of the first working configuration, and only when you start an action; if it fails, to the next enabled configuration (a notice says so). Before a batch, the plugin shows how many notes and how much text will be sent, and where |
 | API keys | Stored in this vault's plugin data (`data.json`), obfuscated, never sent anywhere except the provider they belong to |
 | Proposals, undo snapshots, processing history | This vault's plugin data |
 | Anything else | Nothing is sent; there is no telemetry |
@@ -70,7 +89,8 @@ Do not commit `data.json` to Git.
 - Suggestions are only as good as the model and the prompt; review them.
 - Batch runs send one request per note; large folders cost accordingly.
 - The key obfuscation in `data.json` protects against casual reading, not against someone with access to the file.
-- Interface text is Chinese.
+- The interface is in Chinese; command names follow Obsidian's language (Chinese or English).
+- Streaming answers use `fetch`, because Obsidian's `requestUrl` cannot stream. If a provider rejects browser requests, the plugin falls back to one normal request.
 
 ## Development
 
@@ -79,7 +99,7 @@ node --check main.js
 for t in *.test.cjs; do node "$t"; done
 ```
 
-The tests cover guarded writes, partial acceptance, full-document preview, per-note review, DeepSeek requests, request timeouts and fallback order. They run without Obsidian by loading `main.js` in a sandbox with stub classes. Design notes are in [docs/](docs/); versions are in [CHANGELOG.md](CHANGELOG.md).
+The tests cover guarded writes, partial acceptance, full-document preview, per-note review, DeepSeek and local-model requests, request timeouts, the streaming fallback, fallback order, the only-existing-tags filter and the batch send summary. They run without Obsidian by loading `main.js` in a sandbox with stub classes. Design notes are in [docs/](docs/); versions are in [CHANGELOG.md](CHANGELOG.md).
 
 ## License
 

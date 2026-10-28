@@ -16,7 +16,7 @@ test('new tasks enter focused review, result switching preserves all tasks',()=>
 test('starting a task pins note and selection, prevents duplicate clicks and releases busy state',async()=>{const f=fixture();const button=f.button('生成建议 →');const pending=button.onclick();await button.onclick();assert.equal(f.v.workbenchRunning,true);assert.equal(f.v.workbenchPage,'review');assert.equal(f.args[0].path,'Example.md');assert.equal(f.args[1].tagger,true);f.finish();await pending;assert.equal(f.v.workbenchRunning,false);});
 test('cancelling a workbench sequence stops before starting the next model step',async()=>{
  const module={exports:{}};class Notice{setMessage(){} hide(){}}
- vm.runInNewContext(fs.readFileSync(__dirname+'/main.js','utf8'),{module,console,TextEncoder,TextDecoder,require:()=>({...Object.fromEntries(['Plugin','PluginSettingTab','Setting','FuzzySuggestModal','Modal','ItemView','TFile'].map(k=>[k,class{}])),Notice})});
+ vm.runInNewContext(fs.readFileSync(__dirname+'/main.js','utf8'),{window:{setTimeout,clearTimeout,setInterval,clearInterval,crypto:globalThis.crypto},module,console,TextEncoder,TextDecoder,require:()=>({...Object.fromEntries(['Plugin','PluginSettingTab','Setting','FuzzySuggestModal','Modal','ItemView','TFile'].map(k=>[k,class{}])),Notice})});
  const p=new module.exports();p.app={};p.settings={apiConfigs:[{enabled:true}]};p.hasStoredApiKey=()=>true;let stopped=false,second=0;p.runAiStructurizer=async()=>{stopped=true};p.runAiFurigana=async()=>{second++};
  await p.runOneClickSmartProcess({path:'test.md'},{structurizer:true,furigana:true},()=>stopped);assert.equal(second,0);
 });
@@ -31,13 +31,13 @@ test('a picked note remains the processing target even if another editor is acti
  const f=fixture();f.v.pinnedFile={basename:'Picked',path:'Picked.md',extension:'md',parent:{path:'/'}};f.v.render();const p=f.button('生成建议 →').onclick();assert.equal(f.args[0].path,'Picked.md');f.finish();await p;
 });
 test('processing always opens the sidebar even when a legacy workbench is active',async()=>{
- const module={exports:{}};vm.runInNewContext(fs.readFileSync(__dirname+'/main.js','utf8'),{module,console,require:()=>Object.fromEntries(['Plugin','Notice','PluginSettingTab','Setting','FuzzySuggestModal','Modal','ItemView','TFile'].map(k=>[k,class{}]))});
+ const module={exports:{}};vm.runInNewContext(fs.readFileSync(__dirname+'/main.js','utf8'),{window:{setTimeout,clearTimeout,setInterval,clearInterval,crypto:globalThis.crypto},module,console,require:()=>Object.fromEntries(['Plugin','Notice','PluginSettingTab','Setting','FuzzySuggestModal','Modal','ItemView','TFile'].map(k=>[k,class{}]))});
  const p=new module.exports();const full={view:{expanded:true}},side={view:{expanded:false}},calls=[];
  p.view=full.view;p.refreshAssistantViews=()=>{};p.app={workspace:{getLeavesOfType:t=>[t==='ai-assistant-workbench-view'?full:side],revealLeaf:async l=>calls.push(l),rightSplit:{collapse:()=>calls.push('collapse'),expand:()=>calls.push('expand')}}};
  await p.activateView();assert.equal(calls[0],side);assert.equal(calls[1],'expand');await p.activateView(true);assert.equal(calls[2],full);assert.equal(calls[3],'collapse');
 });
 test('a custom action for a picked note cannot inherit another editor selection',async()=>{
- const module={exports:{}};vm.runInNewContext(fs.readFileSync(__dirname+'/main.js','utf8'),{module,console,require:()=>Object.fromEntries(['Plugin','Notice','PluginSettingTab','Setting','FuzzySuggestModal','Modal','ItemView','TFile'].map(k=>[k,class{}]))});
+ const module={exports:{}};vm.runInNewContext(fs.readFileSync(__dirname+'/main.js','utf8'),{window:{setTimeout,clearTimeout,setInterval,clearInterval,crypto:globalThis.crypto},module,console,require:()=>Object.fromEntries(['Plugin','Notice','PluginSettingTab','Setting','FuzzySuggestModal','Modal','ItemView','TFile'].map(k=>[k,class{}]))});
  const p=new module.exports(),picked={path:'Picked.md'},other={path:'Other.md'};p.app={workspace:{getActiveFile:()=>other,activeEditor:{editor:{getSelection:()=>{throw new Error('wrong editor read')}}}},vault:{read:async f=>{assert.equal(f,picked);return 'Picked note content'}}};
  const c=await p.getCurrentActionContext(picked);assert.equal(c.file,picked);assert.equal(c.selection,'');assert.equal(c.originalContent,'Picked note content');
 });

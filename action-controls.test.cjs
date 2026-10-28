@@ -4,6 +4,7 @@ class Element {
  createEl(tag,options){const child=new Element(tag,options);this.children.push(child);return child;}
  createDiv(options){return this.createEl('div',options);}
  addEventListener(event,callback){this.events[event]=callback;}
+ addClass(...names){(this.classes??=[]).push(...names);}
 }
 test('quick actions are named native buttons and retain their original callbacks',()=>{
  const module={exports:{}};const context={module,console,require:()=>Object.fromEntries(['Plugin','Notice','PluginSettingTab','Setting','FuzzySuggestModal','Modal','ItemView','TFile'].map(k=>[k,class{}]))};

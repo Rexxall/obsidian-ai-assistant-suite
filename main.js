@@ -1,16 +1,40 @@
-const escapeHtmlText = value => String(value).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;"); // guarded writes and focused workspace
-const { Plugin, Notice, PluginSettingTab, Setting, FuzzySuggestModal, Modal, ItemView, TFile, MarkdownRenderer, parseYaml, stringifyYaml } = require('obsidian');
+const { Plugin, Notice, PluginSettingTab, Setting, FuzzySuggestModal, Modal, ItemView, TFile, MarkdownRenderer, parseYaml, stringifyYaml, getLanguage, requestUrl } = require('obsidian');
+
+// 界面主体是中文；命令名跟随 Obsidian 语言，非中文时用英文
+const isChineseInterface = () => {
+    try {
+        return (typeof getLanguage === 'function' ? getLanguage() : 'zh').toLowerCase().startsWith('zh');
+    } catch (error) {
+        return true;
+    }
+};
+const tr = (zh, en) => isChineseInterface() ? zh : en;
+
+// Obsidian 风格的确认框，代替浏览器自带的 confirm()
+function confirmAction(app, message, confirmText) {
+    return new Promise(resolve => {
+        const modal = new Modal(app);
+        let answered = false;
+        const finish = value => {
+            if (answered) return;
+            answered = true;
+            resolve(value);
+            modal.close();
+        };
+        modal.contentEl.createEl('p', { text: message });
+        const buttons = modal.contentEl.createDiv({ cls: 'modal-button-container' });
+        buttons.createEl('button', { text: '取消' }).addEventListener('click', () => finish(false));
+        buttons.createEl('button', { cls: 'mod-warning', text: confirmText }).addEventListener('click', () => finish(true));
+        modal.onClose = () => finish(false);
+        modal.open();
+    });
+}
 
 const ASSISTANT_VIEW_TYPE = "ai-assistant-view";
 const ASSISTANT_WORKBENCH_TYPE = "ai-assistant-workbench-view";
 const REDACTED_API_KEY = '[REDACTED]';
+const LOCAL_MODEL_DEFAULT_URL = 'http://localhost:11434/v1/chat/completions';
 
-let SharedUtils = {};
-try {
-    SharedUtils = require('../obsidian-utils/dist');
-} catch (error) {
-    SharedUtils = {};
-}
 
 class FallbackEncryptedSettings {
     constructor(options = {}) {
@@ -26,12 +50,12 @@ class FallbackEncryptedSettings {
 
     async encryptValue(plaintext) {
         if (!plaintext) return plaintext;
-        if (!globalThis.crypto?.subtle) {
+        if (!window.crypto?.subtle) {
             return `__ENC__:${this.namespace}:plain:${btoa(unescape(encodeURIComponent(plaintext)))}`;
         }
         const key = await this.deriveKey();
-        const iv = globalThis.crypto.getRandomValues(new Uint8Array(12));
-        const encrypted = await globalThis.crypto.subtle.encrypt(
+        const iv = window.crypto.getRandomValues(new Uint8Array(12));
+        const encrypted = await window.crypto.subtle.encrypt(
             { name: 'AES-GCM', iv },
             key,
             this.encoder.encode(plaintext)
@@ -49,14 +73,14 @@ class FallbackEncryptedSettings {
         if (payload.startsWith('plain:')) {
             return decodeURIComponent(escape(atob(payload.slice(6))));
         }
-        if (!globalThis.crypto?.subtle) {
+        if (!window.crypto?.subtle) {
             throw new Error('当前环境不支持 Web Crypto，无法解密 API Key。');
         }
         const combined = this.base64ToArrayBuffer(payload);
         const iv = combined.slice(0, 12);
         const encrypted = combined.slice(12);
         const key = await this.deriveKey();
-        const decrypted = await globalThis.crypto.subtle.decrypt(
+        const decrypted = await window.crypto.subtle.decrypt(
             { name: 'AES-GCM', iv: new Uint8Array(iv) },
             key,
             new Uint8Array(encrypted)
@@ -65,14 +89,14 @@ class FallbackEncryptedSettings {
     }
 
     async deriveKey() {
-        const keyMaterial = await globalThis.crypto.subtle.importKey(
+        const keyMaterial = await window.crypto.subtle.importKey(
             'raw',
             this.encoder.encode(this.passphrase),
             'PBKDF2',
             false,
             ['deriveKey']
         );
-        return globalThis.crypto.subtle.deriveKey(
+        return window.crypto.subtle.deriveKey(
             {
                 name: 'PBKDF2',
                 salt: this.encoder.encode(`obsidian-utils-encrypted-settings-v1:${this.namespace}`),
@@ -293,6 +317,8 @@ const DEFAULT_SETTINGS = {
 
     // Tagger Settings
     taggerSuggestionsCount: 12,
+    taggerExistingOnly: false,
+    useAtelierPalette: true,
     taggerEnableTranslation: true,
     taggerTranslationTargetLanguage: '中文',
     taggerTranslationMinLength: 16,
@@ -367,7 +393,7 @@ class AssistantView extends ItemView {
     async onOpen() {
         if (!this.fileWatcherRef) this.setupFileWatcher();
         this.render();
-        this.contentEl?.style.setProperty('overflow-y', 'auto');
+        this.contentEl?.addClass('ai-assistant-u-scroll-y');
     }
 
     onClose() {
@@ -377,7 +403,7 @@ class AssistantView extends ItemView {
             this.plugin.view = this.plugin.app.workspace.getLeavesOfType(otherType)[0]?.view || null;
         }
         // 清理文件监听
-        if (this.refreshTimeout) clearTimeout(this.refreshTimeout);
+        if (this.refreshTimeout) window.clearTimeout(this.refreshTimeout);
         if (this.fileWatcherRef) {
             this.plugin.app.workspace.offref(this.fileWatcherRef);
             this.fileWatcherRef = null;
@@ -393,9 +419,9 @@ class AssistantView extends ItemView {
                 if (newFile?.extension === 'md') { this.pinnedFile = null; this.plugin.assistantLastFile = newFile; }
                 // 延迟刷新以避免频繁更新
                 if (this.refreshTimeout) {
-                    clearTimeout(this.refreshTimeout);
+                    window.clearTimeout(this.refreshTimeout);
                 }
-                this.refreshTimeout = setTimeout(() => {
+                this.refreshTimeout = window.setTimeout(() => {
                     this.render();
                 }, 300);
             }
@@ -771,11 +797,17 @@ class AssistantView extends ItemView {
     }
 
     chooseAtelierNote() {
-        const view=this;
+        const choose = file => {
+            this.plugin.assistantLastFile = file;
+            this.pinnedFile = file;
+            this.workbenchPage = 'prepare';
+            this.render();
+            this.plugin.refreshAssistantViews?.(this);
+        };
         class NotePicker extends FuzzySuggestModal {
-            getItems(){return view.plugin.app.vault.getMarkdownFiles()}
+            getItems(){return this.app.vault.getMarkdownFiles()}
             getItemText(file){return file.path}
-            onChooseItem(file){view.plugin.assistantLastFile=file;view.pinnedFile=file;view.workbenchPage='prepare';view.render();view.plugin.refreshAssistantViews?.(view)}
+            onChooseItem(file){choose(file)}
         }
         const picker=new NotePicker(this.plugin.app);picker.setPlaceholder('选择要整理的笔记…');picker.open();
     }
@@ -847,17 +879,13 @@ class AssistantView extends ItemView {
 
         // Create a header container
         const header = card.createDiv({ cls: "assistant-task-heading" });
-        header.style.display = 'flex';
-        header.style.justifyContent = 'space-between';
-        header.style.alignItems = 'center';
+        header.addClass('ai-assistant-u-header');
 
         // Add title to header
         header.createEl("h3", { text: task.title || 'AI 处理结果' });
 
         const headerActions = header.createDiv();
-        headerActions.style.display = 'flex';
-        headerActions.style.gap = '6px';
-        headerActions.style.alignItems = 'center';
+        headerActions.addClass('ai-assistant-u-header-actions');
 
         // Add navigation button to header if file exists
         if (task.content && task.content.file) {
@@ -939,7 +967,7 @@ class AssistantView extends ItemView {
         const hasMover = suggestions.mover && suggestions.mover.length > 0;
 
         if (!hasMeta && !hasTags && !hasMover) {
-            setTimeout(() => this.removeTask(task.id), 200);
+            window.setTimeout(() => this.removeTask(task.id), 200);
             return;
         }
 
@@ -1123,7 +1151,7 @@ class AssistantView extends ItemView {
             label.setAttribute("for", checkbox.id);
 
             if (suggestion.is_new) {
-                label.style.color = "var(--text-accent)";
+                label.addClass('ai-assistant-u-accent');
                 label.setAttribute('title', '新建议的标签');
             }
 
@@ -1173,7 +1201,7 @@ class AssistantView extends ItemView {
 
             const pathSpan = pathDiv.createEl("span", { text: suggestion.path });
             if (suggestion.is_new) {
-                pathSpan.style.color = "var(--text-accent)";
+                pathSpan.addClass('ai-assistant-u-accent');
                 pathSpan.setAttribute('title', '将创建新文件夹');
             }
 
@@ -1259,7 +1287,7 @@ class AssistantView extends ItemView {
 
             const pathSpan = pathDiv.createEl("span", { text: suggestion.path });
             if (suggestion.is_new) {
-                pathSpan.style.color = "var(--text-accent)";
+                pathSpan.addClass('ai-assistant-u-accent');
                 pathSpan.setAttribute('title', '将创建新文件夹');
             }
 
@@ -1351,7 +1379,7 @@ class AssistantView extends ItemView {
             label.setAttribute("for", checkbox.id);
 
             if (suggestion.is_new) {
-                label.style.color = "var(--text-accent)";
+                label.addClass('ai-assistant-u-accent');
                 label.setAttribute('title', '新建议的标签');
             }
 
@@ -1724,30 +1752,26 @@ class AssistantView extends ItemView {
         const infoContainer = card.createDiv({ cls: "folder-batch-info" });
 
         const folderInfo = infoContainer.createDiv({ cls: "info-item" });
-        folderInfo.innerHTML = `
-            <span class="info-icon">📁</span>
-            <div class="info-content">
-                <strong>文件夹路径:</strong><br>
-                <code>${escapeHtmlText(content.folderPath)}</code>
-            </div>
-        `;
+        folderInfo.createSpan({ cls: "info-icon", text: "📁" });
+        const folderInfoContent = folderInfo.createDiv({ cls: "info-content" });
+        folderInfoContent.createEl("strong", { text: "文件夹路径:" });
+        folderInfoContent.createEl("br");
+        folderInfoContent.createEl("code", { text: content.folderPath });
 
         const fileInfo = infoContainer.createDiv({ cls: "info-item" });
-        fileInfo.innerHTML = `
-            <span class="info-icon">📄</span>
-            <div class="info-content">
-                <strong>文件数量:</strong><br>
-                ${content.fileCount} 个 Markdown 文件
-            </div>
-        `;
+        fileInfo.createSpan({ cls: "info-icon", text: "📄" });
+        const fileInfoContent = fileInfo.createDiv({ cls: "info-content" });
+        fileInfoContent.createEl("strong", { text: "文件数量:" });
+        fileInfoContent.createEl("br");
+        fileInfoContent.appendText(`${content.fileCount} 个 Markdown 文件`);
 
         const warningBox = infoContainer.createDiv({ cls: "warning-box" });
-        warningBox.innerHTML = `
-            <span class="warning-icon">⚠️</span>
-            <div class="warning-content">
-                <strong>注意:</strong> 批量处理将对所有文件执行AI智能处理，这可能需要较长时间。处理过程中可以随时中断。
-            </div>
-        `;
+        warningBox.createSpan({ cls: "warning-icon", text: "⚠️" });
+        const warningContent = warningBox.createDiv({ cls: "warning-content" });
+        warningContent.createEl("strong", { text: "注意:" });
+        warningContent.appendText(" 批量处理会把每篇笔记发给你配置的 AI 服务，可能需要较长时间，过程中可以随时中断。");
+
+        this.plugin.renderBatchSendSummary(infoContainer, content.files);
 
         const buttonContainer = card.createDiv({ cls: "ai-assistant-button-container" });
 
@@ -1793,8 +1817,7 @@ class AssistantView extends ItemView {
         // 标题区域，包含刷新按钮
         const titleContainer = section.createDiv({ cls: "section-title-container" });
         const title = titleContainer.createEl("h3", { text: "快速操作" });
-        title.style.margin = "0";
-        title.style.flex = "1";
+        title.addClass('ai-assistant-u-title');
 
         // 刷新按钮放在标题旁边
         const refreshBtn = titleContainer.createEl("button", {
@@ -1930,7 +1953,7 @@ class AssistantView extends ItemView {
         apiStatus.createEl("span", { text: "API状态:", cls: "status-label" });
         const apiIndicator = apiStatus.createEl("span", { cls: "status-indicator" });
 
-        const hasValidConfig = this.plugin.settings.apiConfigs?.some(c => c.enabled !== false && this.plugin.hasStoredApiKey(c));
+        const hasValidConfig = this.plugin.settings.apiConfigs?.some(c => c.enabled !== false && this.plugin.isConfigUsable(c));
         if (hasValidConfig) {
             apiIndicator.setText("🟢 已配置");
             apiIndicator.addClass("status-good");
@@ -2045,16 +2068,15 @@ class AssistantView extends ItemView {
             text: "清理历史",
             cls: "ai-assistant-clear-history-btn"
         });
-        clearBtn.addEventListener("click", () => {
-            // 确认对话框
-            const confirmed = confirm('确定要清理所有处理历史记录吗？此操作不可撤销。');
+        clearBtn.addEventListener("click", async () => {
+            const confirmed = await confirmAction(this.app, '确定要清理所有处理历史记录吗？此操作不可撤销。', '清理');
             if (confirmed) {
                 // 清理插件设置中的历史记录
                 this.plugin.settings.processingHistory = [];
                 this.plugin.saveSettings();
 
                 // 同时清理可能存在的localStorage数据
-                localStorage.removeItem('ai-assistant-history');
+                window.localStorage.removeItem('ai-assistant-history');
 
                 this.render();
                 // 在助手面板中显示成功信息
@@ -2167,7 +2189,7 @@ class AssistantView extends ItemView {
 
         if (Object.keys(actionCounts).length > 0) {
             const chartTitle = section.createEl("h4", { text: "各功能累计次数", cls: "stat-subtitle" });
-            chartTitle.style.marginTop = "12px";
+            chartTitle.addClass('ai-assistant-u-chart-title');
 
             const chartContainer = section.createDiv({ cls: "usage-chart" });
             const sortedActions = Object.entries(actionCounts)
@@ -2271,12 +2293,7 @@ class PromptEditModal extends Modal {
                         this.updatePreview(value);
                     }
                 });
-            text.inputEl.style.width = '100%';
-            text.inputEl.style.height = '400px';
-            text.inputEl.style.minHeight = '200px';
-            text.inputEl.style.fontFamily = 'var(--font-monospace)';
-            text.inputEl.style.fontSize = '14px';
-            text.inputEl.style.lineHeight = '1.5';
+            text.inputEl.addClass('ai-assistant-u-prompt-editor');
         });
     }
 
@@ -2284,7 +2301,7 @@ class PromptEditModal extends Modal {
         this.previewContainer = this.contentContainer.createDiv({
             cls: 'prompt-preview-area'
         });
-        this.previewContainer.style.display = 'none';
+        this.previewContainer.hide();
 
         this.previewContent = this.previewContainer.createDiv({
             cls: 'prompt-preview-content'
@@ -2292,40 +2309,34 @@ class PromptEditModal extends Modal {
     }
 
     showPreview() {
-        this.editContainer.style.display = 'none';
-        this.previewContainer.style.display = 'block';
+        this.editContainer.hide();
+        this.previewContainer.show();
         this.updatePreview(this.plugin.settings[this.settingName]);
     }
 
     showEdit() {
-        this.previewContainer.style.display = 'none';
-        this.editContainer.style.display = 'block';
+        this.previewContainer.hide();
+        this.editContainer.show();
     }
 
     updatePreview(content) {
         // 使用Obsidian的MarkdownRenderer来渲染Markdown
         this.previewContent.empty();
 
-        // 处理占位符，让它们在预览中更明显
-        const processedContent = escapeHtmlText(content)
-            .replace(/\{\{(\w+)\}\}/g, '<span class="prompt-placeholder">{{$1}}</span>')
-            .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
-            .replace(/\*(.*?)\*/g, '<em>$1</em>')
-            .replace(/`(.*?)`/g, '<code>$1</code>')
-            .replace(/\n\n/g, '</p><p>')
-            .replace(/\n/g, '<br>');
-
-        this.previewContent.innerHTML = `<p>${processedContent}</p>`;
-
-        // 添加一些基本的样式处理
-        this.previewContent.querySelectorAll('.prompt-placeholder').forEach(el => {
-            el.style.backgroundColor = 'var(--interactive-accent)';
-            el.style.color = 'var(--text-on-accent)';
-            el.style.padding = '2px 6px';
-            el.style.borderRadius = '4px';
-            el.style.fontFamily = 'var(--font-monospace)';
-            el.style.fontSize = '0.9em';
-        });
+        // 段落、换行照原样显示，{{占位符}} 标成小块，其余一律当纯文本
+        for (const paragraph of String(content || '').split(/\n\n+/)) {
+            const paragraphEl = this.previewContent.createEl('p');
+            paragraph.split('\n').forEach((line, index) => {
+                if (index > 0) paragraphEl.createEl('br');
+                for (const part of line.split(/(\{\{\w+\}\})/)) {
+                    if (/^\{\{\w+\}\}$/.test(part)) {
+                        paragraphEl.createSpan({ cls: 'prompt-placeholder ai-assistant-u-code-chip', text: part });
+                    } else if (part) {
+                        paragraphEl.appendText(part);
+                    }
+                }
+            });
+        }
     }
 }
 
@@ -2351,9 +2362,7 @@ class BatchFileSelectionModal extends Modal {
 
         // 全选/取消全选按钮
         const buttonContainer = contentEl.createDiv({ cls: 'batch-selection-buttons' });
-        buttonContainer.style.marginBottom = '16px';
-        buttonContainer.style.display = 'flex';
-        buttonContainer.style.gap = '8px';
+        buttonContainer.addClass('ai-assistant-u-button-row');
 
         const selectAllBtn = buttonContainer.createEl('button', { text: '全选' });
         selectAllBtn.onclick = () => {
@@ -2371,22 +2380,14 @@ class BatchFileSelectionModal extends Modal {
 
         // 文件列表
         const fileList = contentEl.createDiv({ cls: 'batch-file-list' });
-        fileList.style.maxHeight = '400px';
-        fileList.style.overflowY = 'auto';
-        fileList.style.border = '1px solid var(--background-modifier-border)';
-        fileList.style.borderRadius = '6px';
-        fileList.style.padding = '8px';
+        fileList.addClass('ai-assistant-u-file-list');
 
         this.files.forEach(file => {
             const fileItem = fileList.createDiv({ cls: 'batch-file-item' });
-            fileItem.style.display = 'flex';
-            fileItem.style.alignItems = 'center';
-            fileItem.style.padding = '4px 8px';
-            fileItem.style.borderRadius = '4px';
-            fileItem.style.marginBottom = '4px';
+            fileItem.addClass('ai-assistant-u-file-row');
 
             const checkbox = fileItem.createEl('input', { type: 'checkbox' });
-            checkbox.style.marginRight = '8px';
+            checkbox.addClass('ai-assistant-u-checkbox');
             checkbox.onchange = () => {
                 if (checkbox.checked) {
                     this.selectedFiles.push(file);
@@ -2396,16 +2397,15 @@ class BatchFileSelectionModal extends Modal {
             };
 
             const fileName = fileItem.createEl('span', { text: file.path });
-            fileName.style.fontSize = 'var(--font-ui-small)';
+            fileName.addClass('ai-assistant-u-file-name');
         });
 
         // 确认按钮
         const confirmContainer = contentEl.createDiv();
-        confirmContainer.style.marginTop = '16px';
-        confirmContainer.style.textAlign = 'right';
+        confirmContainer.addClass('ai-assistant-u-confirm-row');
 
         const confirmBtn = confirmContainer.createEl('button', { text: '开始批量处理' });
-        confirmBtn.style.marginRight = '8px';
+        confirmBtn.addClass('ai-assistant-u-checkbox');
         confirmBtn.onclick = () => {
             this.close();
             this.onChoose(this.selectedFiles);
@@ -2425,19 +2425,9 @@ class AiAssistantSuite extends Plugin {
     debounceTimers = new Map(); // 添加防抖定时器
 
     initializeSharedServices() {
-        const EncryptedSettingsClass = SharedUtils.EncryptedSettings || FallbackEncryptedSettings;
-        this.encryptedSettings = new EncryptedSettingsClass({
+        this.encryptedSettings = new FallbackEncryptedSettings({
             namespace: 'ai-assistant-suite'
         });
-        if (SharedUtils.RequestManager) {
-            this.requestManager = new SharedUtils.RequestManager({
-                maxRetries: 1,
-                timeout: 120000,
-                debug: false
-            });
-        } else {
-            this.requestManager = null;
-        }
     }
 
     normalizeSettings() {
@@ -2486,6 +2476,12 @@ class AiAssistantSuite extends Plugin {
 
     hasStoredApiKey(config) {
         return !!(config?.apiKey && config.apiKey !== REDACTED_API_KEY);
+    }
+
+    // 本地模型（Ollama、LM Studio）不需要密钥；其余服务商必须有密钥
+    isConfigUsable(config) {
+        if (config?.apiProvider === 'local') return true;
+        return this.hasStoredApiKey(config);
     }
 
     async setApiKey(config, value) {
@@ -2579,7 +2575,6 @@ class AiAssistantSuite extends Plugin {
             return;
         }
         this.currentAbortController.abort(reason);
-        this.requestManager?.cancelAll?.();
         new Notice('AI 请求已取消。', 2500);
         this.view?.render();
     }
@@ -2668,6 +2663,7 @@ class AiAssistantSuite extends Plugin {
 
     async onload() {
         await this.loadSettings();
+        this.applyPalette();
 
         // 兼容和迁移旧版本配置到 apiConfigs
         if (!this.settings.apiConfigs || this.settings.apiConfigs.length === 0) {
@@ -2725,7 +2721,7 @@ class AiAssistantSuite extends Plugin {
 
         this.addCommand({
             id: 'open-ai-assistant-view',
-            name: 'Open AI Assistant View (打开助手面板)',
+            name: tr('打开助手面板', 'Open assistant panel'),
             callback: () => {
                 this.activateView();
             }
@@ -2734,7 +2730,7 @@ class AiAssistantSuite extends Plugin {
         // --- Command 1: Structurizer ---
         this.addCommand({
             id: 'run-ai-structurizer',
-            name: 'Run AI Suite: Restructure current note (优化结构)',
+            name: tr('优化当前笔记的结构', 'Restructure the current note'),
             callback: () => {
                 this.runAiStructurizer();
             }
@@ -2743,7 +2739,7 @@ class AiAssistantSuite extends Plugin {
         // --- Command 2: Mover ---
         this.addCommand({
             id: 'run-ai-mover',
-            name: 'Run AI Suite: Move current note (移动笔记)',
+            name: tr('为当前笔记建议文件夹', 'Suggest a folder for the current note'),
             callback: () => {
                 this.runAiMover();
             }
@@ -2752,7 +2748,7 @@ class AiAssistantSuite extends Plugin {
         // --- Command 3: Tagger ---
         this.addCommand({
             id: 'run-ai-tagger',
-            name: 'Run AI Suite: Tag current note (智能标签)',
+            name: tr('为当前笔记建议标签', 'Suggest tags for the current note'),
             callback: () => {
                 this.runAiTagger();
             }
@@ -2761,7 +2757,7 @@ class AiAssistantSuite extends Plugin {
         // --- Command 4: Meta ---
         this.addCommand({
             id: 'run-ai-meta',
-            name: 'Run AI Suite: Generate Metadata (生成元数据)',
+            name: tr('为当前笔记生成属性', 'Generate properties for the current note'),
             callback: () => {
                 this.runAiMeta();
             }
@@ -2770,7 +2766,7 @@ class AiAssistantSuite extends Plugin {
         // --- Command 5: Furigana ---
         this.addCommand({
             id: 'run-ai-furigana',
-            name: 'Run AI Suite: Add Furigana to Japanese (日文假名标注)',
+            name: tr('给日文加假名', 'Add furigana to Japanese text'),
             callback: () => {
                 this.runAiFurigana();
             }
@@ -2778,8 +2774,7 @@ class AiAssistantSuite extends Plugin {
 
         this.addCommand({
             id: 'run-ai-one-click-process',
-            name: 'AI Suite: One-click Smart Process Note (一键智能处理笔记)',
-            hotkeys: [{ modifiers: ["Mod", "Shift"], key: "a" }],
+            name: tr('一键处理当前笔记', 'Process the current note in one step'),
             callback: () => {
                 this.runOneClickSmartProcess();
             }
@@ -2787,7 +2782,7 @@ class AiAssistantSuite extends Plugin {
 
         this.addCommand({
             id: 'cancel-current-ai-request',
-            name: 'AI Suite: Cancel Current AI Request (取消当前请求)',
+            name: tr('取消当前 AI 请求', 'Cancel the current AI request'),
             callback: () => {
                 this.cancelCurrentRequest('用户取消');
             }
@@ -2795,7 +2790,7 @@ class AiAssistantSuite extends Plugin {
 
         this.addCommand({
             id: 'rollback-last-ai-change',
-            name: 'AI Suite: Rollback Last Change (回滚上次修改)',
+            name: tr('撤销上次应用的修改', 'Undo the last applied change'),
             callback: () => {
                 this.rollbackLastChange();
             }
@@ -2803,7 +2798,7 @@ class AiAssistantSuite extends Plugin {
 
         this.addCommand({
             id: 'redo-last-ai-rollback',
-            name: 'AI Suite: Redo Last Rollback (撤销回滚)',
+            name: tr('重做上次撤销', 'Redo the last undo'),
             callback: () => {
                 this.redoLastRollback();
             }
@@ -2812,7 +2807,7 @@ class AiAssistantSuite extends Plugin {
         // 添加批量处理命令
         this.addCommand({
             id: 'run-ai-batch-process',
-            name: 'AI Suite: Batch Process Files (批量处理文件)',
+            name: tr('批量处理笔记', 'Process several notes'),
             callback: () => {
                 this.runBatchProcess();
             }
@@ -2821,8 +2816,7 @@ class AiAssistantSuite extends Plugin {
         // 添加快速切换侧边栏的命令
         this.addCommand({
             id: 'toggle-ai-assistant-view',
-            name: 'AI Suite: Toggle Assistant Panel (切换助手面板)',
-            hotkeys: [{ modifiers: ["Mod", "Alt"], key: "a" }],
+            name: tr('打开或关闭助手面板', 'Toggle assistant panel'),
             callback: () => {
                 const leaves = this.app.workspace.getLeavesOfType(ASSISTANT_VIEW_TYPE);
                 if (leaves.length > 0) {
@@ -2838,8 +2832,7 @@ class AiAssistantSuite extends Plugin {
         // 添加简化的智能命令
         this.addCommand({
             id: 'ai-smart-summarize',
-            name: 'AI Assistant: Quick Summarize (快速总结)',
-            hotkeys: [{ modifiers: ["Ctrl", "Shift"], key: "s" }],
+            name: tr('快速总结当前笔记', 'Summarize the current note'),
             callback: () => {
                 this.runSmartAction('summarize');
             }
@@ -2847,8 +2840,7 @@ class AiAssistantSuite extends Plugin {
 
         this.addCommand({
             id: 'ai-smart-optimize',
-            name: 'AI Assistant: Quick Optimize (快速优化)',
-            hotkeys: [{ modifiers: ["Ctrl", "Shift"], key: "o" }],
+            name: tr('快速优化当前笔记', 'Polish the current note'),
             callback: () => {
                 this.runSmartAction('optimize');
             }
@@ -2860,12 +2852,16 @@ class AiAssistantSuite extends Plugin {
         this.addSettingTab(new AiAssistantSettingTab(this.app, this));
     }
 
+    applyPalette() {
+        document.body.toggleClass('ai-assistant-palette', this.settings.useAtelierPalette !== false);
+    }
+
     onunload() {
+        document.body.removeClass('ai-assistant-palette');
 
         if (this.currentAbortController && !this.currentAbortController.signal.aborted) {
             this.currentAbortController.abort('插件卸载');
         }
-        this.requestManager?.cancelAll?.();
         this.debounceTimers.clear();
     }
 
@@ -2874,7 +2870,7 @@ class AiAssistantSuite extends Plugin {
     // 验证文件名是否有效
     validateFileName(fileName) {
         // 检查文件名是否包含非法字符
-        const invalidChars = /[<>:"/\\|?*\x00-\x1f]/;
+        const invalidChars = new RegExp(`[<>:"/\\\\|?*${String.fromCharCode(0)}-${String.fromCharCode(0x1f)}]`);
         if (invalidChars.test(fileName)) {
             throw new Error('文件名包含非法字符');
         }
@@ -2921,7 +2917,7 @@ class AiAssistantSuite extends Plugin {
             const maxRetries = 10;
 
             while (!newFile && retries < maxRetries) {
-                await new Promise(resolve => setTimeout(resolve, 50));
+                await new Promise(resolve => window.setTimeout(resolve, 50));
                 newFile = this.app.vault.getAbstractFileByPath(newPath);
                 retries++;
             }
@@ -2949,7 +2945,7 @@ class AiAssistantSuite extends Plugin {
             return { valid: false, error: '未找到选中的 API 配置。' };
         }
 
-        if (!this.hasStoredApiKey(config) || (!['gemini', 'deepseek'].includes(config.apiProvider) && !config.apiUrl)) {
+        if (!this.isConfigUsable(config) || (!['gemini', 'deepseek', 'local'].includes(config.apiProvider) && !config.apiUrl)) {
             return { valid: false, error: '请填写 API Key (以及 API URL 如果必要)。' };
         }
 
@@ -2968,13 +2964,13 @@ class AiAssistantSuite extends Plugin {
                 this.initializeUsageStatsFromHistory?.(this.settings.processingHistory);
                 return this.settings.processingHistory;
             }
-            const history = localStorage.getItem('ai-assistant-history');
+            const history = window.localStorage.getItem('ai-assistant-history');
             if (history) {
                 const parsedHistory = JSON.parse(history);
                 this.settings.processingHistory = parsedHistory;
                 this.saveSettings();
                 this.initializeUsageStatsFromHistory?.(parsedHistory);
-                localStorage.removeItem('ai-assistant-history');
+                window.localStorage.removeItem('ai-assistant-history');
                 return parsedHistory;
             }
             return [];
@@ -3052,6 +3048,44 @@ class AiAssistantSuite extends Plugin {
         this.refreshAssistantViews();
     }
 
+    // 批量处理前的发送说明：几篇、多大、按什么顺序发给哪些服务（本地模型不出电脑）
+    describeBatchSend(files) {
+        const notes = (files || []).length;
+        const bytes = (files || []).reduce((sum, file) => sum + (file?.stat?.size || 0), 0);
+        const configs = this.orderConfigsForFallback(
+            (this.settings.apiConfigs || []).filter(c => c.enabled !== false && this.isConfigUsable(c))
+        );
+        const destinations = configs.map(config => ({
+            name: config.name || config.id || '未命名配置',
+            local: config.apiProvider === 'local'
+        }));
+        const size = bytes >= 1024 * 1024
+            ? `${(bytes / 1024 / 1024).toFixed(1)} MB`
+            : `${Math.max(1, Math.round(bytes / 1024))} KB`;
+        return { notes, bytes, size, destinations };
+    }
+
+    renderBatchSendSummary(container, files) {
+        const { notes, size, destinations } = this.describeBatchSend(files);
+        const box = container.createDiv({ cls: 'ai-assistant-batch-estimate' });
+        box.createEl('strong', { text: `将发送 ${notes} 篇笔记，约 ${size}。` });
+        if (destinations.length === 0) {
+            box.createEl('p', { text: '还没有可用的 AI 配置，请先在设置里添加。' });
+            return box;
+        }
+        const first = destinations[0];
+        box.createEl('p', {
+            text: first.local
+                ? `先发给「${first.name}」（本地模型，不离开这台电脑）。`
+                : `先发给「${first.name}」。`
+        });
+        if (destinations.length > 1) {
+            const rest = destinations.slice(1).map(d => d.local ? `${d.name}（本地）` : d.name).join('、');
+            box.createEl('p', { text: `它失败时依次改用：${rest}。` });
+        }
+        return box;
+    }
+
     // 通用API请求方法（支持多 Config 顺序 Fallback、取消和 OpenAI-compatible streaming）
     async makeApiRequest(prompt, modelNameOverride = null, expectJson = false, configOverride = null, options = {}) {
         let operationController = null;
@@ -3068,7 +3102,7 @@ class AiAssistantSuite extends Plugin {
 
             const allConfigs = this.settings.apiConfigs || [];
             const candidates = this.orderConfigsForFallback(
-                allConfigs.filter(c => c.enabled !== false && this.hasStoredApiKey(c))
+                allConfigs.filter(c => c.enabled !== false && this.isConfigUsable(c))
             );
 
             if (candidates.length === 0) {
@@ -3121,7 +3155,7 @@ class AiAssistantSuite extends Plugin {
         const provider = activeConfig.apiProvider || 'openai';
         const apiKey = await this.getApiKey(activeConfig);
 
-        if (!apiKey) {
+        if (!apiKey && provider !== 'local') {
             throw new Error('API Key 为空，请在设置中填写。');
         }
 
@@ -3146,36 +3180,49 @@ class AiAssistantSuite extends Plugin {
                 body: JSON.stringify(body)
             };
         } else {
-            if (!activeConfig.apiUrl && provider !== 'deepseek') {
+            if (!activeConfig.apiUrl && !['deepseek', 'local'].includes(provider)) {
                 throw new Error('API URL 为空，请在设置中填写。');
             }
-            url = provider === 'deepseek' ? this.resolveDeepSeekUrl(activeConfig.apiUrl) : activeConfig.apiUrl;
+            url = provider === 'deepseek'
+                ? this.resolveDeepSeekUrl(activeConfig.apiUrl)
+                : provider === 'local'
+                    ? (activeConfig.apiUrl || LOCAL_MODEL_DEFAULT_URL)
+                    : activeConfig.apiUrl;
             const body = {
                 model: model,
                 messages: [{ role: "user", content: prompt }]
             };
             if (provider === 'deepseek') body.thinking = { type: activeConfig.deepseekThinking ? 'enabled' : 'disabled' };
-            if (expectJson) {
+            // 本地模型对 response_format 的支持不一，靠提示词要求 JSON
+            if (expectJson && provider !== 'local') {
                 body.response_format = { type: "json_object" };
             }
             if (options.stream && !expectJson) {
                 body.stream = true;
             }
+            const headers = { "Content-Type": "application/json" };
+            if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
             requestOptions = {
                 method: "POST",
-                headers: {
-                    "Content-Type": "application/json",
-                    "Authorization": `Bearer ${apiKey}`
-                },
+                headers,
                 body: JSON.stringify(body)
             };
         }
 
         if (options.stream && provider !== 'gemini' && !expectJson) {
-            return await this.callOpenAiStreaming(url, requestOptions, options);
+            return await this.withStreamingFallback(
+                () => this.callOpenAiStreaming(url, requestOptions, options),
+                url, requestOptions, options,
+                data => data.choices?.[0]?.message?.content
+            );
         }
         if (options.stream && provider === 'gemini' && !expectJson) {
-            return await this.callGeminiStreaming(url, requestOptions, options);
+            const plainUrl = url.replace(':streamGenerateContent?alt=sse', ':generateContent');
+            return await this.withStreamingFallback(
+                () => this.callGeminiStreaming(url, requestOptions, options),
+                plainUrl, requestOptions, options,
+                data => data.candidates?.[0]?.content?.parts?.[0]?.text
+            );
         }
 
         const data = await this.executeJsonRequest(url, requestOptions, options);
@@ -3201,13 +3248,13 @@ class AiAssistantSuite extends Plugin {
         let timedOut = false;
         if (signal?.aborted) controller.abort();
         else signal?.addEventListener?.('abort', () => controller.abort(), { once: true });
-        const timer = setTimeout(() => {
+        const timer = window.setTimeout(() => {
             timedOut = true;
             controller.abort();
         }, timeoutMs);
         return {
             signal: controller.signal,
-            clear: () => clearTimeout(timer),
+            clear: () => window.clearTimeout(timer),
             timedOut: () => timedOut,
             error: () => new Error(`AI 请求超过 ${Math.round(timeoutMs / 1000)} 秒未响应，已停止等待。`)
         };
@@ -3218,49 +3265,58 @@ class AiAssistantSuite extends Plugin {
             throw this.createAbortError();
         }
 
+        // requestUrl 走 Obsidian 自己的网络层，不受跨域限制，桌面和手机都能用。
+        // 它不能中途取消，所以和超时、手动取消赛跑：谁先到就按谁处理，迟到的回答直接丢掉。
+        const timeout = this.createRequestTimeout(options.signal, options.timeout || 120000);
+        const stopped = new Promise((_, reject) => {
+            const stop = () => reject(timeout.timedOut() ? timeout.error() : this.createAbortError());
+            if (timeout.signal.aborted) stop();
+            else timeout.signal.addEventListener('abort', stop, { once: true });
+        });
+        stopped.catch(() => {});
         try {
-            if (this.requestManager && !options.forceFetch) {
-                const response = await this.requestManager.request({
+            const response = await Promise.race([
+                requestUrl({
                     url,
                     method: requestOptions.method || 'POST',
                     headers: requestOptions.headers || {},
                     body: requestOptions.body,
-                    signal: options.signal,
-                    timeout: options.timeout || 120000,
-                    maxRetries: options.maxRetries ?? 1
-                });
-                if (response.json) return response.json;
-                return JSON.parse(response.text);
-            }
-
-            const timeout = this.createRequestTimeout(options.signal, options.timeout || 120000);
-            let text;
-            let response;
-            try {
-                response = await fetch(url, {
-                    ...requestOptions,
-                    signal: timeout.signal
-                });
-                text = await response.text();
-            } catch (error) {
-                if (timeout.timedOut()) throw timeout.error();
-                throw error;
-            } finally {
-                timeout.clear();
-            }
-            if (!response.ok) {
-                throw new Error(`HTTP ${response.status} ${response.statusText}. ${text.substring(0, 200)}`);
+                    throw: false
+                }),
+                stopped
+            ]);
+            const text = typeof response.text === 'string' ? response.text : '';
+            if (response.status < 200 || response.status >= 300) {
+                throw new Error(`HTTP ${response.status}. ${text.substring(0, 200)}`);
             }
             return JSON.parse(text);
         } catch (error) {
-            if (/秒未响应/.test(error?.message || '')) throw error;
+            if (timeout.timedOut()) throw timeout.error();
             if (options.signal?.aborted || this.isCancellationError(error)) {
                 throw this.createAbortError();
             }
-            if (error.response) {
-                throw new Error(`HTTP ${error.status || error.response.status}. ${(error.response.text || '').substring(0, 200)}`);
-            }
             throw error;
+        } finally {
+            timeout.clear();
+        }
+    }
+
+    // 流式输出需要逐段读取，只有 fetch 能做到；若服务商拒绝浏览器跨域请求（fetch 直接失败），
+    // 自动改用一次普通请求，结果一次性返回。
+    async withStreamingFallback(streaming, url, requestOptions, options, readResult) {
+        try {
+            return await streaming();
+        } catch (error) {
+            if (options.signal?.aborted || this.isCancellationError(error) || /秒未响应|^HTTP /.test(error?.message || '')) {
+                throw error;
+            }
+            if (error?.name !== 'TypeError') throw error;
+            const body = JSON.parse(requestOptions.body || '{}');
+            delete body.stream;
+            const data = await this.executeJsonRequest(url, { ...requestOptions, body: JSON.stringify(body) }, options);
+            const text = readResult(data) || '';
+            if (text) options.onStream?.(text, text);
+            return text;
         }
     }
 
@@ -3297,7 +3353,7 @@ class AiAssistantSuite extends Plugin {
 
         while (true) {
             if (options.signal?.aborted) {
-                try { await reader.cancel(); } catch (error) {}
+                try { await reader.cancel(); } catch (error) { /* 连接已断开，无需再取消 */ }
                 throw this.createAbortError();
             }
             const { value, done } = await reader.read();
@@ -3368,7 +3424,7 @@ class AiAssistantSuite extends Plugin {
 
         while (true) {
             if (options.signal?.aborted) {
-                try { await reader.cancel(); } catch (error) {}
+                try { await reader.cancel(); } catch (error) { /* 连接已断开，无需再取消 */ }
                 throw this.createAbortError();
             }
 
@@ -3504,7 +3560,7 @@ class AiAssistantSuite extends Plugin {
                 if(destination!==originalPath)await this.app.fileManager.renameFile(file,destination);
             }catch(error){
                 let restored=!wrote;
-                if(wrote&&file.path===originalPath){try{await this.guardedWrite(file,proposed,current);restored=true;}catch{}}
+                if(wrote&&file.path===originalPath){try{await this.guardedWrite(file,proposed,current);restored=true;}catch{/* 笔记已被改动，保留现状 */}}
                 if(restored)this.settings.rollbackHistory=this.settings.rollbackHistory.filter(s=>s.id!==snapshot.id);
                 else{snapshot.filePath=file.path;for(const task of group.tasks){task.content.noteSnapshotId=snapshot.id;task.content.noteApplied=true;}}
                 await this.saveSettings();throw error;
@@ -3732,6 +3788,12 @@ class AiAssistantSuite extends Plugin {
             return;
         }
 
+        const send = this.describeBatchSend(selectedFiles);
+        const firstDestination = send.destinations[0];
+        if (firstDestination) {
+            new Notice(`开始批量处理：${send.notes} 篇，约 ${send.size}，发给「${firstDestination.name}」${firstDestination.local ? '（本地模型）' : ''}${send.destinations.length > 1 ? `，失败时依次改用其余 ${send.destinations.length - 1} 个配置` : ''}。`, 8000);
+        }
+
         // 设置中断标志
         this.batchProcessInterrupted = false;
 
@@ -3792,7 +3854,7 @@ class AiAssistantSuite extends Plugin {
                 if(failed)errorCount++;else processedCount++;
 
                 // 添加延迟以避免API限制
-                await new Promise(resolve => setTimeout(resolve, 1000));
+                await new Promise(resolve => window.setTimeout(resolve, 1000));
 
             } catch (error) {
                 console.error(`处理文件 ${file.basename} 时出错:`, error);
@@ -3859,7 +3921,7 @@ class AiAssistantSuite extends Plugin {
     async runAiStructurizer(showCompletionCard = true, targetFile = null) {
         const app = this.app;
 
-        const hasEnabledConfig = this.settings.apiConfigs && this.settings.apiConfigs.some(c => c.enabled !== false && this.hasStoredApiKey(c));
+        const hasEnabledConfig = this.settings.apiConfigs && this.settings.apiConfigs.some(c => c.enabled !== false && this.isConfigUsable(c));
         if (!hasEnabledConfig) {
             new Notice('请先在AI Assistant Suite插件设置中添加并启用至少一个API配置（需填写API Key）。');
             return;
@@ -3983,7 +4045,7 @@ class AiAssistantSuite extends Plugin {
     async runAiFurigana(showCompletionCard = true, targetFile = null, showProgressNotice = true) {
         const app = this.app;
 
-        const hasEnabledConfig = this.settings.apiConfigs && this.settings.apiConfigs.some(c => c.enabled !== false && this.hasStoredApiKey(c));
+        const hasEnabledConfig = this.settings.apiConfigs && this.settings.apiConfigs.some(c => c.enabled !== false && this.isConfigUsable(c));
         if (!hasEnabledConfig) {
             new Notice('请先在AI Assistant Suite插件设置中添加并启用至少一个API配置（需填写API Key）。');
             return;
@@ -4126,7 +4188,7 @@ class AiAssistantSuite extends Plugin {
             new Notice("没有活动的笔记文件。");
             return;
         }
-        const hasEnabledConfig = this.settings.apiConfigs && this.settings.apiConfigs.some(c => c.enabled !== false && this.hasStoredApiKey(c));
+        const hasEnabledConfig = this.settings.apiConfigs && this.settings.apiConfigs.some(c => c.enabled !== false && this.isConfigUsable(c));
         if (!hasEnabledConfig) {
             new Notice('请先在AI Assistant Suite插件设置中添加并启用至少一个API配置（需填写API Key）。');
             return;
@@ -4211,7 +4273,7 @@ class AiAssistantSuite extends Plugin {
             new Notice("没有活动的笔记文件。");
             return;
         }
-        const hasEnabledConfig = this.settings.apiConfigs && this.settings.apiConfigs.some(c => c.enabled !== false && this.hasStoredApiKey(c));
+        const hasEnabledConfig = this.settings.apiConfigs && this.settings.apiConfigs.some(c => c.enabled !== false && this.isConfigUsable(c));
         if (!hasEnabledConfig) {
             new Notice('请先在AI Assistant Suite插件设置中添加并启用至少一个API配置（需填写API Key）。');
             return;
@@ -4310,6 +4372,13 @@ class AiAssistantSuite extends Plugin {
                 }
             }
 
+            if (this.settings.taggerExistingOnly) {
+                processedTags = this.keepExistingTags(rawAiTags, existingTags);
+                if (processedTags.length === 0) {
+                    new Notice('AI 建议的标签都不在你的现有标签里；可以关掉“只用现有标签”再试。', 6000);
+                }
+            }
+
             const tagsForPrompt = [];
             processedTags.forEach(tag => {
                 const finalTag = tag.replace(/\s+/g, '-').replace(/，/g, '-');
@@ -4343,7 +4412,7 @@ class AiAssistantSuite extends Plugin {
             new Notice("没有活动的笔记文件。");
             return;
         }
-        const hasEnabledConfig = this.settings.apiConfigs && this.settings.apiConfigs.some(c => c.enabled !== false && this.hasStoredApiKey(c));
+        const hasEnabledConfig = this.settings.apiConfigs && this.settings.apiConfigs.some(c => c.enabled !== false && this.isConfigUsable(c));
         if (!hasEnabledConfig) {
             new Notice('请先在AI Assistant Suite插件设置中添加并启用至少一个API配置（需填写API Key）。');
             return;
@@ -4475,7 +4544,7 @@ class AiAssistantSuite extends Plugin {
             new Notice("没有活动的笔记文件。");
             return;
         }
-        const hasEnabledConfig = this.settings.apiConfigs && this.settings.apiConfigs.some(c => c.enabled !== false && this.hasStoredApiKey(c));
+        const hasEnabledConfig = this.settings.apiConfigs && this.settings.apiConfigs.some(c => c.enabled !== false && this.isConfigUsable(c));
         if (!hasEnabledConfig) {
             new Notice('请先在AI Assistant Suite插件设置中添加并启用至少一个API配置（需填写API Key）。');
             return;
@@ -4564,7 +4633,7 @@ class AiAssistantSuite extends Plugin {
 2. 你的回答必须是一个严格遵守以下结构的JSON对象。
 
 **任务列表:**
-${oneClickProcessActions.meta ? this.getMetaTaskDescription(hasExistingSummary, hasExistingTldr) : ''}${oneClickProcessActions.tagger ? `- **生成标签**: 提供约 ${this.settings.taggerSuggestionsCount} 个标签。优先使用"现有标签列表"中的标签，新标签必须是层级格式 (如 a/b/c)。\n` : ''}${oneClickProcessActions.mover ? `- **建议文件夹**: 提供 ${this.settings.moverSuggestionsCount} 个最合适的存放路径建议，可以从"现有文件夹列表"中选择或创造新的。\n` : ''}
+${oneClickProcessActions.meta ? this.getMetaTaskDescription(hasExistingSummary, hasExistingTldr) : ''}${oneClickProcessActions.tagger ? (this.settings.taggerExistingOnly ? `- **生成标签**: 提供最多 ${this.settings.taggerSuggestionsCount} 个标签，只能从"现有标签列表"中挑选，不要创造新标签。\n` : `- **生成标签**: 提供约 ${this.settings.taggerSuggestionsCount} 个标签。优先使用"现有标签列表"中的标签，新标签必须是层级格式 (如 a/b/c)。\n`) : ''}${oneClickProcessActions.mover ? `- **建议文件夹**: 提供 ${this.settings.moverSuggestionsCount} 个最合适的存放路径建议，可以从"现有文件夹列表"中选择或创造新的。\n` : ''}
 **JSON 输出格式:**
 \`\`\`json
 ${JSON.stringify(jsonStructure, null, 2)}
@@ -4649,6 +4718,10 @@ ${contextForPrompt}${this.userInstructionBlock()}
                             console.error("Error during translation fetch:", translationError);
                         }
                     }
+                }
+
+                if (this.settings.taggerExistingOnly) {
+                    processedTags = this.keepExistingTags(rawAiTags, existingTags);
                 }
 
                 tagSuggestions = processedTags.map(tag => {
@@ -4764,10 +4837,24 @@ ${content}
     }
 
     getTaggerPrompt(existingTags, content) {
-        return this.settings.taggerPrompt
+        const prompt = this.settings.taggerPrompt
             .replace('{{existing_tags}}', existingTags.join('， '))
             .replace('{{content}}', content)
             .replace('{{count}}', this.settings.taggerSuggestionsCount);
+        if (!this.settings.taggerExistingOnly) return prompt;
+        return `${prompt}\n\n**额外规则：** 只能从“现有标签列表”里挑选，不要创造任何新标签；没有合适的就少给几个。`;
+    }
+
+    // “只用现有标签”：不信任模型是否守规矩，结果再按库里的标签过滤一遍，拼写以库里为准
+    keepExistingTags(tags, existingTags) {
+        const byLowerCase = new Map(existingTags.map(tag => [tag.toLowerCase(), tag]));
+        const kept = [];
+        for (const raw of tags || []) {
+            const candidate = String(raw).trim().replace(/^#/, '').replace(/\s+/g, '-').replace(/，/g, '-');
+            const existing = byLowerCase.get(candidate.toLowerCase());
+            if (existing && !kept.includes(existing)) kept.push(existing);
+        }
+        return kept;
     }
 
     getMoverPrompt(folderPaths, content) {
@@ -4842,7 +4929,7 @@ ${content}
 
     // 简化的智能操作方法
     async runSmartAction(action) {
-        const hasEnabledConfig = this.settings.apiConfigs && this.settings.apiConfigs.some(c => c.enabled !== false && this.hasStoredApiKey(c));
+        const hasEnabledConfig = this.settings.apiConfigs && this.settings.apiConfigs.some(c => c.enabled !== false && this.isConfigUsable(c));
         if (!hasEnabledConfig) {
             new Notice('请先在AI Assistant Suite插件设置中添加并启用至少一个API配置（需填写API Key）。');
             return;
@@ -4977,7 +5064,7 @@ ${content}`
             if (action.enabled === false || !action.id) return;
             this.addCommand({
                 id: `run-custom-action-${this.toCommandId(action.id)}`,
-                name: `AI Suite Custom: ${action.name || '自定义动作'}`,
+                name: `${tr('自定义动作', 'Custom action')}: ${action.name || tr('未命名', 'untitled')}`,
                 callback: () => this.runCustomAction(action.id)
             });
         });
@@ -5076,7 +5163,7 @@ ${content}`
             new Notice('未找到启用的自定义 AI Action。', 3000);
             return;
         }
-        const hasEnabledConfig = this.settings.apiConfigs && this.settings.apiConfigs.some(c => c.enabled !== false && this.hasStoredApiKey(c));
+        const hasEnabledConfig = this.settings.apiConfigs && this.settings.apiConfigs.some(c => c.enabled !== false && this.isConfigUsable(c));
         if (!hasEnabledConfig) {
             new Notice('请先在AI Assistant Suite插件设置中添加并启用至少一个API配置（需填写API Key）。');
             return;
@@ -5271,17 +5358,24 @@ class AiAssistantSettingTab extends PluginSettingTab {
         this.plugin = plugin;
     }
 
+    addSectionHeading(containerEl, name) {
+        const heading = new Setting(containerEl).setName(name).setHeading();
+        heading.settingEl.addClass('ai-assistant-settings-section');
+        return heading;
+    }
+
     display() {
         this.renderSettingsBody();
         const root = this.containerEl;
         root.addClass('plugin-settings-workspace', 'assistant-settings-morning');
         const nav = root.createDiv({ cls: 'atelier-settings-nav' });
         const pages = ['模型连接', '处理偏好', '动作与提示词', '备份与恢复'];
-        const sections = Array.from(root.children).filter(el => el.tagName === 'H3');
+        const isSection = el => el.classList?.contains('ai-assistant-settings-section');
+        const sections = Array.from(root.children).filter(isSection);
         const groups = sections.map((heading, index) => {
             const nodes = [heading];
             let node = heading.nextElementSibling;
-            while (node && node.tagName !== 'H3' && node !== nav) {
+            while (node && !isSection(node) && node !== nav) {
                 nodes.push(node); node = node.nextElementSibling;
             }
             return { nodes, page: index === 0 ? 0 : index <= 2 ? 1 : index <= 4 ? 2 : 3 };
@@ -5306,12 +5400,10 @@ class AiAssistantSettingTab extends PluginSettingTab {
     renderSettingsBody() {
         const { containerEl } = this;
         containerEl.empty();
-        containerEl.createEl('h2', { text: '笔记助手设置' });
-
-        containerEl.createEl('h3', { text: '连接你的模型' });
+        this.addSectionHeading(containerEl, '连接你的模型');
         containerEl.createEl('p', {
             text: '每个服务独立保存。启用的配置按优先级依次尝试，连接失败时自动使用备用服务。',
-            attr: { style: 'font-size: 0.85em; color: var(--text-muted); margin: -4px 0 12px 0;' }
+            cls: 'ai-assistant-settings-note'
         });
 
         const activeConfigId = this.plugin.settings.activeConfigId;
@@ -5326,10 +5418,7 @@ class AiAssistantSettingTab extends PluginSettingTab {
         }
 
         const topContainer = containerEl.createDiv({ cls: "api-config-header" });
-        topContainer.style.display = "flex";
-        topContainer.style.alignItems = "center";
-        topContainer.style.gap = "10px";
-        topContainer.style.marginBottom = "15px";
+        topContainer.addClass('ai-assistant-u-top-row');
         
         new Setting(topContainer)
             .setName('编辑配置')
@@ -5379,7 +5468,7 @@ class AiAssistantSettingTab extends PluginSettingTab {
         };
 
         const delButton = actionsContainer.createEl('button', { text: '删除当前配置' });
-        delButton.style.marginLeft = "8px";
+        delButton.addClass('ai-assistant-u-gap-left');
         if (apiConfigs.length <= 1) {
             delButton.disabled = true;
         } else {
@@ -5394,7 +5483,7 @@ class AiAssistantSettingTab extends PluginSettingTab {
         // 优先级调整按钮
         const currentIdx = apiConfigs.findIndex(c => c.id === activeConfigId);
         const upBtn = actionsContainer.createEl('button', { text: '↑ 提高优先级' });
-        upBtn.style.marginLeft = "8px";
+        upBtn.addClass('ai-assistant-u-gap-left');
         upBtn.disabled = currentIdx <= 0;
         upBtn.onclick = async () => {
             if (currentIdx <= 0) return;
@@ -5406,7 +5495,7 @@ class AiAssistantSettingTab extends PluginSettingTab {
         };
 
         const downBtn = actionsContainer.createEl('button', { text: '↓ 降低优先级' });
-        downBtn.style.marginLeft = "4px";
+        downBtn.addClass('ai-assistant-u-gap-left-small');
         downBtn.disabled = currentIdx >= apiConfigs.length - 1;
         downBtn.onclick = async () => {
             if (currentIdx >= apiConfigs.length - 1) return;
@@ -5426,7 +5515,7 @@ class AiAssistantSettingTab extends PluginSettingTab {
         const enabledCount = apiConfigs.filter(c => c.enabled !== false).length;
         containerEl.createEl('p', {
             text: `优先级 #${priorityIdx + 1}（共 ${apiConfigs.length} 个配置，其中 ${enabledCount} 个已启用）`,
-            attr: { style: 'font-size: 0.82em; color: var(--text-accent); margin: 6px 0 12px 0;' }
+            cls: 'ai-assistant-settings-accent-note'
         });
 
         new Setting(containerEl)
@@ -5456,6 +5545,7 @@ class AiAssistantSettingTab extends PluginSettingTab {
                 .addOption('openai', 'OpenAI (兼容格式)')
                 .addOption('gemini', 'Google Gemini (官方格式)')
                 .addOption('deepseek', 'DeepSeek 官方')
+                .addOption('local', '本地模型（Ollama、LM Studio）')
                 .setValue(activeConfig.apiProvider || 'openai')
                 .onChange(async (value) => {
                     activeConfig.apiProvider = value;
@@ -5464,6 +5554,9 @@ class AiAssistantSettingTab extends PluginSettingTab {
                 }));
 
         let apiKeyInput = null;
+        if (activeConfig.apiProvider === 'local') {
+            containerEl.createEl('p', { cls: 'atelier-provider-note', text: `笔记只发给你电脑上的模型，不经过任何云服务，也不需要密钥。Ollama 默认地址 ${LOCAL_MODEL_DEFAULT_URL}；LM Studio 一般是 http://localhost:1234/v1/chat/completions。主模型填本地模型名，例如 qwen3:8b。手机上的 Obsidian 访问不到电脑的 localhost。` });
+        }
         if (activeConfig.apiProvider === 'deepseek') {
             new Setting(containerEl)
                 .setName('DeepSeek 模型预设')
@@ -5490,7 +5583,9 @@ class AiAssistantSettingTab extends PluginSettingTab {
             .setName('API Key')
             .setDesc(this.plugin.hasStoredApiKey(activeConfig)
                 ? '已保存 API Key。输入新值并点击保存可替换；不会在设置页显示明文。'
-                : '在这里填入你的 AI 服务 API Key。保存后会以本地加密标记写入 data.json。')
+                : activeConfig.apiProvider === 'local'
+                    ? '本地模型通常不需要密钥；只有你给本地服务设了密钥时才填。'
+                    : '在这里填入你的 AI 服务 API Key。保存后会以本地加密标记写入 data.json。')
             .addText(text => {
                 text.inputEl.type = 'password';
                 text.setPlaceholder(this.plugin.hasStoredApiKey(activeConfig) ? '已保存，输入新值可替换' : 'Enter your API key');
@@ -5574,10 +5669,20 @@ class AiAssistantSettingTab extends PluginSettingTab {
             }));
         connectionStatus = containerEl.createEl('p', { cls: 'atelier-connection-status', attr: { role: 'status', 'aria-live': 'polite' } });
 
-        containerEl.createEl('h3', { text: '功能参数设置' });
+        this.addSectionHeading(containerEl, '功能参数设置');
+        new Setting(containerEl)
+            .setName('晨雾配色')
+            .setDesc('助手面板和审阅窗口使用插件自带的青绿色调（浅色、深色各一套）。关闭后完全跟随你的 Obsidian 主题。')
+            .addToggle(toggle => toggle
+                .setValue(this.plugin.settings.useAtelierPalette !== false)
+                .onChange(async (value) => {
+                    this.plugin.settings.useAtelierPalette = value;
+                    this.plugin.applyPalette();
+                    await this.plugin.saveSettings();
+                }));
 
         // -- Mover --
-        containerEl.createEl('h4', { text: 'AI Mover' });
+        new Setting(containerEl).setName('文件夹建议').setHeading();
         new Setting(containerEl)
             .setName('建议数量')
             .setDesc('AI Mover 建议移动的目标文件夹数量。')
@@ -5601,7 +5706,7 @@ class AiAssistantSettingTab extends PluginSettingTab {
                 }));
 
         // -- Tagger --
-        containerEl.createEl('h4', { text: 'AI Tagger' });
+        new Setting(containerEl).setName('标签建议').setHeading();
         new Setting(containerEl)
             .setName('建议数量')
             .setDesc('AI Tagger 建议的标签数量。')
@@ -5610,6 +5715,16 @@ class AiAssistantSettingTab extends PluginSettingTab {
                 .setValue(this.plugin.settings.taggerSuggestionsCount)
                 .onChange(async (value) => {
                     this.plugin.settings.taggerSuggestionsCount = parseInt(value, 10) || 12;
+                    await this.plugin.saveSettings();
+                }));
+
+        new Setting(containerEl)
+            .setName('只用现有标签')
+            .setDesc('打开后只从库里已有的标签中挑选，结果会再按现有标签过滤一遍，不会冒出新标签。适合标签体系已经定好的库。')
+            .addToggle(toggle => toggle
+                .setValue(!!this.plugin.settings.taggerExistingOnly)
+                .onChange(async (value) => {
+                    this.plugin.settings.taggerExistingOnly = value;
                     await this.plugin.saveSettings();
                 }));
 
@@ -5649,7 +5764,7 @@ class AiAssistantSettingTab extends PluginSettingTab {
         }
 
         // -- Meta --
-        containerEl.createEl('h4', { text: 'AI Meta' });
+        new Setting(containerEl).setName('属性生成').setHeading();
         new Setting(containerEl)
             .setName('文件名最大长度')
             .setDesc('使用 AI Meta 生成标题重命名文件时，文件名的最大长度。')
@@ -5663,7 +5778,7 @@ class AiAssistantSettingTab extends PluginSettingTab {
 
         new Setting(containerEl).setName('紧凑侧栏').setDesc('缩短建议之间的距离，适合窄侧栏。').addToggle(t=>t.setValue(this.plugin.settings.sidebarCompact!==false).onChange(async value=>{this.plugin.settings.sidebarCompact=value;await this.plugin.saveSettings();this.plugin.refreshAssistantViews?.();}));
         new Setting(containerEl).setName('确认后进入下一篇').setDesc('批量审阅时自动显示下一篇待确认笔记。').addToggle(t=>t.setValue(this.plugin.settings.sidebarAutoNext!==false).onChange(async value=>{this.plugin.settings.sidebarAutoNext=value;await this.plugin.saveSettings();}));
-        containerEl.createEl('h3', { text: '默认处理步骤' });
+        this.addSectionHeading(containerEl, '默认处理步骤');
         new Setting(containerEl)
             .setDesc('选择默认生成哪些建议。按笔记集中确认，正文在主编辑区预览后采用。');
 
@@ -5718,16 +5833,16 @@ class AiAssistantSettingTab extends PluginSettingTab {
                 }));
 
 
-        containerEl.createEl('h3', { text: '自定义动作' });
+        this.addSectionHeading(containerEl, '自定义动作');
         containerEl.createEl('p', {
             text: 'Prompt 支持 {{content}}、{{selection}}、{{file_name}}、{{file_path}}。新增动作会立即出现在侧边栏；若要作为 Obsidian 命令/热键使用，重载插件后会注册。',
-            attr: { style: 'font-size: 0.85em; color: var(--text-muted); margin: -4px 0 12px 0;' }
+            cls: 'ai-assistant-settings-note'
         });
 
         const customActions = this.plugin.settings.customActions || [];
         customActions.forEach((action, index) => {
             const actionContainer = containerEl.createDiv({ cls: 'custom-action-settings-block' });
-            actionContainer.createEl('h4', { text: action.name || `自定义动作 ${index + 1}` });
+            new Setting(actionContainer).setName(action.name || `自定义动作 ${index + 1}`).setHeading();
 
             new Setting(actionContainer)
                 .setName('启用')
@@ -5771,9 +5886,7 @@ class AiAssistantSettingTab extends PluginSettingTab {
                             action.prompt = value;
                             await this.plugin.saveSettings();
                         });
-                    text.inputEl.style.width = '100%';
-                    text.inputEl.style.minHeight = '120px';
-                    text.inputEl.style.fontFamily = 'var(--font-monospace)';
+                    text.inputEl.addClass('ai-assistant-u-prompt-editor-small');
                 });
 
             new Setting(actionContainer)
@@ -5807,7 +5920,7 @@ class AiAssistantSettingTab extends PluginSettingTab {
                 }));
 
 
-        containerEl.createEl('h3', { text: '内置提示词' });
+        this.addSectionHeading(containerEl, '内置提示词');
         containerEl.createEl('p', { text: '在这里自定义每个功能的系统提示词(Prompt)。请注意，占位符(例如 {{content}})是必需的，用于在运行时动态插入内容。' });
 
         new Setting(containerEl)
@@ -5855,7 +5968,7 @@ class AiAssistantSettingTab extends PluginSettingTab {
                 });
             });
 
-        containerEl.createEl('h3', { text: '配置管理' });
+        this.addSectionHeading(containerEl, '配置管理');
 
         new Setting(containerEl)
             .setName('导出设置')
@@ -5941,7 +6054,7 @@ class AiAssistantSettingTab extends PluginSettingTab {
 
     // 重置设置
     async resetSettings() {
-        const confirmed = confirm('确定要重置所有设置为默认值吗？此操作不可撤销。');
+        const confirmed = await confirmAction(this.app, '确定要重置所有设置为默认值吗？此操作不可撤销。', '重置');
         if (confirmed) {
             this.plugin.settings = JSON.parse(JSON.stringify(DEFAULT_SETTINGS));
             await this.plugin.saveSettings();
@@ -5966,13 +6079,10 @@ class BatchProcessingModal extends Modal {
 
         // 选择文件
         const filesOption = contentEl.createDiv({ cls: "batch-option" });
-        filesOption.innerHTML = `
-            <div class="batch-option-icon">📄</div>
-            <div class="batch-option-content">
-                <h3>选择多个文件</h3>
-                <p>手动选择要处理的文件</p>
-            </div>
-        `;
+        filesOption.createDiv({ cls: "batch-option-icon", text: "📄" });
+        const filesOptionContent = filesOption.createDiv({ cls: "batch-option-content" });
+        filesOptionContent.createEl("h3", { text: "选择多个文件" });
+        filesOptionContent.createEl("p", { text: "手动选择要处理的文件" });
         filesOption.addEventListener('click', () => {
             this.close();
             this.showFileSelector();
@@ -5980,13 +6090,10 @@ class BatchProcessingModal extends Modal {
 
         // 选择文件夹
         const folderOption = contentEl.createDiv({ cls: "batch-option" });
-        folderOption.innerHTML = `
-            <div class="batch-option-icon">📁</div>
-            <div class="batch-option-content">
-                <h3>选择文件夹</h3>
-                <p>处理整个文件夹中的所有文件</p>
-            </div>
-        `;
+        folderOption.createDiv({ cls: "batch-option-icon", text: "📁" });
+        const folderOptionContent = folderOption.createDiv({ cls: "batch-option-content" });
+        folderOptionContent.createEl("h3", { text: "选择文件夹" });
+        folderOptionContent.createEl("p", { text: "处理整个文件夹中的所有文件" });
         folderOption.addEventListener('click', () => {
             this.close();
             this.showFolderSelector();
@@ -6056,9 +6163,6 @@ class AdvancedFileSelectionModal extends Modal {
         contentEl.empty();
 
         // 移除固定尺寸，让Obsidian自适应
-        contentEl.style.width = '';
-        contentEl.style.maxWidth = '';
-        contentEl.style.height = '';
 
         contentEl.createEl("h2", { text: "高级文件选择器" });
 
@@ -6080,16 +6184,16 @@ class AdvancedFileSelectionModal extends Modal {
     renderFilterBar(container) {
         // 筛选类型选择器
         const filterTypeSelect = container.createEl("select", { cls: "ai-assistant-filter-type-select" });
-        filterTypeSelect.innerHTML = `
-            <option value="">选择筛选类型</option>
-            <option value="folder">文件夹路径</option>
-            <option value="tags">标签</option>
-            <option value="properties">属性</option>
-            <option value="missing-properties">缺少属性</option>
-            <option value="query">查询语法</option>
-            <option value="date">修改日期</option>
-            <option value="size">文件大小</option>
-        `;
+        [
+            ["", "选择筛选类型"],
+            ["folder", "文件夹路径"],
+            ["tags", "标签"],
+            ["properties", "属性"],
+            ["missing-properties", "缺少属性"],
+            ["query", "查询语法"],
+            ["date", "修改日期"],
+            ["size", "文件大小"]
+        ].forEach(([value, text]) => filterTypeSelect.createEl("option", { value, text }));
 
         // 筛选值容器
         const filterValueContainer = container.createDiv({ cls: "ai-assistant-filter-value-container" });
@@ -6103,7 +6207,7 @@ class AdvancedFileSelectionModal extends Modal {
 
         // 下拉选择器容器
         const dropdownContainer = filterValueContainer.createDiv({ cls: "ai-assistant-filter-dropdown-container" });
-        dropdownContainer.style.display = 'none';
+        dropdownContainer.hide();
 
         // 当前筛选类型
         let currentFilterType = '';
@@ -6135,20 +6239,24 @@ class AdvancedFileSelectionModal extends Modal {
         clearButton.addEventListener('click', () => {
             filterTypeSelect.value = '';
             filterInput.value = '';
-            dropdownContainer.style.display = 'none';
+            dropdownContainer.hide();
             currentFilterType = '';
             this.clearFilters();
         });
 
         // 快速筛选按钮组
         const quickFilters = container.createDiv({ cls: "ai-assistant-quick-filters" });
-        quickFilters.innerHTML = `
-            <button class="ai-assistant-quick-filter-btn" data-type="folder" data-value="">所有文件</button>
-            <button class="ai-assistant-quick-filter-btn" data-type="folder" data-value="current">当前文件夹</button>
-            <button class="ai-assistant-quick-filter-btn" data-type="properties" data-value="status: ❌">status: ❌</button>
-            <button class="ai-assistant-quick-filter-btn" data-type="missing-properties" data-value="status">缺少status属性</button>
-            <button class="ai-assistant-quick-filter-btn" data-type="missing-properties" data-value="tags">缺少tags属性</button>
-        `;
+        [
+            ["folder", "", "所有文件"],
+            ["folder", "current", "当前文件夹"],
+            ["properties", "status: ❌", "status: ❌"],
+            ["missing-properties", "status", "缺少 status 属性"],
+            ["missing-properties", "tags", "缺少 tags 属性"]
+        ].forEach(([type, value, text]) => quickFilters.createEl("button", {
+            cls: "ai-assistant-quick-filter-btn",
+            text,
+            attr: { "data-type": type, "data-value": value }
+        }));
 
         // 快速筛选按钮事件
         quickFilters.addEventListener('click', (e) => {
@@ -6193,11 +6301,11 @@ class AdvancedFileSelectionModal extends Modal {
         container.empty();
 
         if (!type || !['folder', 'tags', 'properties', 'missing-properties'].includes(type)) {
-            container.style.display = 'none';
+            container.hide();
             return;
         }
 
-        container.style.display = 'block';
+        container.show();
 
         let options = [];
 
@@ -6217,14 +6325,14 @@ class AdvancedFileSelectionModal extends Modal {
         }
 
         if (options.length === 0) {
-            container.style.display = 'none';
+            container.hide();
             return;
         }
 
         // 创建可搜索的下拉选择器
         const dropdown = container.createEl("select", { cls: "ai-assistant-filter-dropdown" });
         dropdown.size = Math.min(options.length + 1, 15); // 显示最多15个选项
-        dropdown.innerHTML = '<option value="">选择现有值...</option>';
+        dropdown.createEl("option", { value: "", text: "选择现有值..." });
 
         options.forEach(option => {
             const optionEl = dropdown.createEl("option", {
@@ -6252,9 +6360,9 @@ class AdvancedFileSelectionModal extends Modal {
 
                 const optionText = option.text.toLowerCase();
                 if (optionText.includes(searchTerm)) {
-                    option.style.display = 'block';
+                    option.show();
                 } else {
-                    option.style.display = 'none';
+                    option.hide();
                 }
             });
 
@@ -6264,23 +6372,23 @@ class AdvancedFileSelectionModal extends Modal {
 
         // 输入框聚焦时显示下拉选择器
         inputElement.addEventListener('focus', () => {
-            container.style.display = 'block';
+            container.show();
         });
 
         // 下拉选择器聚焦时保持显示
         dropdown.addEventListener('focus', () => {
-            container.style.display = 'block';
+            container.show();
         });
 
         // 点击外部时隐藏下拉选择器
         const hideDropdown = (e) => {
             if (!container.contains(e.target) && e.target !== inputElement) {
-                container.style.display = 'none';
+                container.hide();
             }
         };
 
         // 延迟添加事件监听器，避免立即触发
-        setTimeout(() => {
+        window.setTimeout(() => {
             document.addEventListener('click', hideDropdown);
         }, 100);
     }
@@ -6474,10 +6582,8 @@ class AdvancedFileSelectionModal extends Modal {
 
             // 文件夹标题
             const folderHeader = folderSection.createDiv({ cls: "ai-assistant-folder-header" });
-            folderHeader.innerHTML = `
-                <span class="ai-assistant-folder-name">📁 ${escapeHtmlText(folderPath)}</span>
-                <span class="ai-assistant-folder-count">${files.length} 个文件</span>
-            `;
+            folderHeader.createSpan({ cls: "ai-assistant-folder-name", text: `📁 ${folderPath}` });
+            folderHeader.createSpan({ cls: "ai-assistant-folder-count", text: `${files.length} 个文件` });
 
             // 文件夹全选复选框
             const folderSelectAll = folderHeader.createEl("input", {
@@ -6533,13 +6639,10 @@ class AdvancedFileSelectionModal extends Modal {
                 });
 
                 const fileInfo = fileItem.createDiv({ cls: "ai-assistant-file-info" });
-                fileInfo.innerHTML = `
-                    <div class="ai-assistant-file-name">${escapeHtmlText(file.basename)}</div>
-                    <div class="ai-assistant-file-meta">
-                        <span class="ai-assistant-file-size">${Math.round(file.stat.size / 1024)} KB</span>
-                        <span class="ai-assistant-file-date">${new Date(file.stat.mtime).toLocaleDateString()}</span>
-                    </div>
-                `;
+                fileInfo.createDiv({ cls: "ai-assistant-file-name", text: file.basename });
+                const fileMeta = fileInfo.createDiv({ cls: "ai-assistant-file-meta" });
+                fileMeta.createSpan({ cls: "ai-assistant-file-size", text: `${Math.round(file.stat.size / 1024)} KB` });
+                fileMeta.createSpan({ cls: "ai-assistant-file-date", text: new Date(file.stat.mtime).toLocaleDateString() });
             });
         });
     }
@@ -6875,10 +6978,8 @@ class SimpleFileSelectionModal extends Modal {
 
         // 创建标题和文件数量
         const titleContainer = header.createDiv({ cls: "ai-assistant-folder-title-container" });
-        titleContainer.innerHTML = `
-            <span class="ai-assistant-folder-title">${title}</span>
-            <span class="ai-assistant-file-count">${files.length} 个文件</span>
-        `;
+        titleContainer.createSpan({ cls: "ai-assistant-folder-title", text: title });
+        titleContainer.createSpan({ cls: "ai-assistant-file-count", text: `${files.length} 个文件` });
 
         // 创建全选复选框
         const selectAllCheckbox = header.createEl("input", {
@@ -6898,14 +6999,11 @@ class SimpleFileSelectionModal extends Modal {
 
         const fileList = section.createDiv({ cls: "ai-assistant-file-list" });
         // 强制可见，防止样式或点击问题导致看不到文件
-        fileList.style.display = 'block';
-        fileList.style.padding = '0';
+        fileList.addClass('ai-assistant-u-file-list-plain');
 
         files.forEach(file => {
             const fileItem = fileList.createDiv({ cls: "ai-assistant-file-item" });
-            fileItem.style.display = 'flex';
-            fileItem.style.alignItems = 'center';
-            fileItem.style.gap = '8px';
+            fileItem.addClass('ai-assistant-u-file-row-tight');
 
             const checkbox = fileItem.createEl("input", { type: "checkbox" });
             checkbox.addEventListener('change', () => {
@@ -6963,10 +7061,8 @@ class SimpleFileSelectionModal extends Modal {
                 // 创建标题和文件数量
                 const titleContainer = header.createDiv({ cls: "ai-assistant-folder-title-container" });
                 const displayName = folderPath === '/' ? '📁 根目录' : `📁 ${folderPath}`;
-                titleContainer.innerHTML = `
-                    <span class="ai-assistant-folder-title">${displayName}</span>
-                    <span class="ai-assistant-file-count">${matchingFiles.length} 个匹配文件</span>
-                `;
+                titleContainer.createSpan({ cls: "ai-assistant-folder-title", text: displayName });
+                titleContainer.createSpan({ cls: "ai-assistant-file-count", text: `${matchingFiles.length} 个匹配文件` });
 
                 // 创建全选复选框
                 const selectAllCheckbox = header.createEl("input", {
@@ -6985,7 +7081,7 @@ class SimpleFileSelectionModal extends Modal {
                 });
 
                 const fileList = section.createDiv({ cls: "ai-assistant-file-list" });
-                fileList.style.display = 'block';
+                fileList.show();
 
                 matchingFiles.forEach(file => {
                     const fileItem = fileList.createDiv({ cls: "ai-assistant-file-item" });
@@ -7022,10 +7118,8 @@ class SimpleFileSelectionModal extends Modal {
 
         if (!hasResults) {
             const noResults = container.createDiv({ cls: "ai-assistant-no-results" });
-            noResults.innerHTML = `
-                <div class="ai-assistant-no-results-icon">🔍</div>
-                <div class="ai-assistant-no-results-text">没有找到匹配的文件</div>
-            `;
+            noResults.createDiv({ cls: "ai-assistant-no-results-icon", text: "🔍" });
+            noResults.createDiv({ cls: "ai-assistant-no-results-text", text: "没有找到匹配的文件" });
         }
     }
 
