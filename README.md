@@ -19,11 +19,14 @@ My notes grew faster than I could tidy them: inconsistent tags, no summaries, no
 
 ## How it works
 
-<img src="docs/screenshots/sidebar.jpg" width="860">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/sidebar-dark.jpg">
+  <img src="docs/screenshots/sidebar.jpg" width="860">
+</picture>
 
 1. Open a note, open the assistant in the right sidebar, choose what you want done: tidy the structure, add properties, suggest tags, suggest a folder, add furigana, or a custom action.
-2. The AI returns one proposal for this note. You see the **whole note as it would look**, can switch to a change-by-change view, and untick anything you do not want.
-3. **Apply** writes only what you kept. If the note changed while you were reviewing, the write stops and asks you to regenerate. Every applied change can be undone.
+2. The AI returns one proposal for this note and opens a **checklist**: tags, each property, the folder move and the body text each get a row with a *New / Changed / Move* label. Untick any row you do not want; the body text can be previewed as the whole note.
+3. **Apply N items** writes only what you kept. If the note changed while you were reviewing, the write stops and asks you to regenerate. Every applied change can be undone.
 4. For a folder, run a batch: results are reviewed **one note at a time**, then the next.
 
 **Looks:** an Apple-style "glass" interface: the sidebar, cards and previews are solid, only the sidebar header and dialogs are translucent. Colours come from your Obsidian theme and accent colour, light and dark follow Obsidian, and *Reduce transparency* / *Reduce motion* in the system settings are respected.

@@ -2357,13 +2357,6 @@
 .mist-sidebar .mist-head { display:flex; align-items:baseline; justify-content:space-between; }
 .mist-sidebar .mist-title { margin:0; font:600 18px/1.3 var(--mist-serif); letter-spacing:.02em; color:var(--mist-ink); }
 .mist-sidebar .mist-more { position:relative; }
-.mist-sidebar .mist-more summary { list-style:none; cursor:pointer; color:var(--mist-mute); font-size:12.5px; }
-.mist-sidebar .mist-more summary::-webkit-details-marker { display:none; }
-.mist-sidebar .mist-more summary::after { content:" ···"; }
-.mist-sidebar .mist-menu { position:absolute; right:0; top:24px; z-index:5; min-width:132px; padding:6px; border-radius:16px;
-  background:var(--mist-paper); box-shadow:var(--mist-shadow); display:flex; flex-direction:column; }
-.mist-sidebar .mist-menu button { background:none; border:0; text-align:left; padding:7px 10px; border-radius:10px; color:var(--mist-ink2); }
-.mist-sidebar .mist-menu button:hover { background:var(--mist-sage-soft); color:var(--mist-ink); }
 
 .mist-sidebar .mist-views { display:flex; gap:18px; margin-top:-6px; }
 .mist-sidebar .mist-view { background:none; border:0; padding:0 0 3px; color:var(--mist-mute); font-size:13px; }
@@ -2401,7 +2394,6 @@
 .mist-sidebar .mist-primary.is-quiet { background:var(--mist-sage-soft); color:var(--mist-ink); }
 .mist-sidebar .mist-caption { margin:0; color:var(--mist-mute); font-size:12px; }
 .mist-sidebar .mist-links { display:flex; flex-wrap:wrap; gap:6px 16px; }
-.mist-sidebar .mist-quiet { margin-top:8px; }
 .mist-sidebar .mist-link { background:none; border:0; padding:0; color:var(--mist-mute); font-size:12.5px; }
 .mist-sidebar .mist-link:hover { color:var(--mist-ink); }
 .mist-sidebar .mist-link.is-strong { color:var(--mist-ink); font-weight:600; }
@@ -2640,15 +2632,8 @@
 }
 
 .ap.mist-sidebar .mist-title { font: var(--ap-title-2); letter-spacing: -0.01em; }
-.ap.mist-sidebar .mist-more summary { font: var(--ap-callout); color: var(--ap-accent); }
-.ap.mist-sidebar .mist-more summary::after { content: " …"; }
-.ap.mist-sidebar .mist-menu {
-  top: 26px; padding: var(--ap-s1); border-radius: var(--ap-r-group);
-  background: var(--ap-glass); -webkit-backdrop-filter: var(--ap-blur); backdrop-filter: var(--ap-blur);
-  box-shadow: var(--ap-glass-edge), var(--ap-shadow-2);
-}
-.ap.mist-sidebar .mist-menu button { border-radius: 8px; color: var(--ap-label); }
-.ap.mist-sidebar .mist-menu button:hover { background: var(--ap-fill); }
+.ap.mist-sidebar .mist-more { width: 28px; height: 28px; padding: 0; border-radius: 8px; background: transparent; color: var(--ap-label-2); }
+.ap.mist-sidebar .mist-more:hover { background: var(--ap-fill); color: var(--ap-label); }
 
 /* The two views become a segmented control. */
 .ap.mist-sidebar .mist-views {
@@ -2668,7 +2653,11 @@
 /* Cards: regular radii, hairline instead of a soft drop. */
 .ap.mist-sidebar :is(.mist-note, .mist-paper, .mist-empty) { border-radius: var(--ap-r-group); box-shadow: var(--ap-hair); }
 .ap.mist-sidebar :is(.mist-ask, .mist-body-note) { border-radius: var(--ap-r-group); box-shadow: var(--ap-hair); }
-.ap.mist-sidebar .mist-note-glyph { border-radius: 8px; background: var(--ap-accent-tint); }
+.ap.mist-sidebar .mist-note-glyph {
+  display: grid; place-items: center; width: 34px; height: 34px;
+  border-radius: 9px; background: var(--ap-accent-tint); color: var(--ap-accent);
+}
+.ap.mist-sidebar .mist-note-glyph svg { width: 18px; height: 18px; }
 .ap.mist-sidebar .mist-note-copy strong { font: var(--ap-headline); }
 .ap.mist-sidebar .mist-note-copy small,
 .ap.mist-sidebar .mist-caption { font: var(--ap-subhead); color: var(--ap-label-2); }
@@ -2772,3 +2761,65 @@
 .ap.sn-document-preview { padding: var(--ap-s6); }
 .ap.sn-document-preview > :is(p, h2, .markdown-rendered) { max-width: 720px; margin-inline: auto; }
 .ap.sn-document-preview > h2 { font: var(--ap-title-3); color: var(--ap-label-2); }
+
+/* Recent notes under the prepare page: one grouped list, a row per note. */
+.ap.mist-sidebar .mist-recent { display: grid; gap: var(--ap-s2); margin-top: var(--ap-s3); }
+.ap.mist-sidebar .mist-recent-head { display: flex; align-items: baseline; justify-content: space-between; }
+.ap.mist-sidebar .mist-recent-head .mist-label { margin: 0 var(--ap-s1); }
+.ap.mist-sidebar .mist-recent-list { border-radius: var(--ap-r-group); background: var(--ap-group); box-shadow: var(--ap-hair); overflow: hidden; }
+.ap.mist-sidebar .mist-recent-row {
+  position: relative; display: flex; align-items: center; justify-content: flex-start; gap: var(--ap-s3); width: 100%; height: auto;
+  padding: 9px var(--ap-s3); border: 0; border-radius: 0; background: transparent; box-shadow: none; text-align: left;
+  color: var(--ap-label); transition: background var(--ap-fast) var(--ap-ease);
+}
+.ap.mist-sidebar .mist-recent-row + .mist-recent-row::before {
+  content: ""; position: absolute; top: 0; right: 0; left: 48px; border-top: 0.5px solid var(--ap-sep);
+}
+.ap.mist-sidebar .mist-recent-row:hover { background: var(--ap-fill); }
+.ap.mist-sidebar .mist-recent-icon {
+  display: grid; place-items: center; flex: none; width: 24px; height: 24px; border-radius: 7px;
+  background: var(--ap-fill); color: var(--ap-label-2);
+}
+.ap.mist-sidebar .mist-recent-icon svg { width: 14px; height: 14px; }
+.ap.mist-sidebar .mist-recent-copy { display: grid; min-width: 0; }
+.ap.mist-sidebar .mist-recent-name { font: 500 13px/18px var(--ap-font); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ap.mist-sidebar .mist-recent-meta { font: var(--ap-subhead); color: var(--ap-label-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Review sheet: one row per change, each can be ticked off on its own. */
+.modal.ap-modal.ai-review-sheet { width: min(520px, calc(100vw - 32px)); }
+.modal.ap-modal.ai-review-sheet .ai-review-head { margin-bottom: var(--ap-s4); text-align: center; }
+.modal.ap-modal.ai-review-sheet .ai-review-head h2 { margin: 0; font: var(--ap-title-2); }
+.modal.ap-modal.ai-review-sheet .ai-review-head p { margin: 2px 0 0; font: var(--ap-callout); color: var(--ap-label-2); }
+.modal.ap-modal.ai-review-sheet .ai-review-list {
+  border-radius: var(--ap-r-group); background: color-mix(in srgb, var(--text-normal) 5%, transparent); box-shadow: var(--ap-hair); overflow: hidden;
+}
+.modal.ap-modal.ai-review-sheet .ai-review-row {
+  position: relative; display: flex; align-items: center; gap: var(--ap-s3);
+  padding: var(--ap-s3) var(--ap-s4); cursor: pointer; transition: background var(--ap-fast) var(--ap-ease);
+}
+.modal.ap-modal.ai-review-sheet .ai-review-row + .ai-review-row::before {
+  content: ""; position: absolute; top: 0; right: 0; left: 52px; border-top: 0.5px solid var(--ap-sep);
+}
+.modal.ap-modal.ai-review-sheet .ai-review-row:hover { background: var(--ap-fill); }
+.modal.ap-modal.ai-review-sheet .ai-review-row:focus-visible { outline: 2px solid var(--ap-accent); outline-offset: -2px; }
+.modal.ap-modal.ai-review-sheet .ai-review-check {
+  display: grid; place-items: center; flex: none; width: 22px; height: 22px; border-radius: 50%;
+  box-shadow: inset 0 0 0 1.5px var(--ap-label-3); color: var(--ap-on-accent);
+  transition: background var(--ap-fast) var(--ap-ease), box-shadow var(--ap-fast) var(--ap-ease);
+}
+.modal.ap-modal.ai-review-sheet .ai-review-row.is-on .ai-review-check { background: var(--ap-accent); box-shadow: none; }
+.modal.ap-modal.ai-review-sheet .ai-review-check svg { width: 14px; height: 14px; stroke-width: 3; }
+.modal.ap-modal.ai-review-sheet .ai-review-copy { flex: 1; min-width: 0; }
+.modal.ap-modal.ai-review-sheet .ai-review-title { font: 500 14px/19px var(--ap-font); color: var(--ap-label); }
+.modal.ap-modal.ai-review-sheet .ai-review-detail {
+  margin-top: 1px; font: var(--ap-callout); color: var(--ap-label-2);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.modal.ap-modal.ai-review-sheet .ai-review-row:not(.is-on) .ai-review-title { color: var(--ap-label-2); }
+.modal.ap-modal.ai-review-sheet button.ai-review-preview {
+  padding: 3px 10px; background: transparent; color: var(--ap-accent); font: 500 12px/16px var(--ap-font);
+}
+.modal.ap-modal.ai-review-sheet button.ai-review-preview:hover { background: var(--ap-accent-tint); }
+.modal.ap-modal.ai-review-sheet .ap-pill { font-size: 12px; padding: 3px 10px; }
+.modal.ap-modal.ai-review-sheet .ai-review-empty { text-align: center; color: var(--ap-label-2); }
+.modal.ap-modal.ai-review-sheet .modal-button-container { margin-top: var(--ap-s5); gap: var(--ap-s2); }

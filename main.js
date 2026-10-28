@@ -1,4 +1,4 @@
-const { Plugin, Notice, PluginSettingTab, Setting, FuzzySuggestModal, Modal, ItemView, TFile, MarkdownRenderer, parseYaml, stringifyYaml, getLanguage, requestUrl } = require('obsidian');
+const { Plugin, Notice, PluginSettingTab, Setting, FuzzySuggestModal, Modal, ItemView, TFile, MarkdownRenderer, Menu, setIcon, parseYaml, stringifyYaml, getLanguage, requestUrl } = require('obsidian');
 
 // 界面主体是中文；命令名跟随 Obsidian 语言，非中文时用英文
 const isChineseInterface = () => {
@@ -21,6 +21,105 @@ class GlassFuzzySuggestModal extends FuzzySuggestModal {
     constructor(app) {
         super(app);
         this.modalEl?.addClass?.('ap', 'ap-modal');
+    }
+}
+
+// 审核一篇笔记的建议：标签、每个属性、移动、正文各占一行，逐项勾选后一次应用
+class ReviewChecklistModal extends GlassModal {
+    constructor(app, view, group) {
+        super(app);
+        this.view = view;
+        this.group = group;
+        this.modalEl.addClass('ai-review-sheet');
+    }
+
+    onOpen() { this.renderSheet(); }
+    onClose() { this.contentEl.empty(); }
+
+    items() {
+        const { group } = this;
+        const draft = this.view.noteDraft(group);
+        const suggestions = group.tasks.filter(t => t.type === 'one-click').at(-1)?.content.suggestions || {};
+        const before = this.app.metadataCache.getFileCache(group.file)?.frontmatter || {};
+        const skip = draft.skipMeta || [];
+        const items = [];
+        if (suggestions.tags?.length) {
+            const kept = draft.tags.filter(Boolean);
+            if (kept.length) items.push({ title: '标签', detail: kept.map(t => `#${t}`).join('　'), pill: `新增 ${kept.length}`, tone: 'is-accent',
+                on: draft.useTags, toggle: () => { draft.useTags = !draft.useTags; } });
+        }
+        if (suggestions.meta) {
+            for (const [key, label] of [['title', '标题'], ['summary', '摘要'], ['tldr', '一句话总结']]) {
+                const value = String(draft.meta[key] ?? '').trim();
+                if (!value) continue;
+                const old = before[key] === undefined || before[key] === null ? '' : String(before[key]).trim();
+                if (old === value) continue;
+                items.push({ title: `属性 ${label}`, detail: `${old || '空'} → ${value}`, pill: old ? '修改' : '新增', tone: old ? '' : 'is-accent',
+                    on: draft.useMeta && !skip.includes(key),
+                    toggle: () => {
+                        const off = draft.useMeta && !skip.includes(key);
+                        draft.skipMeta = off ? [...skip, key] : skip.filter(k => k !== key);
+                        if (!off) draft.useMeta = true;
+                    } });
+            }
+        }
+        if (suggestions.mover?.length && draft.folder) {
+            const from = group.file.parent?.path && group.file.parent.path !== '/' ? group.file.parent.path : '笔记库根目录';
+            if (draft.folder !== (group.file.parent?.path || '/')) items.push({ title: '移到文件夹', detail: `${from} → ${draft.folder}`, pill: '移动', tone: 'is-warn',
+                on: draft.useFolder, toggle: () => { draft.useFolder = !draft.useFolder; } });
+        }
+        const diffs = group.tasks.filter(t => t.type === 'diff-preview' && !t.content.applied && !t.content.noteApplied);
+        if (diffs.length) {
+            const chosen = diffs.find(t => t.id === draft.diffId) || diffs.at(-1);
+            items.push({ title: '正文', detail: chosen.content.action || chosen.title || '整理后的正文', pill: '修改', tone: '',
+                on: !!draft.diffId, toggle: () => { draft.diffId = draft.diffId ? '' : chosen.id; },
+                preview: () => this.view.plugin.openNotePreview(chosen) });
+        }
+        // 属性全被勾掉时不再写属性
+        if (suggestions.meta && !items.some(i => i.title.startsWith('属性 ') && i.on)) draft.useMeta = false;
+        return items;
+    }
+
+    renderSheet() {
+        const { contentEl, group } = this;
+        contentEl.empty();
+        const items = this.items();
+        const head = contentEl.createDiv({ cls: 'ai-review-head' });
+        head.createEl('h2', { text: '审核 AI 建议' });
+        head.createEl('p', { text: `${group.file.name} · 勾选要应用的项` });
+        const list = contentEl.createDiv({ cls: 'ai-review-list', attr: { role: 'group', 'aria-label': '建议清单' } });
+        for (const item of items) {
+            const row = list.createDiv({ cls: item.on ? 'ai-review-row is-on' : 'ai-review-row', attr: { role: 'checkbox', 'aria-checked': String(item.on), tabindex: '0' } });
+            const tick = row.createSpan({ cls: 'ai-review-check', attr: { 'aria-hidden': 'true' } });
+            if (item.on) setIcon?.(tick, 'check');
+            const copy = row.createDiv({ cls: 'ai-review-copy' });
+            copy.createDiv({ cls: 'ai-review-title', text: item.title });
+            copy.createDiv({ cls: 'ai-review-detail', text: item.detail });
+            if (item.preview) {
+                const look = row.createEl('button', { text: '预览', cls: 'ai-review-preview', attr: { 'aria-label': '在左边预览整理后的正文' } });
+                look.onclick = event => { event.stopPropagation(); item.preview(); };
+            }
+            row.createSpan({ cls: `ap-pill ${item.tone}`.trim(), text: item.pill });
+            const flip = () => { item.toggle(); this.renderSheet(); this.view.render(); };
+            row.onclick = flip;
+            row.onkeydown = event => { if (event.key === ' ' || event.key === 'Enter') { event.preventDefault(); flip(); } };
+        }
+        if (!items.length) contentEl.createEl('p', { cls: 'ai-review-empty', text: '这篇没有可应用的建议。' });
+        const count = items.filter(i => i.on).length;
+        const foot = contentEl.createDiv({ cls: 'modal-button-container' });
+        foot.createEl('button', { text: '取消' }).onclick = () => this.close();
+        const apply = foot.createEl('button', { text: `应用 ${count} 项`, cls: 'mod-cta' });
+        apply.disabled = !count;
+        apply.onclick = async () => {
+            if (this.view.noteApplying) return;
+            this.view.noteApplying = true; apply.disabled = true;
+            try {
+                await this.view.plugin.applyNoteGroup(this.group, this.view.noteDraft(this.group));
+                this.close();
+                this.view.afterNoteApplied?.(this.group);
+            } catch (e) { new Notice(e.message, 7000); apply.disabled = false; }
+            finally { this.view.noteApplying = false; this.view.render(); this.view.plugin.refreshAssistantViews?.(this.view); }
+        };
     }
 }
 
@@ -488,12 +587,9 @@ class AssistantView extends ItemView {
 
         const head = root.createDiv({ cls: 'mist-head' });
         head.createEl('h3', { text: '笔记助手', cls: 'mist-title' });
-        const more = head.createEl('details', { cls: 'mist-more' });
-        more.createEl('summary', { text: '更多', attr: { 'aria-label': '笔记助手更多功能' } });
-        const menu = more.createDiv({ cls: 'mist-menu' });
-        for (const [label, action] of this.mistSecondaryEntries()) {
-            menu.createEl('button', { text: label }).onclick = () => { more.open = false; action(); };
-        }
+        const more = head.createEl('button', { cls: 'clickable-icon mist-more', attr: { 'aria-label': '更多', 'aria-haspopup': 'menu' } });
+        setIcon?.(more, 'ellipsis');
+        more.onclick = event => this.openMistMenu(event);
 
         // Only two places in daily use: choosing what to do, and reviewing what the AI proposed.
         const pending = groups.filter(g => this.noteStatus(g) === '待确认').length;
@@ -537,13 +633,65 @@ class AssistantView extends ItemView {
 
     mistSecondaryEntries() {
         return [
-            ['处理记录', () => { this.workbenchPage = 'history'; this.render(); }],
-            ['批量整理', () => this.showBatchProcessingModal()],
-            ['任务列表', () => { this.workbenchPage = 'queue'; this.render(); }],
-            ['自定义动作', () => this.showAtelierCustomActions()],
-            ['其他工具', () => { this.workbenchPage = 'tools'; this.render(); }],
-            ['设置', () => { this.plugin.app.setting.open(); this.plugin.app.setting.openTabById(this.plugin.manifest.id); }]
+            ['处理记录', () => { this.workbenchPage = 'history'; this.render(); }, 'history'],
+            ['批量整理', () => this.showBatchProcessingModal(), 'files'],
+            ['任务列表', () => { this.workbenchPage = 'queue'; this.render(); }, 'list-checks'],
+            ['自定义动作', () => this.showAtelierCustomActions(), 'wand-sparkles'],
+            ['其他工具', () => { this.workbenchPage = 'tools'; this.render(); }, 'wrench'],
+            ['设置', () => { this.plugin.app.setting.open(); this.plugin.app.setting.openTabById(this.plugin.manifest.id); }, 'settings']
         ];
+    }
+
+    openMistMenu(event) {
+        const menu = new Menu();
+        this.mistSecondaryEntries().forEach(([label, action, icon], index) => {
+            if (index === 5) menu.addSeparator();
+            menu.addItem(item => item.setTitle(label).setIcon(icon).onClick(action));
+        });
+        menu.showAtMouseEvent(event);
+    }
+
+    // 整理页下半部分：最近处理过的几篇，点一下打开
+    renderMistRecent(container) {
+        const recent = this.plugin.getRecentHistory()
+            .map(item => ({ item, file: this.findFileByHistory(item) }))
+            .filter((entry, index, all) => entry.file && all.findIndex(other => other.file === entry.file) === index)
+            .slice(0, 5);
+        if (!recent.length) return;
+        const section = container.createDiv({ cls: 'mist-recent' });
+        const label = section.createDiv({ cls: 'mist-recent-head' });
+        label.createSpan({ text: '最近处理', cls: 'mist-label' });
+        label.createEl('button', { text: '全部', cls: 'mist-link' }).onclick = () => { this.workbenchPage = 'history'; this.render(); };
+        const list = section.createDiv({ cls: 'mist-recent-list' });
+        for (const { item, file } of recent) {
+            const row = list.createEl('button', { cls: 'mist-recent-row', attr: { 'aria-label': `打开 ${file.basename}` } });
+            setIcon?.(row.createSpan({ cls: 'mist-recent-icon', attr: { 'aria-hidden': 'true' } }), 'file-text');
+            const copy = row.createSpan({ cls: 'mist-recent-copy' });
+            copy.createSpan({ text: file.basename, cls: 'mist-recent-name' });
+            copy.createSpan({ text: `${item.action || '整理'} · ${this.mistTimeLabel(item.timestamp)}`, cls: 'mist-recent-meta' });
+            row.onclick = () => this.plugin.app.workspace.getLeaf(false).openFile(file);
+        }
+    }
+
+    mistTimeLabel(timestamp) {
+        const when = new Date(timestamp || Date.now());
+        const now = new Date();
+        const time = `${String(when.getHours()).padStart(2, '0')}:${String(when.getMinutes()).padStart(2, '0')}`;
+        if (when.toDateString() === now.toDateString()) return `今天 ${time}`;
+        const yesterday = new Date(now); yesterday.setDate(now.getDate() - 1);
+        if (when.toDateString() === yesterday.toDateString()) return `昨天 ${time}`;
+        return `${when.getMonth() + 1}月${when.getDate()}日`;
+    }
+
+    openReviewChecklist(group) {
+        if (!group || this.noteStatus(group) !== '待确认') return;
+        new ReviewChecklistModal(this.plugin.app, this, group).open();
+    }
+
+    afterNoteApplied(group) {
+        if (this.plugin.settings.sidebarAutoNext === false) return;
+        const next = this.getNoteGroups().find(g => g.file !== group.file && this.noteStatus(g) === '待确认');
+        if (next) this.selectedTaskId = next.tasks.at(-1).id;
     }
 
     getNoteGroups() {
@@ -620,7 +768,7 @@ class AssistantView extends ItemView {
     // The note this panel is about: shown on both pages so the user always knows what will change.
     renderMistNote(container, file, allowSwap = true) {
         const note = container.createDiv({ cls: 'mist-note' });
-        note.createDiv({ cls: 'mist-note-glyph', attr: { 'aria-hidden': 'true' } });
+        setIcon?.(note.createDiv({ cls: 'mist-note-glyph', attr: { 'aria-hidden': 'true' } }), 'file-text');
         const copy = note.createDiv({ cls: 'mist-note-copy' });
         copy.createEl('strong', { text: file ? file.basename : '选择一篇笔记' });
         copy.createEl('small', { text: file ? (file.parent?.path === '/' ? '笔记库根目录' : (file.parent?.path || file.path)) : '打开或选择 Markdown 文件' });
@@ -663,13 +811,11 @@ class AssistantView extends ItemView {
             this.render(); this.plugin.refreshAssistantViews?.(this);
             try { await this.plugin.runOneClickSmartProcess(file, { ...chosen }, () => this.workbenchCancelled, this.sessionInstruction || ''); }
             finally { this.workbenchRunning = false; this.render(); this.plugin.refreshAssistantViews?.(this); }
+            if (!this.workbenchCancelled) this.openReviewChecklist(this.getNoteGroups().find(g => g.file.path === file.path));
         };
         if (busy) this.renderCurrentRequestBanner(body);
 
-        const quiet = body.createDiv({ cls: 'mist-links mist-quiet' });
-        for (const [label, action] of this.mistSecondaryEntries().filter(([label]) => ['处理记录', '批量整理', '自定义动作', '设置'].includes(label))) {
-            quiet.createEl('button', { text: label, cls: 'mist-link' }).onclick = action;
-        }
+        this.renderMistRecent(body);
     }
 
     renderMistReview(body, file, groups) {
@@ -791,18 +937,14 @@ class AssistantView extends ItemView {
         const count = [draft.useMeta && suggestions.meta, draft.useTags && draft.tags.length, draft.useFolder && suggestions.mover?.length, draft.diffId].filter(Boolean).length;
         const foot = body.createDiv({ cls: 'mist-foot' });
         foot.createEl('button', { text: '稍后再看', cls: 'mist-link' }).onclick = () => { this.workbenchPage = 'queue'; this.render(); };
-        const accept = foot.createEl('button', { text: done ? '撤销这篇' : `确认这篇 · ${count} 项`, cls: done ? 'mist-primary is-quiet' : 'mist-primary' });
+        const accept = foot.createEl('button', { text: done ? '撤销这篇' : `审核并应用 · ${count} 项`, cls: done ? 'mist-primary is-quiet' : 'mist-primary' });
         accept.disabled = !!this.noteApplying || !!this.workbenchRunning || (!done && !count);
         accept.onclick = async () => {
             if (this.noteApplying) return;
+            if (!done) { this.openReviewChecklist(group); return; }
             this.noteApplying = true; accept.disabled = true;
             try {
-                if (done) await this.plugin.undoNoteGroup(group);
-                else await this.plugin.applyNoteGroup(group, draft);
-                if (!done && this.plugin.settings.sidebarAutoNext !== false) {
-                    const next = this.getNoteGroups().find(g => g.file !== group.file && this.noteStatus(g) === '待确认');
-                    if (next) this.selectedTaskId = next.tasks.at(-1).id;
-                }
+                await this.plugin.undoNoteGroup(group);
             } catch (e) { new Notice(e.message, 7000); }
             finally { this.noteApplying = false; this.render(); this.plugin.refreshAssistantViews?.(this); }
         };
@@ -3534,7 +3676,7 @@ class AiAssistantSuite extends Plugin {
             const match=text.match(/^---\r?\n([\s\S]*?)\r?\n(?:---|\.\.\.)(?:\r?\n|$)/);
             const fm=match?(parseYaml(match[1])||{}):{};
             if(typeof fm!=='object'||Array.isArray(fm))throw new Error('笔记属性不是有效的 YAML 对象，未写入。');
-            if(draft.useMeta)for(const key of ['title','summary','tldr'])if(draft.meta[key]!==undefined)fm[key]=String(draft.meta[key]).trim();
+            if(draft.useMeta)for(const key of ['title','summary','tldr'])if(draft.meta[key]!==undefined&&!(draft.skipMeta||[]).includes(key))fm[key]=String(draft.meta[key]).trim();
             if(draft.useTags){const old=Array.isArray(fm.tags)?fm.tags:(fm.tags?[String(fm.tags)]:[]);fm.tags=[...new Set([...old,...draft.tags])];}
             const newline=current.includes('\r\n')?'\r\n':'\n';
             text=`---${newline}${stringifyYaml(fm).trimEnd().replace(/\r?\n/g,newline)}${newline}---${newline}${match?text.slice(match[0].length):text}`;
@@ -3552,7 +3694,7 @@ class AiAssistantSuite extends Plugin {
             folder=String(folder).replace(/^\/+|\/+$/g,'');
             if(folder.split('/').some(p=>p==='..'||p==='.')||/[\\:*?"<>|]/.test(folder))throw new Error('目标文件夹路径无效。');
             let name=file.name||originalPath.split('/').at(-1);
-            if(draft.useMeta&&draft.rename){const title=String(draft.meta.title||'').trim().replace(/[/\\:?*"<>|]/g,'-').slice(0,this.settings.metaFileNameMaxLength||100);if(!title||/^\.+$/.test(title))throw new Error('请填写有效的文件名。');name=title+'.md';}
+            if(draft.useMeta&&draft.rename&&!(draft.skipMeta||[]).includes('title')){const title=String(draft.meta.title||'').trim().replace(/[/\\:?*"<>|]/g,'-').slice(0,this.settings.metaFileNameMaxLength||100);if(!title||/^\.+$/.test(title))throw new Error('请填写有效的文件名。');name=title+'.md';}
             const destination=folder?folder+'/'+name:name;
             if(destination!==originalPath&&this.app.vault.getAbstractFileByPath(destination))throw new Error('目标位置已有同名文件，未做修改。');
             if(proposed===current&&destination===originalPath)throw new Error('没有选中需要应用的修改。');

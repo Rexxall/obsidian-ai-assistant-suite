@@ -42,7 +42,7 @@ test('a custom action for a picked note cannot inherit another editor selection'
  const c=await p.getCurrentActionContext(picked);assert.equal(c.file,picked);assert.equal(c.selection,'');assert.equal(c.originalContent,'Picked note content');
 });
 
-test('sidebar puts five functions directly on the main surface and keeps secondary entries in More',()=>{const f=fixture();assert.equal(f.all().filter(e=>e.attrs['data-action']).length,5);assert.equal(f.all().filter(e=>e.options.cls==='mist-view').length,2);assert.ok(!f.all().some(e=>['at-art','at-document','aw-presets','aw-orb'].includes(e.options.cls)));const more=f.all().find(e=>e.options.cls==='mist-more');assert.ok(more);assert.ok(more.children.some(e=>e.options.text==='更多'));assert.ok(f.all(more).some(e=>e.options.text==='设置'));});
+test('sidebar puts five functions directly on the main surface and keeps secondary entries in More',()=>{const f=fixture();assert.equal(f.all().filter(e=>e.attrs['data-action']).length,5);assert.equal(f.all().filter(e=>e.options.cls==='mist-view').length,2);assert.ok(!f.all().some(e=>['at-art','at-document','aw-presets','aw-orb'].includes(e.options.cls)));const more=f.all().find(e=>e.options.cls==='clickable-icon mist-more');assert.ok(more);assert.equal(more.attrs['aria-label'],'更多');assert.ok(f.v.mistSecondaryEntries().some(([label])=>label==='设置'));assert.ok(!f.all().some(e=>e.options.cls==='mist-links mist-quiet'));});
 
 test('note review expands metadata and tags together and retains edits across render',()=>{
  const file={basename:'Note',path:'Note.md',extension:'md',parent:{path:'/'}};const f=fixture(file);
@@ -50,7 +50,7 @@ test('note review expands metadata and tags together and retains edits across re
  assert.ok(f.all().some(e=>e.options.cls==='mist-paper'));
  assert.ok(f.all().some(e=>e.options.cls==='mist-chips'));
  const title=f.all().find(e=>e.tag==='textarea');title.value='My title';title.oninput();f.v.render();assert.equal(f.all().find(e=>e.tag==='textarea').value,'My title');
- assert.ok(f.all().find(e=>e.tag==='button'&&/^确认这篇 · \d+ 项$/.test(e.options.text||'')));
+ assert.ok(f.all().find(e=>e.tag==='button'&&/^审核并应用 · \d+ 项$/.test(e.options.text||'')));
  f.v.workbenchPage='queue';f.v.render();assert.equal(f.all().filter(e=>e.options.cls==='mist-queue-row').length,1);
 });
 test('existing non-note tools remain reachable when note results exist',()=>{
@@ -74,5 +74,23 @@ test('a tag tapped off stays out of the draft and the count follows',()=>{
  f.all().find(e=>e.tag==='button'&&e.options.text==='#drop').onclick();
  const group=f.v.getNoteGroups()[0];assert.deepEqual(f.v.noteDraft(group).tags,['keep']);
  assert.ok(f.all().some(e=>e.tag==='button'&&e.options.text==='#drop'&&e.options.cls==='mist-chip is-off'));
- assert.ok(f.button('确认这篇 · 1 项'));
+ assert.ok(f.button('审核并应用 · 1 项'));
+});
+
+test('the review checklist lists tags, each changed property and the move, and counts what stays ticked',()=>{
+ const module={exports:{}};class Modal{constructor(app){this.app=app;this.modalEl=new El();this.contentEl=new El();} close(){this.closed=true;}}
+ vm.runInNewContext(fs.readFileSync(__dirname+'/main.js','utf8')+'\nmodule.exports={AssistantView,ReviewChecklistModal};',{module,console,require:()=>({...Object.fromEntries(['Plugin','Notice','PluginSettingTab','Setting','FuzzySuggestModal','ItemView','TFile'].map(k=>[k,class{}])),Modal})});
+ const {AssistantView,ReviewChecklistModal}=module.exports;
+ const file={basename:'Trip',name:'Trip.md',path:'Notes/Trip.md',extension:'md',parent:{path:'Notes'}};
+ const v=Object.create(AssistantView.prototype);v.tasks=[{id:'s',type:'one-click',status:'displaying',content:{file,originalContent:'Body',suggestions:{meta:{title:'Trip',summary:'Three days'},tags:[{final:'travel'},{final:'kyoto'}],mover:[{path:'Travel/2026'}]}}}];v.render=()=>{};v.plugin={settings:{}};
+ const app={metadataCache:{getFileCache:()=>({frontmatter:{title:'Trip'}})}};
+ const group=v.getNoteGroups()[0],modal=new ReviewChecklistModal(app,v,group);modal.onOpen();
+ const all=(e=modal.contentEl)=>[e,...e.children.flatMap(all)];
+ const rows=()=>all().filter(e=>e.attrs.role==='checkbox');
+ assert.deepEqual(rows().map(r=>r.children[1].children[0].options.text),['标签','属性 摘要','移到文件夹']);
+ assert.deepEqual(rows().map(r=>r.children.at(-1).options.text),['新增 2','新增','移动']);
+ assert.ok(all().some(e=>e.tag==='button'&&e.options.text==='应用 3 项'));
+ rows()[1].onclick();assert.deepEqual([...v.noteDraft(group).skipMeta],['summary']);assert.equal(v.noteDraft(group).useMeta,false);
+ rows()[2].onclick();assert.equal(v.noteDraft(group).useFolder,false);
+ assert.ok(all().some(e=>e.tag==='button'&&e.options.text==='应用 1 项'));
 });
