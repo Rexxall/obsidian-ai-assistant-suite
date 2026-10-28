@@ -10,10 +10,24 @@ const isChineseInterface = () => {
 };
 const tr = (zh, en) => isChineseInterface() ? zh : en;
 
+// 弹窗统一用玻璃风（apple-kit.css 的 .ap-modal）
+class GlassModal extends Modal {
+    constructor(app) {
+        super(app);
+        this.modalEl?.addClass?.('ap', 'ap-modal');
+    }
+}
+class GlassFuzzySuggestModal extends FuzzySuggestModal {
+    constructor(app) {
+        super(app);
+        this.modalEl?.addClass?.('ap', 'ap-modal');
+    }
+}
+
 // Obsidian 风格的确认框，代替浏览器自带的 confirm()
 function confirmAction(app, message, confirmText) {
     return new Promise(resolve => {
-        const modal = new Modal(app);
+        const modal = new GlassModal(app);
         let answered = false;
         const finish = value => {
             if (answered) return;
@@ -318,7 +332,6 @@ const DEFAULT_SETTINGS = {
     // Tagger Settings
     taggerSuggestionsCount: 12,
     taggerExistingOnly: false,
-    useAtelierPalette: true,
     taggerEnableTranslation: true,
     taggerTranslationTargetLanguage: '中文',
     taggerTranslationMinLength: 16,
@@ -363,7 +376,7 @@ class AssistantNotePreview extends ItemView {
     async onOpen(){this.contentEl.createEl('p',{text:'在笔记助手中选择正文建议。'});}
     async showTask(task){
         this.contentEl.empty();
-        this.contentEl.addClass('sn-document-preview');
+        this.contentEl.addClass('ap', 'sn-document-preview');
         this.contentEl.createEl('p',{text:'整文预览 · 原笔记尚未修改',cls:'sn-muted'});
         this.contentEl.createEl('h2',{text:task.content.file.basename});
         const body=this.contentEl.createDiv({cls:'markdown-rendered'});
@@ -464,7 +477,7 @@ class AssistantView extends ItemView {
     render() {
         const container = this.containerEl.children[1];
         container.empty();
-        const root = container.createDiv({ cls: 'mist-sidebar' });
+        const root = container.createDiv({ cls: 'ap ap-view mist-sidebar' });
         if (this.plugin.settings.sidebarCompact !== false) root.addClass('mist-compact');
         const page = this.workbenchPage || 'prepare';
         const activeNote = this.plugin.app.workspace.getActiveFile();
@@ -804,7 +817,7 @@ class AssistantView extends ItemView {
             this.render();
             this.plugin.refreshAssistantViews?.(this);
         };
-        class NotePicker extends FuzzySuggestModal {
+        class NotePicker extends GlassFuzzySuggestModal {
             getItems(){return this.app.vault.getMarkdownFiles()}
             getItemText(file){return file.path}
             onChooseItem(file){choose(file)}
@@ -813,7 +826,7 @@ class AssistantView extends ItemView {
     }
 
     showAtelierCustomActions() {
-        const modal=new Modal(this.plugin.app);modal.modalEl.addClass('assistant-atelier-modal');
+        const modal=new GlassModal(this.plugin.app);modal.modalEl.addClass('assistant-atelier-modal');
         modal.contentEl.createEl('h2',{text:'按自己的方式处理'});
         const actions=(this.plugin.settings.customActions||[]).filter(a=>a.enabled!==false);
         if(!actions.length)modal.contentEl.createEl('p',{text:'在插件设置中添加常用要求，保存为自定义动作。'});
@@ -826,7 +839,7 @@ class AssistantView extends ItemView {
     }
 
     openAtelierSettings() {
-        const modal=new Modal(this.plugin.app);modal.modalEl.addClass('assistant-atelier-modal');
+        const modal=new GlassModal(this.plugin.app);modal.modalEl.addClass('assistant-atelier-modal');
         modal.contentEl.createEl('h2',{text:'处理偏好'});
         modal.contentEl.createEl('p',{text:'调整默认步骤。模型、提示词和全部高级选项可在完整设置中管理。'});
         const chosen={...(this.plugin.settings.oneClickProcessActions||{})};
@@ -1566,7 +1579,7 @@ class AssistantView extends ItemView {
             content.reviewMode = 'article'; card.empty(); this.renderDiffPreviewTask(card, task, expanded);
         };
         if (!expanded) controls.createEl('button', { text: '展开审阅' }).onclick = () => {
-            const modal = new Modal(this.plugin.app);
+            const modal = new GlassModal(this.plugin.app);
             modal.modalEl.addClass('assistant-review-modal');
             const paint = () => { modal.contentEl.empty(); modal.contentEl.createEl('h2', { text: task.title || '审阅修改' }); this.renderDiffPreviewTask(modal.contentEl, task, true); };
             modal.onOpen = paint;
@@ -1635,7 +1648,7 @@ class AssistantView extends ItemView {
             content.reviewMode = 'changes'; repaint();
         };
         if (!expanded) toolbar.createEl('button', { text: '展开阅读', cls: 'assistant-article-text-button' }).onclick = () => {
-            const modal = new Modal(this.plugin.app);
+            const modal = new GlassModal(this.plugin.app);
             modal.modalEl.addClass('assistant-review-modal');
             modal.onOpen = () => this.renderDiffPreviewTask(modal.contentEl, task, true);
             modal.open();
@@ -2215,7 +2228,7 @@ class AssistantView extends ItemView {
     }
 }
 
-class PromptEditModal extends Modal {
+class PromptEditModal extends GlassModal {
     constructor(app, plugin, settingName, title) {
         super(app);
         this.plugin = plugin;
@@ -2348,7 +2361,7 @@ class PromptEditModal extends Modal {
 
 
 // 批量文件选择模态框
-class BatchFileSelectionModal extends Modal {
+class BatchFileSelectionModal extends GlassModal {
     constructor(app, files, onChoose) {
         super(app);
         this.files = files;
@@ -2404,8 +2417,7 @@ class BatchFileSelectionModal extends Modal {
         const confirmContainer = contentEl.createDiv();
         confirmContainer.addClass('ai-assistant-u-confirm-row');
 
-        const confirmBtn = confirmContainer.createEl('button', { text: '开始批量处理' });
-        confirmBtn.addClass('ai-assistant-u-checkbox');
+        const confirmBtn = confirmContainer.createEl('button', { text: '开始批量处理', cls: 'mod-cta' });
         confirmBtn.onclick = () => {
             this.close();
             this.onChoose(this.selectedFiles);
@@ -2663,7 +2675,6 @@ class AiAssistantSuite extends Plugin {
 
     async onload() {
         await this.loadSettings();
-        this.applyPalette();
 
         // 兼容和迁移旧版本配置到 apiConfigs
         if (!this.settings.apiConfigs || this.settings.apiConfigs.length === 0) {
@@ -2852,12 +2863,7 @@ class AiAssistantSuite extends Plugin {
         this.addSettingTab(new AiAssistantSettingTab(this.app, this));
     }
 
-    applyPalette() {
-        document.body.toggleClass('ai-assistant-palette', this.settings.useAtelierPalette !== false);
-    }
-
     onunload() {
-        document.body.removeClass('ai-assistant-palette');
 
         if (this.currentAbortController && !this.currentAbortController.signal.aborted) {
             this.currentAbortController.abort('插件卸载');
@@ -5367,7 +5373,7 @@ class AiAssistantSettingTab extends PluginSettingTab {
     display() {
         this.renderSettingsBody();
         const root = this.containerEl;
-        root.addClass('plugin-settings-workspace', 'assistant-settings-morning');
+        root.addClass('ap', 'ap-settings', 'plugin-settings-workspace', 'assistant-settings-morning');
         const nav = root.createDiv({ cls: 'atelier-settings-nav' });
         const pages = ['模型连接', '处理偏好', '动作与提示词', '备份与恢复'];
         const isSection = el => el.classList?.contains('ai-assistant-settings-section');
@@ -5393,7 +5399,7 @@ class AiAssistantSettingTab extends PluginSettingTab {
             button.onclick = () => select(index);
             buttons.push(button);
         });
-        root.children[0].after(nav);
+        root.prepend(nav);
         select(this.settingsPage || 0);
     }
 
@@ -5670,16 +5676,6 @@ class AiAssistantSettingTab extends PluginSettingTab {
         connectionStatus = containerEl.createEl('p', { cls: 'atelier-connection-status', attr: { role: 'status', 'aria-live': 'polite' } });
 
         this.addSectionHeading(containerEl, '功能参数设置');
-        new Setting(containerEl)
-            .setName('晨雾配色')
-            .setDesc('助手面板和审阅窗口使用插件自带的青绿色调（浅色、深色各一套）。关闭后完全跟随你的 Obsidian 主题。')
-            .addToggle(toggle => toggle
-                .setValue(this.plugin.settings.useAtelierPalette !== false)
-                .onChange(async (value) => {
-                    this.plugin.settings.useAtelierPalette = value;
-                    this.plugin.applyPalette();
-                    await this.plugin.saveSettings();
-                }));
 
         // -- Mover --
         new Setting(containerEl).setName('文件夹建议').setHeading();
@@ -6065,7 +6061,7 @@ class AiAssistantSettingTab extends PluginSettingTab {
 }
 
 // 批量处理选择模态框
-class BatchProcessingModal extends Modal {
+class BatchProcessingModal extends GlassModal {
     constructor(app, onChoose) {
         super(app);
         this.onChoose = onChoose;
@@ -6129,7 +6125,7 @@ class BatchProcessingModal extends Modal {
 }
 
 // 高级文件选择模态框 - 支持多种筛选条件
-class AdvancedFileSelectionModal extends Modal {
+class AdvancedFileSelectionModal extends GlassModal {
     constructor(app, onChoose) {
         super(app);
         this.onChoose = onChoose;
@@ -6900,7 +6896,7 @@ class AdvancedFileSelectionModal extends Modal {
 }
 
 // 简洁的文件选择模态框 - 使用Obsidian原生样式
-class SimpleFileSelectionModal extends Modal {
+class SimpleFileSelectionModal extends GlassModal {
     constructor(app, onChoose) {
         super(app);
         this.onChoose = onChoose;
@@ -7225,7 +7221,7 @@ class SimpleFileSelectionModal extends Modal {
 }
 
 // 文件选择模态框
-class FileSelectionModal extends Modal {
+class FileSelectionModal extends GlassModal {
     constructor(app, files, onChoose) {
         super(app);
         this.files = files;
@@ -7304,7 +7300,7 @@ class FileSelectionModal extends Modal {
 }
 
 // 文件夹选择模态框
-class FolderSelectionModal extends FuzzySuggestModal {
+class FolderSelectionModal extends GlassFuzzySuggestModal {
     constructor(app, folders, onChoose) {
         super(app);
         this.folders = folders;
