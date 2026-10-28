@@ -4,7 +4,7 @@
 
 An Obsidian plugin that lets an AI suggest changes to a note — tags, properties, structure, the folder it belongs in, furigana for Japanese — and shows them for review. Nothing is written until you accept it.
 
-一个 Obsidian 插件：AI 只负责**提议**（标签、属性、结构、该放哪个文件夹、日文假名），改不改由人决定。可以用云端 API，也可以用电脑上的本地模型（Ollama、LM Studio），笔记不出电脑。
+一个 Obsidian 插件：AI 只负责**提议**（标签、属性、结构、该放哪个文件夹、日文假名），改不改由人决定。可以用云端 API，也可以用电脑上的本地模型（Ollama、LM Studio）；只用本地模型、不勾云服务作备用时，笔记不出电脑。
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/review-dark.jpg">
@@ -41,7 +41,7 @@ My notes grew faster than I could tidy them: inconsistent tags, no summaries, no
 | Batch results are grouped per note, one note at a time | Batch runs produced many scattered result cards | Reviewing a whole batch still takes time |
 | Before writing, the note is compared with the version the AI saw | If the note changed meanwhile, the write stops instead of overwriting new text | The user may need to regenerate |
 | Undo / redo for every applied change | Mistakes are cheap to reverse | Snapshots are stored in plugin data |
-| Several API configurations with automatic fallback; the one that answered last is tried first; every request has a timeout | One provider being down or silent should not block the work | The same note may be sent to a second provider; the plugin shows a notice when that happens |
+| Several API configurations; a configuration is used as a backup only if you tick *Allow as backup*; the one that answered last is tried first; every request has a timeout | One provider being down should not block the work, but a note must never go to a service you did not approve | With no backup ticked, a failure stops the action and says which step failed |
 | A local model (Ollama, LM Studio) is a first-class provider | Private notes can be tidied without leaving the computer | Local models are slower and less consistent than large cloud models |
 | *Only existing tags* filters the model's answer against the vault's tags | A settled tag system should not grow new tags by accident | The model may find fewer tags |
 | Before a batch, the plugin says how much text goes where | Batch runs send many notes at once; the person should know where they go | One more line to read |
@@ -52,7 +52,7 @@ My notes grew faster than I could tidy them: inconsistent tags, no summaries, no
 2. Enable it in *Settings → Community plugins*.
 3. In the plugin settings, add at least one configuration: provider (OpenAI-compatible, DeepSeek, Google Gemini, or a local model through Ollama or LM Studio), key if the provider needs one, and model. Test the connection from the settings page.
 
-Works on desktop and mobile (a local model on your computer is not reachable from the phone). No build step: `main.js` is the source.
+Works on desktop and mobile (a local model on your computer is not reachable from the phone).
 
 ### Local model in two minutes
 
@@ -80,11 +80,11 @@ The plugin needs an AI model to do anything. It talks only to the services you c
 | OpenAI-compatible | the URL you enter (OpenAI, OpenRouter, a proxy, ...) | yes, usually paid |
 | DeepSeek | `https://api.deepseek.com` (or your URL) | yes, paid |
 | Google Gemini | `https://generativelanguage.googleapis.com` | yes, free tier available |
-| Local model | `http://localhost:11434` (Ollama) or the URL you enter | no; nothing leaves the computer |
+| Local model | `http://localhost:11434` (Ollama) or the URL you enter | no; nothing leaves the computer as long as no cloud configuration is ticked as a backup |
 
 | What | Where it goes |
 |---|---|
-| Note text you ask the AI about | Sent to the provider of the first working configuration, and only when you start an action; if it fails, to the next enabled configuration (a notice says so). Before a batch, the plugin shows how many notes and how much text will be sent, and where |
+| Note text you ask the AI about | Sent to the first enabled configuration, and only when you start an action. If that fails, it goes only to configurations you ticked as *Allow as backup* (off by default; a notice says so); with none ticked, the action stops. Before a batch, the plugin shows how many notes and how much text will be sent and to which services, including any cloud backup behind a local model |
 | API keys | Stored in this vault's plugin data (`data.json`), obfuscated, never sent anywhere except the provider they belong to |
 | Proposals, undo snapshots, processing history | This vault's plugin data |
 | Anything else | Nothing is sent; there is no telemetry |
@@ -102,11 +102,13 @@ Do not commit `data.json` to Git.
 ## Development
 
 ```bash
-node --check main.js
-for t in *.test.cjs; do node "$t"; done
+npm install
+npm run build          # src/main.js -> main.js (the file attached to each release)
+npm test               # builds, then runs the tests
+npm run release:check  # official Obsidian lint, tests, release zip and a byte check against main.js
 ```
 
-The tests cover guarded writes, partial acceptance, full-document preview, per-note review, DeepSeek and local-model requests, request timeouts, the streaming fallback, fallback order, the only-existing-tags filter and the batch send summary. They run without Obsidian by loading `main.js` in a sandbox with stub classes. Design notes are in [docs/](docs/); versions are in [CHANGELOG.md](CHANGELOG.md).
+The tests cover guarded writes, partial acceptance, full-document preview, per-note review, DeepSeek and local-model requests, request timeouts, the streaming fallback, opt-in backups, fallback order, the only-existing-tags filter and the batch send summary. They run without Obsidian by loading the built `main.js` in a sandbox with stub classes. Design notes are in [docs/](docs/); versions are in [CHANGELOG.md](CHANGELOG.md).
 
 ## License
 

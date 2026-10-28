@@ -1,0 +1,27 @@
+{
+  "name": "ai-assistant-suite",
+  "version": "1.5.0",
+  "private": true,
+  "license": "MIT",
+  "description": "AI proposes changes to a note; you review and apply them in Obsidian",
+  "scripts": {
+    "build": "node esbuild.config.mjs",
+    "lint": "eslint src",
+    "test": "npm run build && node --test *.test.cjs",
+    "check": "npm run lint && npm test",
+    "package:release": "npm run build && node scripts/package-release.mjs",
+    "verify:release": "node scripts/verify-release.mjs",
+    "release:check": "npm run check && node scripts/package-release.mjs && npm run verify:release"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.5",
+    "@eslint/json": "^0.14.0",
+    "esbuild": "^0.25.5",
+    "eslint": "^9.39.5",
+    "eslint-plugin-obsidianmd": "^0.4.2",
+    "globals": "^16.0.0",
+    "obsidian": "^1.8.7",
+    "typescript": "^5.8.3",
+    "typescript-eslint": "^8.72.1"
+  }
+}

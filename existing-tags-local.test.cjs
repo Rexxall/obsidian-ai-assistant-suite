@@ -36,7 +36,7 @@ test('cloud providers still refuse to run without a key',async()=>{
 });
 test('the batch summary counts notes and size and lists destinations in fallback order',()=>{
  const p=fixture();
- p.settings={apiConfigs:[{id:'a',name:'Cloud',apiProvider:'openai',apiKey:'k'},{id:'b',name:'Laptop',apiProvider:'local'},{id:'c',name:'Off',apiProvider:'openai',apiKey:'k',enabled:false}]};
+ p.settings={apiConfigs:[{id:'a',name:'Cloud',apiProvider:'openai',apiKey:'k'},{id:'b',name:'Laptop',apiProvider:'local',allowFallback:true},{id:'c',name:'Off',apiProvider:'openai',apiKey:'k',enabled:false}]};
  p.lastWorkingConfigId='b';
  const out=p.describeBatchSend([{stat:{size:2048}},{stat:{size:1024}}]);
  assert.equal(out.notes,2);assert.equal(out.size,'3 KB');

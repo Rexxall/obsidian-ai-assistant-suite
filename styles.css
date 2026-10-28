@@ -2823,3 +2823,9 @@
 .modal.ap-modal.ai-review-sheet .ap-pill { font-size: 12px; padding: 3px 10px; }
 .modal.ap-modal.ai-review-sheet .ai-review-empty { text-align: center; color: var(--ap-label-2); }
 .modal.ap-modal.ai-review-sheet .modal-button-container { margin-top: var(--ap-s5); gap: var(--ap-s2); }
+
+/* Increase contrast: the faintest text (placeholders, hints) moves up to secondary. */
+@media (prefers-contrast: more) {
+  .ap { --ap-label-3: var(--ap-label-2); }
+  .ap.mist-sidebar :is(textarea, input)::placeholder { color: var(--ap-label-2); }
+}

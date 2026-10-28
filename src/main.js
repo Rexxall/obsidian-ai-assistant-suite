@@ -1,10 +1,10 @@
-const { Plugin, Notice, PluginSettingTab, Setting, FuzzySuggestModal, Modal, ItemView, TFile, MarkdownRenderer, Menu, setIcon, parseYaml, stringifyYaml, getLanguage, requestUrl } = require('obsidian');
+import { Plugin, Notice, PluginSettingTab, Setting, FuzzySuggestModal, Modal, ItemView, MarkdownRenderer, Menu, setIcon, parseYaml, stringifyYaml, getLanguage, requestUrl } from 'obsidian';
 
 // 界面主体是中文；命令名跟随 Obsidian 语言，非中文时用英文
 const isChineseInterface = () => {
     try {
         return (typeof getLanguage === 'function' ? getLanguage() : 'zh').toLowerCase().startsWith('zh');
-    } catch (error) {
+    } catch {
         return true;
     }
 };
@@ -1858,7 +1858,7 @@ class AssistantView extends ItemView {
             // 进行中的处理
             const progressInfo = card.createDiv({ cls: "batch-progress-info" });
 
-            const statusText = progressInfo.createEl("p", {
+            progressInfo.createEl("p", {
                 text: `正在处理第 ${content.processedCount} / ${content.totalFiles} 个文件`
             });
 
@@ -1876,7 +1876,7 @@ class AssistantView extends ItemView {
             const percentage = Math.round((content.processedCount / content.totalFiles) * 100);
             progressFill.style.width = `${percentage}%`;
 
-            const progressPercent = progressInfo.createEl("p", {
+            progressInfo.createEl("p", {
                 text: `${percentage}%`,
                 cls: "progress-percent"
             });
@@ -1947,7 +1947,7 @@ class AssistantView extends ItemView {
     renderMessageTask(card, task) {
         const content = task.content;
 
-        const messageEl = card.createEl("p", {
+        card.createEl("p", {
             text: content.message,
             cls: content.type === 'error' || task.type === 'error' ? 'error-message' : 'success-message'
         });
@@ -2622,6 +2622,14 @@ class AiAssistantSuite extends Plugin {
 
     // Try the configuration that last answered first, so one dead provider does not
     // add a failed request to every call; the user's order is kept for the rest.
+    // 主服务是排在最前面的可用配置；备用只取本人勾了“允许用作备用”的配置，不勾就不会改发给别家
+    fallbackChain(configs = this.settings.apiConfigs || []) {
+        const usable = configs.filter(c => c.enabled !== false && this.isConfigUsable(c));
+        if (!usable.length) return [];
+        const [primary, ...rest] = usable;
+        return this.orderConfigsForFallback([primary, ...rest.filter(c => c.allowFallback === true)]);
+    }
+
     orderConfigsForFallback(candidates) {
         const index = candidates.findIndex(c => c.id === this.lastWorkingConfigId);
         if (index <= 0) return candidates;
@@ -3200,9 +3208,7 @@ class AiAssistantSuite extends Plugin {
     describeBatchSend(files) {
         const notes = (files || []).length;
         const bytes = (files || []).reduce((sum, file) => sum + (file?.stat?.size || 0), 0);
-        const configs = this.orderConfigsForFallback(
-            (this.settings.apiConfigs || []).filter(c => c.enabled !== false && this.isConfigUsable(c))
-        );
+        const configs = this.fallbackChain();
         const destinations = configs.map(config => ({
             name: config.name || config.id || '未命名配置',
             local: config.apiProvider === 'local'
@@ -3221,17 +3227,25 @@ class AiAssistantSuite extends Plugin {
             box.createEl('p', { text: '还没有可用的 AI 配置，请先在设置里添加。' });
             return box;
         }
-        const first = destinations[0];
-        box.createEl('p', {
-            text: first.local
-                ? `先发给「${first.name}」（本地模型，不离开这台电脑）。`
-                : `先发给「${first.name}」。`
-        });
-        if (destinations.length > 1) {
-            const rest = destinations.slice(1).map(d => d.local ? `${d.name}（本地）` : d.name).join('、');
-            box.createEl('p', { text: `它失败时依次改用：${rest}。` });
-        }
+        for (const line of this.batchSendLines(destinations)) box.createEl('p', { text: line });
         return box;
+    }
+
+    // 批量说明按实际去向写：只有全部去向都是本地模型时，才说笔记不离开这台电脑
+    batchSendLines(destinations) {
+        const [first, ...backups] = destinations;
+        if (!first) return [];
+        const cloud = destinations.filter(d => !d.local);
+        const lines = [first.local
+            ? (cloud.length ? `先发给「${first.name}」（本地模型）。` : `先发给「${first.name}」（本地模型，不离开这台电脑）。`)
+            : `先发给「${first.name}」。`];
+        if (!backups.length) {
+            lines.push('它失败时会停下来，不改发给其他服务。');
+        } else {
+            lines.push(`它失败时依次改用：${backups.map(d => d.local ? `${d.name}（本地）` : d.name).join('、')}。`);
+            if (first.local && cloud.length) lines.push(`主服务失败时，笔记可能发给 ${cloud.map(d => `「${d.name}」`).join('、')}，不再只留在这台电脑。`);
+        }
+        return lines;
     }
 
     // 通用API请求方法（支持多 Config 顺序 Fallback、取消和 OpenAI-compatible streaming）
@@ -3248,10 +3262,7 @@ class AiAssistantSuite extends Plugin {
                 return await this._callSingleConfig(prompt, modelNameOverride, expectJson, configOverride, requestOptions);
             }
 
-            const allConfigs = this.settings.apiConfigs || [];
-            const candidates = this.orderConfigsForFallback(
-                allConfigs.filter(c => c.enabled !== false && this.isConfigUsable(c))
-            );
+            const candidates = this.fallbackChain();
 
             if (candidates.length === 0) {
                 throw new Error("没有可用的 API 配置，请在设置中至少启用一个配置。");
@@ -3284,6 +3295,9 @@ class AiAssistantSuite extends Plugin {
                 }
             }
 
+            if (candidates.length === 1) {
+                throw new Error(`${errors[0]}\n没有勾选“允许用作备用”的配置，所以没有改发给其他服务。`);
+            }
             throw new Error(`所有 API 配置均失败（共 ${candidates.length} 个）。\n最后错误: ${errors[errors.length - 1]}`);
         } finally {
             if (operationController) {
@@ -3501,7 +3515,7 @@ class AiAssistantSuite extends Plugin {
 
         while (true) {
             if (options.signal?.aborted) {
-                try { await reader.cancel(); } catch (error) { /* 连接已断开，无需再取消 */ }
+                try { await reader.cancel(); } catch { /* 连接已断开，无需再取消 */ }
                 throw this.createAbortError();
             }
             const { value, done } = await reader.read();
@@ -3529,7 +3543,7 @@ class AiAssistantSuite extends Plugin {
                             accumulated += delta;
                             options.onStream?.(delta, accumulated);
                         }
-                    } catch (error) {
+                    } catch {
                         console.warn('[AI Assistant] 无法解析 streaming chunk');
                     }
                 }
@@ -3572,7 +3586,7 @@ class AiAssistantSuite extends Plugin {
 
         while (true) {
             if (options.signal?.aborted) {
-                try { await reader.cancel(); } catch (error) { /* 连接已断开，无需再取消 */ }
+                try { await reader.cancel(); } catch { /* 连接已断开，无需再取消 */ }
                 throw this.createAbortError();
             }
 
@@ -3597,7 +3611,7 @@ class AiAssistantSuite extends Plugin {
                             accumulated += delta;
                             options.onStream?.(delta, accumulated);
                         }
-                    } catch (error) {
+                    } catch {
                         console.warn('[AI Assistant] 无法解析 Gemini streaming chunk');
                     }
                 }
@@ -4071,7 +4085,7 @@ class AiAssistantSuite extends Plugin {
 
         const hasEnabledConfig = this.settings.apiConfigs && this.settings.apiConfigs.some(c => c.enabled !== false && this.isConfigUsable(c));
         if (!hasEnabledConfig) {
-            new Notice('请先在AI Assistant Suite插件设置中添加并启用至少一个API配置（需填写API Key）。');
+            new Notice('请先在插件设置里添加并启用至少一个 AI 配置。');
             return;
         }
 
@@ -4176,7 +4190,7 @@ class AiAssistantSuite extends Plugin {
                 originalContent: originalFullContent,
                 proposedContent
             });
-            new Notice("结构优化预览已生成，请在侧边栏确认 Apply。", 5000);
+            new Notice("结构优化预览已生成，请在侧栏确认后应用。", 5000);
 
         } catch (error) {
             progressNotice?.hide();
@@ -4195,7 +4209,7 @@ class AiAssistantSuite extends Plugin {
 
         const hasEnabledConfig = this.settings.apiConfigs && this.settings.apiConfigs.some(c => c.enabled !== false && this.isConfigUsable(c));
         if (!hasEnabledConfig) {
-            new Notice('请先在AI Assistant Suite插件设置中添加并启用至少一个API配置（需填写API Key）。');
+            new Notice('请先在插件设置里添加并启用至少一个 AI 配置。');
             return;
         }
 
@@ -4314,7 +4328,7 @@ class AiAssistantSuite extends Plugin {
                 originalContent: originalFullContent,
                 proposedContent
             });
-            new Notice("假名标注预览已生成，请在侧边栏确认 Apply。", 5000);
+            new Notice("假名标注预览已生成，请在侧栏确认后应用。", 5000);
 
         } catch (error) {
             progressNotice?.hide();
@@ -4338,7 +4352,7 @@ class AiAssistantSuite extends Plugin {
         }
         const hasEnabledConfig = this.settings.apiConfigs && this.settings.apiConfigs.some(c => c.enabled !== false && this.isConfigUsable(c));
         if (!hasEnabledConfig) {
-            new Notice('请先在AI Assistant Suite插件设置中添加并启用至少一个API配置（需填写API Key）。');
+            new Notice('请先在插件设置里添加并启用至少一个 AI 配置。');
             return;
         }
 
@@ -4423,7 +4437,7 @@ class AiAssistantSuite extends Plugin {
         }
         const hasEnabledConfig = this.settings.apiConfigs && this.settings.apiConfigs.some(c => c.enabled !== false && this.isConfigUsable(c));
         if (!hasEnabledConfig) {
-            new Notice('请先在AI Assistant Suite插件设置中添加并启用至少一个API配置（需填写API Key）。');
+            new Notice('请先在插件设置里添加并启用至少一个 AI 配置。');
             return;
         }
 
@@ -4562,7 +4576,7 @@ class AiAssistantSuite extends Plugin {
         }
         const hasEnabledConfig = this.settings.apiConfigs && this.settings.apiConfigs.some(c => c.enabled !== false && this.isConfigUsable(c));
         if (!hasEnabledConfig) {
-            new Notice('请先在AI Assistant Suite插件设置中添加并启用至少一个API配置（需填写API Key）。');
+            new Notice('请先在插件设置里添加并启用至少一个 AI 配置。');
             return;
         }
 
@@ -4694,7 +4708,7 @@ class AiAssistantSuite extends Plugin {
         }
         const hasEnabledConfig = this.settings.apiConfigs && this.settings.apiConfigs.some(c => c.enabled !== false && this.isConfigUsable(c));
         if (!hasEnabledConfig) {
-            new Notice('请先在AI Assistant Suite插件设置中添加并启用至少一个API配置（需填写API Key）。');
+            new Notice('请先在插件设置里添加并启用至少一个 AI 配置。');
             return;
         }
 
@@ -5079,7 +5093,7 @@ ${content}
     async runSmartAction(action) {
         const hasEnabledConfig = this.settings.apiConfigs && this.settings.apiConfigs.some(c => c.enabled !== false && this.isConfigUsable(c));
         if (!hasEnabledConfig) {
-            new Notice('请先在AI Assistant Suite插件设置中添加并启用至少一个API配置（需填写API Key）。');
+            new Notice('请先在插件设置里添加并启用至少一个 AI 配置。');
             return;
         }
 
@@ -5308,12 +5322,12 @@ ${content}`
     async runCustomAction(actionId, targetFile = null) {
         const action = (this.settings.customActions || []).find(item => item.id === actionId);
         if (!action || action.enabled === false) {
-            new Notice('未找到启用的自定义 AI Action。', 3000);
+            new Notice('未找到启用的自定义动作。', 3000);
             return;
         }
         const hasEnabledConfig = this.settings.apiConfigs && this.settings.apiConfigs.some(c => c.enabled !== false && this.isConfigUsable(c));
         if (!hasEnabledConfig) {
-            new Notice('请先在AI Assistant Suite插件设置中添加并启用至少一个API配置（需填写API Key）。');
+            new Notice('请先在插件设置里添加并启用至少一个 AI 配置。');
             return;
         }
 
@@ -5360,7 +5374,7 @@ ${content}`
                     originalContent: context.originalContent,
                     proposedContent: this.buildReplacementContent(context, result)
                 });
-                new Notice('自定义 Action 预览已生成，请在侧边栏确认 Apply。', 5000);
+                new Notice('自定义动作 预览已生成，请在侧栏确认后应用。', 5000);
                 return;
             }
 
@@ -5374,7 +5388,7 @@ ${content}`
                     title: `${action.name || '自定义动作'} 已追加`,
                     content: { message: '结果已追加到当前笔记，可用回滚恢复。', type: 'success', file: context.file }
                 });
-                new Notice('自定义 Action 结果已追加。', 4000);
+                new Notice('自定义动作 结果已追加。', 4000);
                 return;
             }
 
@@ -5570,13 +5584,13 @@ class AiAssistantSettingTab extends PluginSettingTab {
         
         new Setting(topContainer)
             .setName('编辑配置')
-            .setDesc('选择要查看/编辑的 API 配置（与 Fallback 顺序无关，顺序由列表位置决定）')
+            .setDesc('选择要查看/编辑的 API 配置（与备用顺序无关，顺序由列表位置决定）')
             .addDropdown(dropdown => {
                 apiConfigs.forEach(config => {
                     const label = config.enabled === false ? `[禁用] ${config.name}` : config.name;
                     dropdown.addOption(config.id, label);
                 });
-                dropdown.setValue(activeConfigId);
+                dropdown.setValue(activeConfig?.id ?? '');
                 dropdown.onChange(async (value) => {
                     this.plugin.settings.activeConfigId = value;
                     await this.plugin.saveSettings();
@@ -5621,7 +5635,7 @@ class AiAssistantSettingTab extends PluginSettingTab {
             delButton.disabled = true;
         } else {
             delButton.onclick = async () => {
-                this.plugin.settings.apiConfigs = apiConfigs.filter(c => c.id !== activeConfigId);
+                this.plugin.settings.apiConfigs = apiConfigs.filter(c => c !== activeConfig);
                 this.plugin.settings.activeConfigId = this.plugin.settings.apiConfigs[0].id;
                 await this.plugin.saveSettings();
                 this.display();
@@ -5629,7 +5643,7 @@ class AiAssistantSettingTab extends PluginSettingTab {
         }
 
         // 优先级调整按钮
-        const currentIdx = apiConfigs.findIndex(c => c.id === activeConfigId);
+        const currentIdx = apiConfigs.indexOf(activeConfig);
         const upBtn = actionsContainer.createEl('button', { text: '↑ 提高优先级' });
         upBtn.addClass('ai-assistant-u-gap-left');
         upBtn.disabled = currentIdx <= 0;
@@ -5659,7 +5673,7 @@ class AiAssistantSettingTab extends PluginSettingTab {
         containerEl.createEl('hr', { cls: 'atelier-settings-divider' });
 
         // 显示当前配置的优先级
-        const priorityIdx = apiConfigs.findIndex(c => c.id === activeConfigId);
+        const priorityIdx = apiConfigs.indexOf(activeConfig);
         const enabledCount = apiConfigs.filter(c => c.enabled !== false).length;
         containerEl.createEl('p', {
             text: `优先级 #${priorityIdx + 1}（共 ${apiConfigs.length} 个配置，其中 ${enabledCount} 个已启用）`,
@@ -5668,13 +5682,23 @@ class AiAssistantSettingTab extends PluginSettingTab {
 
         new Setting(containerEl)
             .setName('启用此配置')
-            .setDesc('禁用后此配置将在 Fallback 列表中被跳过。')
+            .setDesc('禁用后此配置将在备用顺序中被跳过。')
             .addToggle(toggle => toggle
                 .setValue(activeConfig.enabled !== false)
                 .onChange(async (value) => {
                     activeConfig.enabled = value;
                     await this.plugin.saveSettings();
                     this.display();
+                }));
+
+        new Setting(containerEl)
+            .setName('允许用作备用')
+            .setDesc('主服务失败时，可以改用这个配置。不勾就不会把笔记改发给它；没有任何备用时，失败就停下并说明原因。')
+            .addToggle(toggle => toggle
+                .setValue(activeConfig.allowFallback === true)
+                .onChange(async (value) => {
+                    activeConfig.allowFallback = value;
+                    await this.plugin.saveSettings();
                 }));
 
         new Setting(containerEl)
@@ -5708,7 +5732,7 @@ class AiAssistantSettingTab extends PluginSettingTab {
         if (activeConfig.apiProvider === 'deepseek') {
             new Setting(containerEl)
                 .setName('DeepSeek 模型预设')
-                .setDesc('Flash 用于日常整理，Pro 用于复杂改写。下方仍可手动填写模型名。')
+                .setDesc('日常整理用 Flash，复杂改写用 Pro。下方仍可手动填写模型名。')
                 .addDropdown(dropdown => dropdown
                     .addOption('', '选择模型…')
                     .addOption('deepseek-flash', 'DeepSeek Flash')
@@ -5728,7 +5752,7 @@ class AiAssistantSettingTab extends PluginSettingTab {
         }
 
         new Setting(containerEl)
-            .setName('API Key')
+            .setName('API 密钥')
             .setDesc(this.plugin.hasStoredApiKey(activeConfig)
                 ? '已保存 API Key。输入新值并点击保存可替换；不会在设置页显示明文。'
                 : activeConfig.apiProvider === 'local'
@@ -5748,12 +5772,12 @@ class AiAssistantSettingTab extends PluginSettingTab {
                 .onClick(async () => {
                     const value = apiKeyInput?.getValue?.() || '';
                     if (!value.trim()) {
-                        new Notice('请输入新的 API Key。', 2500);
+                        new Notice('请输入新的 API 密钥。', 2500);
                         return;
                     }
                     await this.plugin.setApiKey(activeConfig, value.trim());
                     await this.plugin.saveSettings();
-                    new Notice('API Key 已保存。', 3000);
+                    new Notice('API 密钥 已保存。', 3000);
                     this.display();
                 }))
             .addButton(button => button
@@ -5762,7 +5786,7 @@ class AiAssistantSettingTab extends PluginSettingTab {
                 .onClick(async () => {
                     activeConfig.apiKey = '';
                     await this.plugin.saveSettings();
-                    new Notice('API Key 已清除。', 3000);
+                    new Notice('API 密钥 已清除。', 3000);
                     this.display();
                 }));
 
@@ -5781,7 +5805,7 @@ class AiAssistantSettingTab extends PluginSettingTab {
             .setName('主模型')
             .setDesc('指定用于内容生成、分析等核心任务的 AI 模型。')
             .addText(text => text
-                .setPlaceholder('e.g., gemini-2.5-pro')
+                .setPlaceholder('例如 gemini-2.5-pro')
                 .setValue(activeConfig.modelName || '')
                 .onChange(async (value) => {
                     activeConfig.modelName = value;
@@ -5792,7 +5816,7 @@ class AiAssistantSettingTab extends PluginSettingTab {
             .setName('辅助模型')
             .setDesc('指定用于翻译等轻量级任务的 AI 模型，可以选一个更快的。')
             .addText(text => text
-                .setPlaceholder('e.g., gemini-2.5-flash')
+                .setPlaceholder('例如 gemini-2.5-flash')
                 .setValue(activeConfig.auxiliaryModelName || '')
                 .onChange(async (value) => {
                     activeConfig.auxiliaryModelName = value;
@@ -5823,7 +5847,7 @@ class AiAssistantSettingTab extends PluginSettingTab {
         new Setting(containerEl).setName('文件夹建议').setHeading();
         new Setting(containerEl)
             .setName('建议数量')
-            .setDesc('AI Mover 建议移动的目标文件夹数量。')
+            .setDesc('归档建议移动的目标文件夹数量。')
             .addText(text => text
                 .setPlaceholder('4')
                 .setValue(this.plugin.settings.moverSuggestionsCount)
@@ -5834,9 +5858,9 @@ class AiAssistantSettingTab extends PluginSettingTab {
 
         new Setting(containerEl)
             .setName('忽略的文件夹')
-            .setDesc('AI Mover功能将忽略这些文件夹及其子文件夹。每行一个文件夹路径。')
+            .setDesc('归档建议将忽略这些文件夹及其子文件夹。每行一个文件夹路径。')
             .addTextArea(text => text
-                .setPlaceholder('例如：\n40 - Obsidian\nTemplates\nAttachments')
+                .setPlaceholder('例如：\n40 - Obsidian\ntemplates\nattachments')
                 .setValue(this.plugin.settings.ignoredFolders)
                 .onChange(async (value) => {
                     this.plugin.settings.ignoredFolders = value;
@@ -5847,7 +5871,7 @@ class AiAssistantSettingTab extends PluginSettingTab {
         new Setting(containerEl).setName('标签建议').setHeading();
         new Setting(containerEl)
             .setName('建议数量')
-            .setDesc('AI Tagger 建议的标签数量。')
+            .setDesc('标签功能建议的标签数量。')
             .addText(text => text
                 .setPlaceholder('12')
                 .setValue(this.plugin.settings.taggerSuggestionsCount)
@@ -5905,7 +5929,7 @@ class AiAssistantSettingTab extends PluginSettingTab {
         new Setting(containerEl).setName('属性生成').setHeading();
         new Setting(containerEl)
             .setName('文件名最大长度')
-            .setDesc('使用 AI Meta 生成标题重命名文件时，文件名的最大长度。')
+            .setDesc('用生成的标题重命名文件时，文件名的最大长度。')
             .addText(text => text
                 .setPlaceholder('100')
                 .setValue(this.plugin.settings.metaFileNameMaxLength)
@@ -5921,7 +5945,7 @@ class AiAssistantSettingTab extends PluginSettingTab {
             .setDesc('选择默认生成哪些建议。按笔记集中确认，正文在主编辑区预览后采用。');
 
         new Setting(containerEl)
-            .setName('优化结构 (Structurizer)')
+            .setName('优化结构')
             .setDesc('生成结构与表达的修改建议，逐项审阅后再应用。')
             .addToggle(toggle => toggle
                 .setValue(this.plugin.settings.oneClickProcessActions.structurizer)
@@ -5931,7 +5955,7 @@ class AiAssistantSettingTab extends PluginSettingTab {
                 }));
 
         new Setting(containerEl)
-            .setName('假名标注 (Furigana)')
+            .setName('假名标注')
             .setDesc('为笔记中的日文添加假名注音，可与优化结构配合使用。')
             .addToggle(toggle => toggle
                 .setValue(this.plugin.settings.oneClickProcessActions.furigana)
@@ -5941,8 +5965,8 @@ class AiAssistantSettingTab extends PluginSettingTab {
                 }));
 
         new Setting(containerEl)
-            .setName('生成元数据 (Meta)')
-            .setDesc('在一个组合卡片中建议标题、摘要和TLDR。')
+            .setName('生成元数据')
+            .setDesc('在一个组合卡片中建议标题、摘要和一句话总结。')
             .addToggle(toggle => toggle
                 .setValue(this.plugin.settings.oneClickProcessActions.meta)
                 .onChange(async (value) => {
@@ -5951,7 +5975,7 @@ class AiAssistantSettingTab extends PluginSettingTab {
                 }));
 
         new Setting(containerEl)
-            .setName('智能标签 (Tagger)')
+            .setName('智能标签')
             .setDesc('在一个组合卡片中建议标签。')
             .addToggle(toggle => toggle
                 .setValue(this.plugin.settings.oneClickProcessActions.tagger)
@@ -5961,7 +5985,7 @@ class AiAssistantSettingTab extends PluginSettingTab {
                 }));
 
         new Setting(containerEl)
-            .setName('移动笔记 (Mover)')
+            .setName('移动笔记')
             .setDesc('在一个组合卡片中建议新的存放位置。')
             .addToggle(toggle => toggle
                 .setValue(this.plugin.settings.oneClickProcessActions.mover)
@@ -6006,7 +6030,7 @@ class AiAssistantSettingTab extends PluginSettingTab {
                 .setName('输出模式')
                 .addDropdown(dropdown => dropdown
                     .addOption('sidebar', '侧边栏显示')
-                    .addOption('diff', 'Diff Preview')
+                    .addOption('diff', '差异预览')
                     .addOption('append', '追加到当前笔记')
                     .addOption('new-note', '创建新笔记')
                     .setValue(action.outputMode || 'sidebar')
@@ -6062,8 +6086,8 @@ class AiAssistantSettingTab extends PluginSettingTab {
         containerEl.createEl('p', { text: '在这里自定义每个功能的系统提示词(Prompt)。请注意，占位符(例如 {{content}})是必需的，用于在运行时动态插入内容。' });
 
         new Setting(containerEl)
-            .setName('优化结构 (Structurizer)')
-            .setDesc('编辑用于优化笔记结构的 Prompt。')
+            .setName('优化结构')
+            .setDesc('编辑用于优化笔记结构的提示词。')
             .addButton(button => {
                 button.setButtonText('编辑').onClick(() => {
                     new PromptEditModal(this.app, this.plugin, 'structurizerPrompt', '编辑优化结构 Prompt').open();
@@ -6071,8 +6095,8 @@ class AiAssistantSettingTab extends PluginSettingTab {
             });
 
         new Setting(containerEl)
-            .setName('移动笔记 (Mover)')
-            .setDesc('编辑用于建议存放文件夹的 Prompt。')
+            .setName('移动笔记')
+            .setDesc('编辑用于建议存放文件夹的提示词。')
             .addButton(button => {
                 button.setButtonText('编辑').onClick(() => {
                     new PromptEditModal(this.app, this.plugin, 'moverPrompt', '编辑移动笔记 Prompt').open();
@@ -6080,8 +6104,8 @@ class AiAssistantSettingTab extends PluginSettingTab {
             });
 
         new Setting(containerEl)
-            .setName('智能标签 (Tagger)')
-            .setDesc('编辑用于生成标签的 Prompt。')
+            .setName('智能标签')
+            .setDesc('编辑用于生成标签的提示词。')
             .addButton(button => {
                 button.setButtonText('编辑').onClick(() => {
                     new PromptEditModal(this.app, this.plugin, 'taggerPrompt', '编辑智能标签 Prompt').open();
@@ -6089,8 +6113,8 @@ class AiAssistantSettingTab extends PluginSettingTab {
             });
 
         new Setting(containerEl)
-            .setName('生成元数据 (Meta)')
-            .setDesc('编辑用于生成标题和摘要的 Prompt。')
+            .setName('生成元数据')
+            .setDesc('编辑用于生成标题和摘要的提示词。')
             .addButton(button => {
                 button.setButtonText('编辑').onClick(() => {
                     new PromptEditModal(this.app, this.plugin, 'metaPrompt', '编辑生成元数据 Prompt').open();
@@ -6098,8 +6122,8 @@ class AiAssistantSettingTab extends PluginSettingTab {
             });
 
         new Setting(containerEl)
-            .setName('翻译标签 (Tagger Translation)')
-            .setDesc('编辑用于翻译长标签的 Prompt。')
+            .setName('翻译标签')
+            .setDesc('编辑用于翻译长标签的提示词。')
             .addButton(button => {
                 button.setButtonText('编辑').onClick(() => {
                     new PromptEditModal(this.app, this.plugin, 'translationPrompt', '编辑翻译 Prompt').open();
@@ -6349,7 +6373,6 @@ class AdvancedFileSelectionModal extends GlassModal {
 
         // 当前筛选类型
         let currentFilterType = '';
-        let currentDropdown = null;
 
         // 筛选类型变化处理
         filterTypeSelect.addEventListener('change', (e) => {
@@ -6473,7 +6496,7 @@ class AdvancedFileSelectionModal extends GlassModal {
         dropdown.createEl("option", { value: "", text: "选择现有值..." });
 
         options.forEach(option => {
-            const optionEl = dropdown.createEl("option", {
+            dropdown.createEl("option", {
                 text: option,
                 value: option
             });
@@ -6573,7 +6596,7 @@ class AdvancedFileSelectionModal extends GlassModal {
                         }
                     });
                 }
-            } catch (e) {
+            } catch {
                 // 忽略错误
             }
         });
@@ -6587,7 +6610,7 @@ class AdvancedFileSelectionModal extends GlassModal {
                 const cache = this.app.metadataCache.getFileCache(file);
                 const frontmatter = cache?.frontmatter || {};
                 Object.keys(frontmatter).forEach(key => properties.add(key));
-            } catch (e) {
+            } catch {
                 // 忽略错误
             }
         });
@@ -6874,7 +6897,7 @@ class AdvancedFileSelectionModal extends GlassModal {
                         }
                         return false;
                     });
-                } catch (e) {
+                } catch {
                     return false;
                 }
             });
@@ -6894,7 +6917,7 @@ class AdvancedFileSelectionModal extends GlassModal {
                         return value === undefined || value === null || value === '' ||
                             (Array.isArray(value) && value.length === 0);
                     });
-                } catch (e) {
+                } catch {
                     return false;
                 }
             });
@@ -7037,411 +7060,6 @@ class AdvancedFileSelectionModal extends GlassModal {
     }
 }
 
-// 简洁的文件选择模态框 - 使用Obsidian原生样式
-class SimpleFileSelectionModal extends GlassModal {
-    constructor(app, onChoose) {
-        super(app);
-        this.onChoose = onChoose;
-        this.selectedFiles = new Set();
-        this.allFiles = this.app.vault.getMarkdownFiles();
-
-        // 获取当前文件所在文件夹
-        const activeFile = this.app.workspace.getActiveFile();
-        this.currentFolder = activeFile?.parent;
-
-        // 按文件夹分组
-        this.filesByFolder = new Map();
-        this.allFiles.forEach(file => {
-            const folderPath = file.parent?.path || '/';
-            if (!this.filesByFolder.has(folderPath)) {
-                this.filesByFolder.set(folderPath, []);
-            }
-            this.filesByFolder.get(folderPath).push(file);
-        });
-    }
-
-    onOpen() {
-        const { contentEl } = this;
-        contentEl.createEl("h2", { text: "选择要批量处理的文件" });
-
-        // 当前文件夹优先显示
-        if (this.currentFolder) {
-            this.renderFolderSection(contentEl, this.currentFolder.path || '/', '📁 当前文件夹', true);
-        }
-
-        // 其他文件夹
-        const otherFolders = Array.from(this.filesByFolder.keys())
-            .filter(path => path !== (this.currentFolder?.path || '/'))
-            .sort();
-
-        if (otherFolders.length > 0) {
-            const otherSection = contentEl.createDiv({ cls: "ai-assistant-other-folders-section" });
-            otherSection.createEl("h3", { text: "其他文件夹" });
-
-            // 搜索框
-            const searchContainer = otherSection.createDiv({ cls: "ai-assistant-search-container" });
-            const searchInput = searchContainer.createEl("input", {
-                type: "text",
-                placeholder: "搜索文件夹或文件...",
-                cls: "ai-assistant-search-input"
-            });
-
-            const foldersContainer = otherSection.createDiv({ cls: "ai-assistant-folders-container" });
-
-            // 初始显示所有文件夹
-            this.renderOtherFolders(foldersContainer, otherFolders);
-
-            // 搜索功能
-            searchInput.addEventListener('input', (e) => {
-                const searchTerm = e.target.value.toLowerCase().trim();
-                if (searchTerm === '') {
-                    this.renderOtherFolders(foldersContainer, otherFolders);
-                } else {
-                    this.searchAndRender(foldersContainer, searchTerm);
-                }
-            });
-        }
-
-        // 底部信息和按钮
-        this.renderBottom(contentEl);
-    }
-
-    renderFolderSection(container, folderPath, title, isExpanded = false) {
-        const files = this.filesByFolder.get(folderPath) || [];
-        if (files.length === 0) return;
-
-        const section = container.createDiv({ cls: "ai-assistant-folder-section" });
-
-        const header = section.createDiv({ cls: "ai-assistant-folder-header" });
-
-        // 创建标题和文件数量
-        const titleContainer = header.createDiv({ cls: "ai-assistant-folder-title-container" });
-        titleContainer.createSpan({ cls: "ai-assistant-folder-title", text: title });
-        titleContainer.createSpan({ cls: "ai-assistant-file-count", text: `${files.length} 个文件` });
-
-        // 创建全选复选框
-        const selectAllCheckbox = header.createEl("input", {
-            type: "checkbox",
-            cls: "ai-assistant-folder-select-all-checkbox"
-        });
-
-        selectAllCheckbox.addEventListener('change', (e) => {
-            e.stopPropagation(); // 防止触发文件夹展开/收起
-            if (selectAllCheckbox.checked) {
-                files.forEach(file => this.selectedFiles.add(file));
-            } else {
-                files.forEach(file => this.selectedFiles.delete(file));
-            }
-            this.updateCheckboxes();
-        });
-
-        const fileList = section.createDiv({ cls: "ai-assistant-file-list" });
-        // 强制可见，防止样式或点击问题导致看不到文件
-        fileList.addClass('ai-assistant-u-file-list-plain');
-
-        files.forEach(file => {
-            const fileItem = fileList.createDiv({ cls: "ai-assistant-file-item" });
-            fileItem.addClass('ai-assistant-u-file-row-tight');
-
-            const checkbox = fileItem.createEl("input", { type: "checkbox" });
-            checkbox.addEventListener('change', () => {
-                if (checkbox.checked) {
-                    this.selectedFiles.add(file);
-                } else {
-                    this.selectedFiles.delete(file);
-                }
-                this.updateSelectedCount();
-                this.updateFolderSelectAllState(section, files);
-            });
-
-            const fileInfo = fileItem.createDiv({ cls: "ai-assistant-file-info" });
-
-            const label = fileInfo.createEl("label", { text: file.basename });
-            label.addEventListener('click', () => {
-                checkbox.checked = !checkbox.checked;
-                checkbox.dispatchEvent(new Event('change'));
-            });
-
-            const path = fileInfo.createEl("div", {
-                text: file.path,
-                cls: "ai-assistant-file-path"
-            });
-        });
-
-        // 初始化全选复选框状态
-        this.updateFolderSelectAllState(section, files);
-    }
-
-    renderOtherFolders(container, folderPaths) {
-        container.empty();
-        folderPaths.forEach(folderPath => {
-            const displayName = folderPath === '/' ? '📁 根目录' : `📁 ${folderPath}`;
-            this.renderFolderSection(container, folderPath, displayName);
-        });
-    }
-
-    searchAndRender(container, searchTerm) {
-        container.empty();
-
-        let hasResults = false;
-        this.filesByFolder.forEach((files, folderPath) => {
-            const matchingFiles = files.filter(file =>
-                file.basename.toLowerCase().includes(searchTerm) ||
-                file.path.toLowerCase().includes(searchTerm)
-            );
-
-            if (matchingFiles.length > 0) {
-                hasResults = true;
-                const section = container.createDiv({ cls: "ai-assistant-folder-section" });
-
-                const header = section.createDiv({ cls: "ai-assistant-folder-header expanded" });
-
-                // 创建标题和文件数量
-                const titleContainer = header.createDiv({ cls: "ai-assistant-folder-title-container" });
-                const displayName = folderPath === '/' ? '📁 根目录' : `📁 ${folderPath}`;
-                titleContainer.createSpan({ cls: "ai-assistant-folder-title", text: displayName });
-                titleContainer.createSpan({ cls: "ai-assistant-file-count", text: `${matchingFiles.length} 个匹配文件` });
-
-                // 创建全选复选框
-                const selectAllCheckbox = header.createEl("input", {
-                    type: "checkbox",
-                    cls: "ai-assistant-folder-select-all-checkbox"
-                });
-
-                selectAllCheckbox.addEventListener('change', (e) => {
-                    e.stopPropagation();
-                    if (selectAllCheckbox.checked) {
-                        matchingFiles.forEach(file => this.selectedFiles.add(file));
-                    } else {
-                        matchingFiles.forEach(file => this.selectedFiles.delete(file));
-                    }
-                    this.updateCheckboxes();
-                });
-
-                const fileList = section.createDiv({ cls: "ai-assistant-file-list" });
-                fileList.show();
-
-                matchingFiles.forEach(file => {
-                    const fileItem = fileList.createDiv({ cls: "ai-assistant-file-item" });
-
-                    const checkbox = fileItem.createEl("input", { type: "checkbox" });
-                    checkbox.addEventListener('change', () => {
-                        if (checkbox.checked) {
-                            this.selectedFiles.add(file);
-                        } else {
-                            this.selectedFiles.delete(file);
-                        }
-                        this.updateSelectedCount();
-                        this.updateFolderSelectAllState(section, matchingFiles);
-                    });
-
-                    const fileInfo = fileItem.createDiv({ cls: "ai-assistant-file-info" });
-
-                    const label = fileInfo.createEl("label", { text: file.basename });
-                    label.addEventListener('click', () => {
-                        checkbox.checked = !checkbox.checked;
-                        checkbox.dispatchEvent(new Event('change'));
-                    });
-
-                    const path = fileInfo.createEl("div", {
-                        text: file.path,
-                        cls: "ai-assistant-file-path"
-                    });
-                });
-
-                // 初始化全选复选框状态
-                this.updateFolderSelectAllState(section, matchingFiles);
-            }
-        });
-
-        if (!hasResults) {
-            const noResults = container.createDiv({ cls: "ai-assistant-no-results" });
-            noResults.createDiv({ cls: "ai-assistant-no-results-icon", text: "🔍" });
-            noResults.createDiv({ cls: "ai-assistant-no-results-text", text: "没有找到匹配的文件" });
-        }
-    }
-
-    renderBottom(container) {
-        // 选中计数
-        this.selectedCountEl = container.createDiv({ cls: "ai-assistant-selected-count" });
-        this.updateSelectedCount();
-
-        // 按钮
-        const buttonContainer = container.createDiv({ cls: "modal-button-container" });
-
-        const confirmBtn = buttonContainer.createEl("button", {
-            text: "开始批量处理",
-            cls: "mod-cta"
-        });
-        confirmBtn.addEventListener('click', () => {
-            if (this.selectedFiles.size > 0) {
-                this.onChoose(Array.from(this.selectedFiles));
-                this.close();
-            } else {
-                new Notice("请至少选择一个文件");
-            }
-        });
-
-        const cancelBtn = buttonContainer.createEl("button", { text: "取消" });
-        cancelBtn.addEventListener('click', () => this.close());
-    }
-
-    updateSelectedCount() {
-        if (this.selectedCountEl) {
-            this.selectedCountEl.textContent = `已选择 ${this.selectedFiles.size} 个文件`;
-        }
-    }
-
-    updateCheckboxes() {
-        // 更新文件复选框
-        const fileCheckboxes = this.contentEl.querySelectorAll('.ai-assistant-file-item input[type="checkbox"]');
-        fileCheckboxes.forEach((checkbox) => {
-            const fileItem = checkbox.closest('.ai-assistant-file-item');
-            if (fileItem) {
-                const label = fileItem.querySelector('label');
-                if (label) {
-                    const fileName = label.textContent;
-                    const file = this.allFiles.find(f => f.basename === fileName);
-                    if (file) {
-                        checkbox.checked = this.selectedFiles.has(file);
-                    }
-                }
-            }
-        });
-
-        // 更新所有文件夹的全选复选框状态
-        const folderSections = this.contentEl.querySelectorAll('.ai-assistant-folder-section');
-        folderSections.forEach(section => {
-            const folderSelectAllCheckbox = section.querySelector('.ai-assistant-folder-select-all-checkbox');
-            if (folderSelectAllCheckbox) {
-                const titleElement = section.querySelector('.ai-assistant-folder-title');
-                if (titleElement) {
-                    const folderTitle = titleElement.textContent;
-                    // 根据标题找到对应的文件夹路径
-                    let folderPath = '/';
-                    if (folderTitle.includes('当前文件夹')) {
-                        folderPath = this.currentFolder?.path || '/';
-                    } else {
-                        // 从标题中提取文件夹路径
-                        const pathMatch = folderTitle.match(/📁\s*(.+)/);
-                        if (pathMatch) {
-                            folderPath = pathMatch[1] === '根目录' ? '/' : pathMatch[1];
-                        }
-                    }
-
-                    const files = this.filesByFolder.get(folderPath) || [];
-                    this.updateFolderSelectAllState(section, files);
-                }
-            }
-        });
-
-        this.updateSelectedCount();
-    }
-
-    updateFolderSelectAllState(section, files) {
-        const folderSelectAllCheckbox = section.querySelector('.ai-assistant-folder-select-all-checkbox');
-        if (!folderSelectAllCheckbox || files.length === 0) return;
-
-        const selectedFilesInFolder = files.filter(file => this.selectedFiles.has(file));
-
-        if (selectedFilesInFolder.length === 0) {
-            folderSelectAllCheckbox.checked = false;
-            folderSelectAllCheckbox.indeterminate = false;
-        } else if (selectedFilesInFolder.length === files.length) {
-            folderSelectAllCheckbox.checked = true;
-            folderSelectAllCheckbox.indeterminate = false;
-        } else {
-            folderSelectAllCheckbox.checked = false;
-            folderSelectAllCheckbox.indeterminate = true;
-        }
-    }
-
-    onClose() {
-        const { contentEl } = this;
-        contentEl.empty();
-    }
-}
-
-// 文件选择模态框
-class FileSelectionModal extends GlassModal {
-    constructor(app, files, onChoose) {
-        super(app);
-        this.files = files;
-        this.onChoose = onChoose;
-        this.selectedFiles = new Set();
-    }
-
-    onOpen() {
-        const { contentEl } = this;
-        contentEl.empty();
-
-        contentEl.createEl("h2", { text: "选择要处理的文件" });
-
-        // 全选/取消全选
-        const selectAllContainer = contentEl.createDiv({ cls: "ai-assistant-select-all-container" });
-        const selectAllBtn = selectAllContainer.createEl("button", { text: "全选" });
-        const deselectAllBtn = selectAllContainer.createEl("button", { text: "取消全选" });
-
-        selectAllBtn.addEventListener('click', () => {
-            this.files.forEach(file => this.selectedFiles.add(file));
-            this.updateCheckboxes();
-        });
-
-        deselectAllBtn.addEventListener('click', () => {
-            this.selectedFiles.clear();
-            this.updateCheckboxes();
-        });
-
-        // 文件列表
-        const fileList = contentEl.createDiv({ cls: "ai-assistant-modal-file-list" });
-        this.fileList = fileList;
-
-        this.files.forEach(file => {
-            const fileItem = fileList.createDiv({ cls: "ai-assistant-modal-file-item" });
-
-            const checkbox = fileItem.createEl("input", { type: "checkbox" });
-            checkbox.addEventListener('change', () => {
-                if (checkbox.checked) {
-                    this.selectedFiles.add(file);
-                } else {
-                    this.selectedFiles.delete(file);
-                }
-            });
-
-            fileItem.createEl("span", { text: file.path });
-        });
-
-        // 按钮
-        const buttonContainer = contentEl.createDiv({ cls: "button-container" });
-        const confirmBtn = buttonContainer.createEl("button", { text: "确认", cls: "mod-cta" });
-        const cancelBtn = buttonContainer.createEl("button", { text: "取消" });
-
-        confirmBtn.addEventListener('click', () => {
-            if (this.selectedFiles.size > 0) {
-                this.onChoose(Array.from(this.selectedFiles));
-                this.close();
-            } else {
-                new Notice("请至少选择一个文件", 2000);
-            }
-        });
-
-        cancelBtn.addEventListener('click', () => this.close());
-    }
-
-    updateCheckboxes() {
-        const checkboxes = this.fileList.querySelectorAll('input[type="checkbox"]');
-        checkboxes.forEach((checkbox, index) => {
-            checkbox.checked = this.selectedFiles.has(this.files[index]);
-        });
-    }
-
-    onClose() {
-        const { contentEl } = this;
-        contentEl.empty();
-    }
-}
-
-// 文件夹选择模态框
 class FolderSelectionModal extends GlassFuzzySuggestModal {
     constructor(app, folders, onChoose) {
         super(app);
@@ -7468,4 +7086,4 @@ class FolderSelectionModal extends GlassFuzzySuggestModal {
 
 
 
-module.exports = AiAssistantSuite;
+export default AiAssistantSuite;
