@@ -146,6 +146,12 @@ function confirmAction(app, message, confirmText) {
 const ASSISTANT_VIEW_TYPE = "ai-assistant-view";
 const ASSISTANT_WORKBENCH_TYPE = "ai-assistant-workbench-view";
 const REDACTED_API_KEY = '[REDACTED]';
+// 服务商、型号和示例地址是专名，按各家原样拼写，界面文字里从这里取
+const PROVIDER_NAMES = { deepseek: 'DeepSeek', local: 'Ollama、LM Studio' };
+const DEEPSEEK_MODELS = [['deepseek-flash', 'DeepSeek Flash'], ['deepseek-v4-pro', 'DeepSeek V4 Pro']];
+const DEEPSEEK_OFFICIAL_URL = 'https://api.deepseek.com/chat/completions';
+const API_URL_EXAMPLE = 'https://api.example.com/v1/chat/completions';
+const GEMINI_MODEL_EXAMPLES = { main: 'gemini-2.5-pro', auxiliary: 'gemini-2.5-flash' };
 const LOCAL_MODEL_DEFAULT_URL = 'http://localhost:11434/v1/chat/completions';
 
 
@@ -5439,10 +5445,10 @@ class AiAssistantSettingTab extends PluginSettingTab {
             this.refresh();
         };
 
-        const deepseekButton = actionsContainer.createEl('button', { text: '添加 DeepSeek' });
+        const deepseekButton = actionsContainer.createEl('button', { text: `添加 ${PROVIDER_NAMES.deepseek}` });
         deepseekButton.onclick = async () => {
             const config = { id: `deepseek_${Date.now()}`, name: 'DeepSeek', apiProvider: 'deepseek',
-                apiKey: '', apiUrl: 'https://api.deepseek.com/chat/completions',
+                apiKey: '', apiUrl: DEEPSEEK_OFFICIAL_URL,
                 modelName: 'deepseek-flash', auxiliaryModelName: 'deepseek-flash',
                 deepseekThinking: false, enabled: true };
             apiConfigs.push(config);
@@ -5538,8 +5544,8 @@ class AiAssistantSettingTab extends PluginSettingTab {
             .addDropdown(dropdown => dropdown
                 .addOption('openai', 'OpenAI (兼容格式)')
                 .addOption('gemini', 'Google Gemini (官方格式)')
-                .addOption('deepseek', 'DeepSeek 官方')
-                .addOption('local', '本地模型（Ollama、LM Studio）')
+                .addOption('deepseek', `${PROVIDER_NAMES.deepseek} 官方`)
+                .addOption('local', `本地模型（${PROVIDER_NAMES.local}）`)
                 .setValue(activeConfig.apiProvider || 'openai')
                 .onChange(async (value) => {
                     activeConfig.apiProvider = value;
@@ -5553,24 +5559,25 @@ class AiAssistantSettingTab extends PluginSettingTab {
         }
         if (activeConfig.apiProvider === 'deepseek') {
             new Setting(containerEl)
-                .setName('DeepSeek 模型预设')
-                .setDesc('日常整理用 DeepSeek Flash，复杂改写用 DeepSeek V4 Pro。下方仍可手动填写模型名。')
-                .addDropdown(dropdown => dropdown
-                    .addOption('', '选择模型…')
-                    .addOption('deepseek-flash', 'DeepSeek Flash')
-                    .addOption('deepseek-v4-pro', 'DeepSeek V4 Pro')
-                    .setValue(['deepseek-flash', 'deepseek-v4-pro'].includes(activeConfig.modelName) ? activeConfig.modelName : '')
+                .setName('模型预设')
+                .setDesc('日常整理用快速模型，复杂改写用专业模型。下方仍可手动填写模型名。')
+                .addDropdown(dropdown => {
+                    dropdown.addOption('', '选择模型…');
+                    for (const [id, label] of DEEPSEEK_MODELS) dropdown.addOption(id, label);
+                    return dropdown
+                    .setValue(DEEPSEEK_MODELS.some(([id]) => id === activeConfig.modelName) ? activeConfig.modelName : '')
                     .onChange(async value => {
                         if (!value) return;
                         activeConfig.modelName = value;
                         await this.plugin.saveSettings(); this.refresh();
-                    }));
+                    });
+                });
             new Setting(containerEl).setName('深度思考')
                 .setDesc('适合复杂内容；等待时间可能增加。默认关闭，方便快速整理笔记。')
                 .addToggle(toggle => toggle.setValue(!!activeConfig.deepseekThinking).onChange(async value => {
                     activeConfig.deepseekThinking = value; await this.plugin.saveSettings();
                 }));
-            containerEl.createEl('p', { cls: 'atelier-provider-note', text: '官方地址：https://api.deepseek.com/chat/completions。留空使用官方地址；也支持填写基础地址。切换已有配置的服务商不会覆盖你保存的地址和模型。' });
+            containerEl.createEl('p', { cls: 'atelier-provider-note', text: `官方地址：${DEEPSEEK_OFFICIAL_URL}。留空使用官方地址；也支持填写基础地址。切换已有配置的服务商不会覆盖你保存的地址和模型。` });
         }
 
         new Setting(containerEl)
@@ -5616,7 +5623,7 @@ class AiAssistantSettingTab extends PluginSettingTab {
             .setName('API URL')
             .setDesc('在这里填入你的AI服务API URL，例如本地模型的地址。如果使用Gemini官方API，此项将被忽略。')
             .addText(text => text
-                .setPlaceholder('https://api.example.com/v1/chat/completions')
+                .setPlaceholder(API_URL_EXAMPLE)
                 .setValue(activeConfig.apiUrl || '')
                 .onChange(async (value) => {
                     activeConfig.apiUrl = value;
@@ -5627,7 +5634,7 @@ class AiAssistantSettingTab extends PluginSettingTab {
             .setName('主模型')
             .setDesc('指定用于内容生成、分析等核心任务的 AI 模型。')
             .addText(text => text
-                .setPlaceholder('例如 gemini-2.5-pro')
+                .setPlaceholder(`例如 ${GEMINI_MODEL_EXAMPLES.main}`)
                 .setValue(activeConfig.modelName || '')
                 .onChange(async (value) => {
                     activeConfig.modelName = value;
@@ -5638,7 +5645,7 @@ class AiAssistantSettingTab extends PluginSettingTab {
             .setName('辅助模型')
             .setDesc('指定用于翻译等轻量级任务的 AI 模型，可以选一个更快的。')
             .addText(text => text
-                .setPlaceholder('例如 gemini-2.5-flash')
+                .setPlaceholder(`例如 ${GEMINI_MODEL_EXAMPLES.auxiliary}`)
                 .setValue(activeConfig.auxiliaryModelName || '')
                 .onChange(async (value) => {
                     activeConfig.auxiliaryModelName = value;
