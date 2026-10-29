@@ -97,7 +97,7 @@ Do not commit `data.json` to Git.
 - Batch runs send one request per note; large folders cost accordingly.
 - The key obfuscation in `data.json` protects against casual reading, not against someone with access to the file.
 - The interface is in Chinese; command names follow Obsidian's language (Chinese or English).
-- Streaming answers use `fetch`, because Obsidian's `requestUrl` cannot stream. If a provider rejects browser requests, the plugin falls back to one normal request.
+- Answers do not stream: every request uses Obsidian's `requestUrl`, which works on mobile and is not blocked by CORS, but returns the whole answer at once.
 
 ## Development
 
@@ -108,7 +108,7 @@ npm test               # builds, then runs the tests
 npm run release:check  # official Obsidian lint, tests, release zip and a byte check against main.js
 ```
 
-The tests cover guarded writes, partial acceptance, full-document preview, per-note review, DeepSeek and local-model requests, request timeouts, the streaming fallback, opt-in backups, fallback order, the only-existing-tags filter and the batch send summary. They run without Obsidian by loading the built `main.js` in a sandbox with stub classes. Design notes are in [docs/](docs/); versions are in [CHANGELOG.md](CHANGELOG.md).
+The tests cover guarded writes, partial acceptance, full-document preview, per-note review, DeepSeek and local-model requests, request timeouts, requests without fetch, opt-in backups, upgrading 1.3 data, fallback order, the only-existing-tags filter and the batch send summary. They run without Obsidian by loading the built `main.js` in a sandbox with stub classes. Design notes are in [docs/](docs/); versions are in [CHANGELOG.md](CHANGELOG.md).
 
 ## License
 

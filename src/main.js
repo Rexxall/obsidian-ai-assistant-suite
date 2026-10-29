@@ -1,4 +1,4 @@
-import { Plugin, Notice, PluginSettingTab, Setting, FuzzySuggestModal, Modal, ItemView, MarkdownRenderer, Menu, setIcon, parseYaml, stringifyYaml, getLanguage, requestUrl } from 'obsidian';
+import { Plugin, Notice, PluginSettingTab, SettingPage, Setting, FuzzySuggestModal, Modal, ItemView, MarkdownRenderer, Menu, setIcon, parseYaml, stringifyYaml, getLanguage, requestUrl } from 'obsidian';
 
 // 界面主体是中文；命令名跟随 Obsidian 语言，非中文时用英文
 const isChineseInterface = () => {
@@ -410,12 +410,12 @@ const DEFAULT_SETTINGS = {
     apiConfigs: [
         {
             id: 'default',
-            name: 'Default Configuration',
+            name: '默认配置',
             apiProvider: 'openai',
             apiKey: '',
-            apiUrl: 'https://darthvader-133-vaderodyseus5.hf.space/v1/chat/completions',
-            modelName: 'gemini-2.5-pro',
-            auxiliaryModelName: 'gemini-2.5-flash',
+            apiUrl: 'https://api.openai.com/v1/chat/completions',
+            modelName: '',
+            auxiliaryModelName: '',
             enabled: true
         }
     ],
@@ -425,7 +425,7 @@ const DEFAULT_SETTINGS = {
 
     // Mover Settings
     moverSuggestionsCount: 4,
-    ignoredFolders: '40 - Obsidian',
+    ignoredFolders: '',
     moverPrompt: MOVER_DEFAULT_PROMPT,
 
     // Tagger Settings
@@ -1064,7 +1064,7 @@ class AssistantView extends ItemView {
             const streamingContent = task.streamingContent || task.content?.streamingContent;
             const chars = streamingContent ? streamingContent.length : 0;
             const meta = card.createDiv({ cls: "ai-assistant-streaming-meta" });
-            meta.setText(chars > 0 ? `Streaming · 已接收 ${chars} 字` : 'Streaming · 等待首个响应片段');
+            meta.setText(chars > 0 ? `已收到 ${chars} 字` : '正在生成，结果到齐后一次显示');
             if (streamingContent) {
                 const streamBox = card.createEl("pre", { cls: "ai-assistant-streaming-output" });
                 streamBox.setText(streamingContent + '▌');
@@ -2584,6 +2584,21 @@ class AiAssistantSuite extends Plugin {
         });
     }
 
+    // 1.3 之前只有一套服务，字段直接放在顶层；升级时转成一条配置，不丢密钥和模型
+    migrateLegacySettings() {
+        const legacyKeys = ['apiProvider', 'apiKey', 'apiUrl', 'modelName', 'auxiliaryModelName'];
+        const hasLegacy = legacyKeys.some(key => this.settings[key] !== undefined);
+        if (!hasLegacy) return false;
+        if (!Array.isArray(this.settings.apiConfigs) || !this.settings.apiConfigs.some(c => c.apiKey || c.apiUrl)) {
+            const config = { id: 'default', name: '默认配置', enabled: true };
+            for (const key of legacyKeys) if (this.settings[key] !== undefined) config[key] = this.settings[key];
+            this.settings.apiConfigs = [config];
+            this.settings.activeConfigId = config.id;
+        }
+        for (const key of legacyKeys) delete this.settings[key];
+        return true;
+    }
+
     normalizeSettings() {
         if (!Array.isArray(this.settings.apiConfigs)) {
             this.settings.apiConfigs = JSON.parse(JSON.stringify(DEFAULT_SETTINGS.apiConfigs));
@@ -2825,44 +2840,6 @@ class AiAssistantSuite extends Plugin {
 
     async onload() {
         await this.loadSettings();
-
-        // 兼容和迁移旧版本配置到 apiConfigs
-        if (!this.settings.apiConfigs || this.settings.apiConfigs.length === 0) {
-            this.settings.apiConfigs = DEFAULT_SETTINGS.apiConfigs;
-            this.settings.activeConfigId = 'default';
-        }
-
-        // 如果仍存在遗留的顶层配置，将其覆盖到 default 配置中且清理它
-        if (this.settings.apiKey !== undefined && this.settings.modelName !== undefined) {
-            let defaultIdx = this.settings.apiConfigs.findIndex(c => c.id === 'default');
-            if (defaultIdx === -1) {
-                // 如果没有 default 这个 id，就新建一个或者改第一个
-                if (this.settings.apiConfigs.length > 0) {
-                     defaultIdx = 0;
-                } else {
-                     this.settings.apiConfigs.push({...DEFAULT_SETTINGS.apiConfigs[0]});
-                     defaultIdx = 0;
-                }
-            }
-            this.settings.apiConfigs[defaultIdx] = {
-                ...this.settings.apiConfigs[defaultIdx],
-                apiProvider: this.settings.apiProvider || 'openai',
-                apiKey: this.settings.apiKey,
-                apiUrl: this.settings.apiUrl || DEFAULT_SETTINGS.apiConfigs[0].apiUrl,
-                modelName: this.settings.modelName || DEFAULT_SETTINGS.apiConfigs[0].modelName,
-                auxiliaryModelName: this.settings.auxiliaryModelName || DEFAULT_SETTINGS.apiConfigs[0].auxiliaryModelName
-            };
-            
-            // 清理旧字段
-            delete this.settings.apiProvider;
-            delete this.settings.apiKey;
-            delete this.settings.apiUrl;
-            delete this.settings.modelName;
-            delete this.settings.auxiliaryModelName;
-
-            await this.migrateApiKeys();
-            await this.saveSettings();
-        }
 
         this.registerView(
             ASSISTANT_VIEW_TYPE,
@@ -3324,9 +3301,7 @@ class AiAssistantSuite extends Plugin {
         let url, requestOptions;
 
         if (provider === 'gemini') {
-            url = options.stream && !expectJson
-                ? `https://generativelanguage.googleapis.com/v1beta/models/${model}:streamGenerateContent?alt=sse`
-                : `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
+            url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
             const body = {
                 contents: [{ parts: [{ text: prompt }] }]
             };
@@ -3359,9 +3334,6 @@ class AiAssistantSuite extends Plugin {
             if (expectJson && provider !== 'local') {
                 body.response_format = { type: "json_object" };
             }
-            if (options.stream && !expectJson) {
-                body.stream = true;
-            }
             const headers = { "Content-Type": "application/json" };
             if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
             requestOptions = {
@@ -3369,22 +3341,6 @@ class AiAssistantSuite extends Plugin {
                 headers,
                 body: JSON.stringify(body)
             };
-        }
-
-        if (options.stream && provider !== 'gemini' && !expectJson) {
-            return await this.withStreamingFallback(
-                () => this.callOpenAiStreaming(url, requestOptions, options),
-                url, requestOptions, options,
-                data => data.choices?.[0]?.message?.content
-            );
-        }
-        if (options.stream && provider === 'gemini' && !expectJson) {
-            const plainUrl = url.replace(':streamGenerateContent?alt=sse', ':generateContent');
-            return await this.withStreamingFallback(
-                () => this.callGeminiStreaming(url, requestOptions, options),
-                plainUrl, requestOptions, options,
-                data => data.candidates?.[0]?.content?.parts?.[0]?.text
-            );
         }
 
         const data = await this.executeJsonRequest(url, requestOptions, options);
@@ -3401,6 +3357,8 @@ class AiAssistantSuite extends Plugin {
             throw new Error(`AI 未能返回有效内容。`);
         }
 
+        // 请求一律走 requestUrl（不受跨域限制、手机可用），它不能逐段读取，所以结果到齐后一次交给界面
+        options.onStream?.(resultText, resultText);
         return resultText;
     }
 
@@ -3461,164 +3419,6 @@ class AiAssistantSuite extends Plugin {
         } finally {
             timeout.clear();
         }
-    }
-
-    // 流式输出需要逐段读取，只有 fetch 能做到；若服务商拒绝浏览器跨域请求（fetch 直接失败），
-    // 自动改用一次普通请求，结果一次性返回。
-    async withStreamingFallback(streaming, url, requestOptions, options, readResult) {
-        try {
-            return await streaming();
-        } catch (error) {
-            if (options.signal?.aborted || this.isCancellationError(error) || /秒未响应|^HTTP /.test(error?.message || '')) {
-                throw error;
-            }
-            if (error?.name !== 'TypeError') throw error;
-            const body = JSON.parse(requestOptions.body || '{}');
-            delete body.stream;
-            const data = await this.executeJsonRequest(url, { ...requestOptions, body: JSON.stringify(body) }, options);
-            const text = readResult(data) || '';
-            if (text) options.onStream?.(text, text);
-            return text;
-        }
-    }
-
-    async callOpenAiStreaming(url, requestOptions, options = {}) {
-        // 只限制“等服务器开始回答”的时间；开始输出后长回答不会被截断，仍可手动取消
-        const timeout = this.createRequestTimeout(options.signal, options.timeout || 120000);
-        let response;
-        try {
-            response = await fetch(url, {
-                ...requestOptions,
-                signal: timeout.signal
-            });
-        } catch (error) {
-            if (timeout.timedOut()) throw timeout.error();
-            throw error;
-        } finally {
-            timeout.clear();
-        }
-
-        if (!response.ok) {
-            const errorText = await response.text();
-            throw new Error(`HTTP ${response.status} ${response.statusText}. ${errorText.substring(0, 200)}`);
-        }
-
-        if (!response.body?.getReader) {
-            const data = await response.json();
-            return data.choices?.[0]?.message?.content || '';
-        }
-
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder();
-        let buffer = '';
-        let accumulated = '';
-
-        while (true) {
-            if (options.signal?.aborted) {
-                try { await reader.cancel(); } catch { /* 连接已断开，无需再取消 */ }
-                throw this.createAbortError();
-            }
-            const { value, done } = await reader.read();
-            if (done) break;
-
-            buffer += decoder.decode(value, { stream: true });
-            const events = buffer.split(/\r?\n\r?\n/);
-            buffer = events.pop() || '';
-
-            for (const event of events) {
-                const lines = event.split(/\r?\n/).filter(line => line.startsWith('data:'));
-                for (const line of lines) {
-                    const payload = line.replace(/^data:\s*/, '').trim();
-                    if (!payload) continue;
-                    if (payload === '[DONE]') {
-                        return accumulated;
-                    }
-                    try {
-                        const json = JSON.parse(payload);
-                        const delta = json.choices?.[0]?.delta?.content ||
-                            json.choices?.[0]?.message?.content ||
-                            json.choices?.[0]?.text ||
-                            '';
-                        if (delta) {
-                            accumulated += delta;
-                            options.onStream?.(delta, accumulated);
-                        }
-                    } catch {
-                        console.warn('[AI Assistant] 无法解析 streaming chunk');
-                    }
-                }
-            }
-        }
-
-        return accumulated;
-    }
-
-    async callGeminiStreaming(url, requestOptions, options = {}) {
-        // 只限制“等服务器开始回答”的时间；开始输出后长回答不会被截断，仍可手动取消
-        const timeout = this.createRequestTimeout(options.signal, options.timeout || 120000);
-        let response;
-        try {
-            response = await fetch(url, {
-                ...requestOptions,
-                signal: timeout.signal
-            });
-        } catch (error) {
-            if (timeout.timedOut()) throw timeout.error();
-            throw error;
-        } finally {
-            timeout.clear();
-        }
-
-        if (!response.ok) {
-            const errorText = await response.text();
-            throw new Error(`HTTP ${response.status} ${response.statusText}. ${errorText.substring(0, 200)}`);
-        }
-
-        if (!response.body?.getReader) {
-            const data = await response.json();
-            return data.candidates?.[0]?.content?.parts?.[0]?.text || '';
-        }
-
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder();
-        let buffer = '';
-        let accumulated = '';
-
-        while (true) {
-            if (options.signal?.aborted) {
-                try { await reader.cancel(); } catch { /* 连接已断开，无需再取消 */ }
-                throw this.createAbortError();
-            }
-
-            const { value, done } = await reader.read();
-            if (done) break;
-
-            buffer += decoder.decode(value, { stream: true });
-            const events = buffer.split(/\r?\n\r?\n/);
-            buffer = events.pop() || '';
-
-            for (const event of events) {
-                const lines = event.split(/\r?\n/).filter(line => line.startsWith('data:'));
-                for (const line of lines) {
-                    const payload = line.replace(/^data:\s*/, '').trim();
-                    if (!payload || payload === '[DONE]') continue;
-                    try {
-                        const json = JSON.parse(payload);
-                        const delta = json.candidates?.[0]?.content?.parts
-                            ?.map(part => part.text || '')
-                            .join('') || '';
-                        if (delta) {
-                            accumulated += delta;
-                            options.onStream?.(delta, accumulated);
-                        }
-                    } catch {
-                        console.warn('[AI Assistant] 无法解析 Gemini streaming chunk');
-                    }
-                }
-            }
-        }
-
-        return accumulated;
     }
 
     truncatePreview(content, maxChars = 12000) {
@@ -5442,10 +5242,13 @@ ${content}`
 
     async loadSettings() {
         this.initializeSharedServices();
-        this.settings = Object.assign({}, JSON.parse(JSON.stringify(DEFAULT_SETTINGS)), await this.loadData());
+        const stored = await this.loadData() || {};
+        this.settings = Object.assign({}, JSON.parse(JSON.stringify(DEFAULT_SETTINGS)), stored);
+        if (!Array.isArray(stored.apiConfigs)) delete this.settings.apiConfigs;
+        const upgraded = this.migrateLegacySettings();
         this.normalizeSettings();
         const migrated = await this.migrateApiKeys();
-        if (migrated) {
+        if (migrated || upgraded) {
             await this.saveSettings();
         }
     }
@@ -5518,6 +5321,7 @@ class AiAssistantSettingTab extends PluginSettingTab {
     constructor(app, plugin) {
         super(app, plugin);
         this.plugin = plugin;
+        this.containerEl.addClass('ap', 'ap-settings', 'assistant-settings-morning');
     }
 
     addSectionHeading(containerEl, name) {
@@ -5526,42 +5330,60 @@ class AiAssistantSettingTab extends PluginSettingTab {
         return heading;
     }
 
-    display() {
-        this.renderSettingsBody();
-        const root = this.containerEl;
-        root.addClass('ap', 'ap-settings', 'plugin-settings-workspace', 'assistant-settings-morning');
-        const nav = root.createDiv({ cls: 'atelier-settings-nav' });
-        const pages = ['模型连接', '处理偏好', '动作与提示词', '备份与恢复'];
-        const isSection = el => el.classList?.contains('ai-assistant-settings-section');
-        const sections = Array.from(root.children).filter(isSection);
-        const groups = sections.map((heading, index) => {
-            const nodes = [heading];
-            let node = heading.nextElementSibling;
-            while (node && !isSection(node) && node !== nav) {
-                nodes.push(node); node = node.nextElementSibling;
-            }
-            return { nodes, page: index === 0 ? 0 : index <= 2 ? 1 : index <= 4 ? 2 : 3 };
-        });
-        const buttons = [];
-        const select = page => {
-            this.settingsPage = page;
-            groups.forEach(group => group.nodes.forEach(el => { el.hidden = group.page !== page; }));
-            buttons.forEach((button, index) => {
-                button.setAttribute('aria-pressed', String(index === page));
-            });
-        };
-        pages.forEach((name, index) => {
-            const button = nav.createEl('button', { text: name });
-            button.onclick = () => select(index);
-            buttons.push(button);
-        });
-        root.prepend(nav);
-        select(this.settingsPage || 0);
+    // Obsidian 1.13 起设置页由定义渲染：四个分页各是一个 SettingPage，内容沿用下面的渲染代码
+    static PAGES = [
+        { name: '模型连接', desc: '服务商、密钥、模型和备用顺序', aliases: ['API', '密钥', '模型', '备用', 'DeepSeek', 'Gemini', 'OpenAI', 'Ollama'] },
+        { name: '处理偏好', desc: '标签、归档、元数据的参数和默认步骤', aliases: ['标签', '归档', '忽略文件夹', '翻译'] },
+        { name: '动作与提示词', desc: '自定义动作和内置提示词', aliases: ['自定义动作', '提示词'] },
+        { name: '备份与恢复', desc: '导出、导入和重置设置', aliases: ['导出', '导入', '重置'] }
+    ];
+
+    getSettingDefinitions() {
+        return AiAssistantSettingTab.PAGES.map((page, index) => ({
+            type: 'page',
+            name: page.name,
+            desc: page.desc,
+            aliases: page.aliases,
+            page: () => this.createPage(index, page.name)
+        }));
     }
 
-    renderSettingsBody() {
-        const { containerEl } = this;
+    createPage(index, title) {
+        class AssistantSettingsPage extends SettingPage {
+            constructor(owner) {
+                super();
+                this.owner = owner;
+                this.title = title;
+            }
+            display() {
+                this.owner.currentPage = this;
+                this.owner.renderPage(this.containerEl, index);
+            }
+        }
+        return new AssistantSettingsPage(this);
+    }
+
+    // 改了会影响页面结构的设置后，重画当前分页
+    refresh() {
+        this.currentPage?.display();
+    }
+
+    renderPage(containerEl, index) {
         containerEl.empty();
+        containerEl.addClass('ap', 'ap-settings', 'plugin-settings-workspace', 'assistant-settings-morning');
+        this.renderSettingsBody(containerEl);
+        const isSection = el => el.classList?.contains('ai-assistant-settings-section');
+        let page = -1, section = -1;
+        for (const el of Array.from(containerEl.children)) {
+            if (isSection(el)) {
+                section += 1;
+                page = section === 0 ? 0 : section <= 2 ? 1 : section <= 4 ? 2 : 3;
+            }
+            if (page !== index) el.remove();
+        }
+    }
+
+    renderSettingsBody(containerEl) {
         this.addSectionHeading(containerEl, '连接你的模型');
         containerEl.createEl('p', {
             text: '每个服务独立保存。启用的配置按优先级依次尝试，连接失败时自动使用备用服务。',
@@ -5594,7 +5416,7 @@ class AiAssistantSettingTab extends PluginSettingTab {
                 dropdown.onChange(async (value) => {
                     this.plugin.settings.activeConfigId = value;
                     await this.plugin.saveSettings();
-                    this.display();
+                    this.refresh();
                 });
             });
 
@@ -5614,7 +5436,7 @@ class AiAssistantSettingTab extends PluginSettingTab {
             });
             this.plugin.settings.activeConfigId = newId;
             await this.plugin.saveSettings();
-            this.display();
+            this.refresh();
         };
 
         const deepseekButton = actionsContainer.createEl('button', { text: '添加 DeepSeek' });
@@ -5626,7 +5448,7 @@ class AiAssistantSettingTab extends PluginSettingTab {
             apiConfigs.push(config);
             this.plugin.settings.activeConfigId = config.id;
             await this.plugin.saveSettings();
-            this.display();
+            this.refresh();
         };
 
         const delButton = actionsContainer.createEl('button', { text: '删除当前配置' });
@@ -5638,7 +5460,7 @@ class AiAssistantSettingTab extends PluginSettingTab {
                 this.plugin.settings.apiConfigs = apiConfigs.filter(c => c !== activeConfig);
                 this.plugin.settings.activeConfigId = this.plugin.settings.apiConfigs[0].id;
                 await this.plugin.saveSettings();
-                this.display();
+                this.refresh();
             };
         }
 
@@ -5653,7 +5475,7 @@ class AiAssistantSettingTab extends PluginSettingTab {
             apiConfigs[currentIdx - 1] = apiConfigs[currentIdx];
             apiConfigs[currentIdx] = tmp;
             await this.plugin.saveSettings();
-            this.display();
+            this.refresh();
         };
 
         const downBtn = actionsContainer.createEl('button', { text: '↓ 降低优先级' });
@@ -5665,7 +5487,7 @@ class AiAssistantSettingTab extends PluginSettingTab {
             apiConfigs[currentIdx + 1] = apiConfigs[currentIdx];
             apiConfigs[currentIdx] = tmp;
             await this.plugin.saveSettings();
-            this.display();
+            this.refresh();
         };
         
         if (!activeConfig) return;
@@ -5688,7 +5510,7 @@ class AiAssistantSettingTab extends PluginSettingTab {
                 .onChange(async (value) => {
                     activeConfig.enabled = value;
                     await this.plugin.saveSettings();
-                    this.display();
+                    this.refresh();
                 }));
 
         new Setting(containerEl)
@@ -5722,7 +5544,7 @@ class AiAssistantSettingTab extends PluginSettingTab {
                 .onChange(async (value) => {
                     activeConfig.apiProvider = value;
                     await this.plugin.saveSettings();
-                    this.display();
+                    this.refresh();
                 }));
 
         let apiKeyInput = null;
@@ -5732,7 +5554,7 @@ class AiAssistantSettingTab extends PluginSettingTab {
         if (activeConfig.apiProvider === 'deepseek') {
             new Setting(containerEl)
                 .setName('DeepSeek 模型预设')
-                .setDesc('日常整理用 Flash，复杂改写用 Pro。下方仍可手动填写模型名。')
+                .setDesc('日常整理用 DeepSeek Flash，复杂改写用 DeepSeek V4 Pro。下方仍可手动填写模型名。')
                 .addDropdown(dropdown => dropdown
                     .addOption('', '选择模型…')
                     .addOption('deepseek-flash', 'DeepSeek Flash')
@@ -5741,7 +5563,7 @@ class AiAssistantSettingTab extends PluginSettingTab {
                     .onChange(async value => {
                         if (!value) return;
                         activeConfig.modelName = value;
-                        await this.plugin.saveSettings(); this.display();
+                        await this.plugin.saveSettings(); this.refresh();
                     }));
             new Setting(containerEl).setName('深度思考')
                 .setDesc('适合复杂内容；等待时间可能增加。默认关闭，方便快速整理笔记。')
@@ -5778,7 +5600,7 @@ class AiAssistantSettingTab extends PluginSettingTab {
                     await this.plugin.setApiKey(activeConfig, value.trim());
                     await this.plugin.saveSettings();
                     new Notice('API 密钥 已保存。', 3000);
-                    this.display();
+                    this.refresh();
                 }))
             .addButton(button => button
                 .setButtonText('清除密钥')
@@ -5787,7 +5609,7 @@ class AiAssistantSettingTab extends PluginSettingTab {
                     activeConfig.apiKey = '';
                     await this.plugin.saveSettings();
                     new Notice('API 密钥 已清除。', 3000);
-                    this.display();
+                    this.refresh();
                 }));
 
         new Setting(containerEl)
@@ -5898,7 +5720,7 @@ class AiAssistantSettingTab extends PluginSettingTab {
                 .onChange(async (value) => {
                     this.plugin.settings.taggerEnableTranslation = value;
                     await this.plugin.saveSettings();
-                    this.display(); // Refresh to show/hide related settings
+                    this.refresh(); // Refresh to show/hide related settings
                 }));
 
         if (this.plugin.settings.taggerEnableTranslation) {
@@ -6013,7 +5835,7 @@ class AiAssistantSettingTab extends PluginSettingTab {
                     .onChange(async (value) => {
                         action.enabled = value;
                         await this.plugin.saveSettings();
-                        this.display();
+                        this.refresh();
                     }));
 
             new Setting(actionContainer)
@@ -6060,7 +5882,7 @@ class AiAssistantSettingTab extends PluginSettingTab {
                     .onClick(async () => {
                         this.plugin.settings.customActions = customActions.filter(item => item.id !== action.id);
                         await this.plugin.saveSettings();
-                        this.display();
+                        this.refresh();
                     }));
         });
 
@@ -6078,7 +5900,7 @@ class AiAssistantSettingTab extends PluginSettingTab {
                         enabled: true
                     });
                     await this.plugin.saveSettings();
-                    this.display();
+                    this.refresh();
                 }));
 
 
@@ -6204,7 +6026,7 @@ class AiAssistantSettingTab extends PluginSettingTab {
                 await this.plugin.saveSettings();
 
                 // 刷新设置界面
-                this.display();
+                this.refresh();
 
                 new Notice('设置导入成功！', 3000);
             } catch (error) {
@@ -6220,7 +6042,7 @@ class AiAssistantSettingTab extends PluginSettingTab {
         if (confirmed) {
             this.plugin.settings = JSON.parse(JSON.stringify(DEFAULT_SETTINGS));
             await this.plugin.saveSettings();
-            this.display();
+            this.refresh();
             new Notice('设置已重置为默认值！', 3000);
         }
     }

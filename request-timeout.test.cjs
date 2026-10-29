@@ -20,10 +20,6 @@ test('pressing cancel is still reported as a cancel, not a timeout',async()=>{
  user.abort();
  await assert.rejects(pending,error=>!/秒未响应/.test(error.message)&&p.isCancellationError(error));
 });
-test('streaming waits only a limited time for the first answer',async()=>{
- const p=fixture();
- await assert.rejects(p.callOpenAiStreaming('https://example.invalid',{method:'POST'},{timeout:30}),/秒未响应/);
-});
 test('a normal reply still comes back through requestUrl',async()=>{
  let seen;
  const p=fixture({requestUrl:async(request)=>{seen=request;return {status:200,text:'{"choices":[]}'};}});
@@ -34,10 +30,10 @@ test('an HTTP error keeps its status and the start of the body',async()=>{
  const p=fixture({requestUrl:async()=>({status:401,text:'{"error":"bad key"}'})});
  await assert.rejects(p.executeJsonRequest('https://example.invalid',{method:'POST'},{timeout:1000}),/HTTP 401\. \{"error":"bad key"\}/);
 });
-test('when the browser blocks a streaming request, one plain request is made instead',async()=>{
+test('no request uses fetch, even one that asked to stream',async()=>{
  let plainBody;
  const p=fixture({
-  fetch:async()=>{throw new TypeError('Failed to fetch');},
+  fetch:async()=>{throw new Error('fetch must not be used');},
   requestUrl:async(request)=>{plainBody=JSON.parse(request.body);return {status:200,text:'{"choices":[{"message":{"content":"whole answer"}}]}'};}
  });
  p.getApiKey=async()=>'key';

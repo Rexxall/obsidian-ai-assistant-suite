@@ -16,9 +16,11 @@ test('DeepSeek structured request preserves selected model, authorization and th
  assert.equal(out,'{"tags":["test"]}');const body=JSON.parse(request.body);
  assert.equal(request.url,'https://api.deepseek.com/chat/completions');assert.equal(request.headers.Authorization,'Bearer test-key');assert.equal(body.model,'deepseek-v4-pro');assert.equal(body.thinking.type,'enabled');assert.equal(body.response_format.type,'json_object');
 });
-test('DeepSeek streaming uses shared stream reader and forwards cancellation signal',async()=>{
- const p=fixture(),signal={aborted:false};p.callOpenAiStreaming=async(url,request,options)=>{assert.equal(options.signal,signal);const body=JSON.parse(request.body);assert.equal(body.stream,true);assert.equal(body.model,'deepseek-flash');assert.equal(body.thinking.type,'disabled');return 'stream result';};
- assert.equal(await p._callSingleConfig('hello',null,false,{apiProvider:'deepseek'},{stream:true,signal}),'stream result');
+test('a request asked to stream goes through requestUrl and hands the whole answer over once',async()=>{
+ const p=fixture(),signal={aborted:false},seen=[];let request;
+ p.executeJsonRequest=async(url,options,opts)=>{request={url,...options};assert.equal(opts.signal,signal);return {choices:[{message:{content:'whole result'}}]};};
+ assert.equal(await p._callSingleConfig('hello',null,false,{apiProvider:'deepseek'},{stream:true,signal,onStream:(text)=>seen.push(text)}),'whole result');
+ const body=JSON.parse(request.body);assert.equal(body.stream,undefined);assert.equal(body.model,'deepseek-flash');assert.deepEqual(seen,['whole result']);
 });
 test('OpenAI-compatible requests keep their custom endpoint and omit DeepSeek parameters',async()=>{
  const p=fixture();p.executeJsonRequest=async(url,request)=>{assert.equal(url,'https://custom.test/generate');assert.equal(JSON.parse(request.body).thinking,undefined);return {choices:[{message:{content:'ok'}}]};};assert.equal(await p._callSingleConfig('hello',null,false,{apiProvider:'openai',apiUrl:'https://custom.test/generate',modelName:'custom'}),'ok');
