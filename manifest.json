@@ -1,9 +1,9 @@
 {
   "id": "ai-assistant-suite",
   "name": "AI Assistant Suite",
-  "version": "1.5.0",
+  "version": "1.6.0",
   "minAppVersion": "1.13.0",
-  "description": "Let an AI propose tags, properties, structure and a folder for a note, then review the whole note and apply only what you accept. Works with cloud APIs or a local model.",
+  "description": "Ask an AI to suggest a title, tags, a folder and tidier text for a note, then review and apply only what you accept. Works with cloud APIs or a local model.",
   "author": "Rexxall",
   "authorUrl": "https://github.com/Rexxall",
   "isDesktopOnly": false

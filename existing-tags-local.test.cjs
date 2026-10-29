@@ -32,7 +32,7 @@ test('cloud providers still refuse to run without a key',async()=>{
  const p=fixture(async()=>{throw new Error('should not be called');});
  p.getApiKey=async()=>'';
  assert.equal(p.isConfigUsable({apiProvider:'openai',apiUrl:'https://x.test'}),false);
- await assert.rejects(p._callSingleConfig('hi',null,false,{apiProvider:'openai',apiUrl:'https://x.test'}),/API Key 为空/);
+ await assert.rejects(p._callSingleConfig('hi',null,false,{apiProvider:'openai',apiUrl:'https://x.test'}),/还没有填写 API 密钥/);
 });
 test('the batch summary counts notes and size and lists destinations in fallback order',()=>{
  const p=fixture();

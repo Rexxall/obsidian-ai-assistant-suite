@@ -1,4 +1,4 @@
-import { Plugin, Notice, PluginSettingTab, SettingPage, Setting, FuzzySuggestModal, Modal, ItemView, MarkdownRenderer, Menu, setIcon, parseYaml, stringifyYaml, getLanguage, requestUrl } from 'obsidian';
+import { apiVersion, Platform, Plugin, Notice, PluginSettingTab, SettingPage, Setting, FuzzySuggestModal, Modal, ItemView, MarkdownRenderer, Menu, setIcon, parseYaml, stringifyYaml, getLanguage, requestUrl } from 'obsidian';
 
 // 界面主体是中文；命令名跟随 Obsidian 语言，非中文时用英文
 const isChineseInterface = () => {
@@ -45,16 +45,16 @@ class ReviewChecklistModal extends GlassModal {
         const items = [];
         if (suggestions.tags?.length) {
             const kept = draft.tags.filter(Boolean);
-            if (kept.length) items.push({ title: '标签', detail: kept.map(t => `#${t}`).join('　'), pill: `新增 ${kept.length}`, tone: 'is-accent',
+            if (kept.length) items.push({ title: tr('标签', 'Tags'), detail: kept.map(t => `#${t}`).join('　'), pill: tr(`新增 ${kept.length}`, `New ${kept.length}`), tone: 'is-accent',
                 on: draft.useTags, toggle: () => { draft.useTags = !draft.useTags; } });
         }
         if (suggestions.meta) {
-            for (const [key, label] of [['title', '标题'], ['summary', '摘要'], ['tldr', '一句话总结']]) {
+            for (const [key, label] of [['title', tr('标题', 'Title')], ['summary', tr('摘要', 'Summary')], ['tldr', tr('一句话总结', 'One-line summary')]]) {
                 const value = String(draft.meta[key] ?? '').trim();
                 if (!value) continue;
                 const old = before[key] === undefined || before[key] === null ? '' : String(before[key]).trim();
                 if (old === value) continue;
-                items.push({ title: `属性 ${label}`, detail: `${old || '空'} → ${value}`, pill: old ? '修改' : '新增', tone: old ? '' : 'is-accent',
+                items.push({ title: tr(`属性 ${label}`, `Property ${label}`), detail: tr(`${old || '空'} → ${value}`, `${old || 'empty'} → ${value}`), pill: old ? tr('修改', 'Change') : tr('新增', 'New'), tone: old ? '' : 'is-accent',
                     on: draft.useMeta && !skip.includes(key),
                     toggle: () => {
                         const off = draft.useMeta && !skip.includes(key);
@@ -64,19 +64,20 @@ class ReviewChecklistModal extends GlassModal {
             }
         }
         if (suggestions.mover?.length && draft.folder) {
-            const from = group.file.parent?.path && group.file.parent.path !== '/' ? group.file.parent.path : '笔记库根目录';
-            if (draft.folder !== (group.file.parent?.path || '/')) items.push({ title: '移到文件夹', detail: `${from} → ${draft.folder}`, pill: '移动', tone: 'is-warn',
+            const from = group.file.parent?.path && group.file.parent.path !== '/' ? group.file.parent.path : tr('笔记库根目录', 'Vault root');
+            if (draft.folder !== (group.file.parent?.path || '/')) items.push({ title: tr('移到文件夹', 'Move to folder'), detail: `${from} → ${draft.folder}`, pill: tr('移动', 'Move'), tone: 'is-warn',
                 on: draft.useFolder, toggle: () => { draft.useFolder = !draft.useFolder; } });
         }
         const diffs = group.tasks.filter(t => t.type === 'diff-preview' && !t.content.applied && !t.content.noteApplied);
         if (diffs.length) {
             const chosen = diffs.find(t => t.id === draft.diffId) || diffs.at(-1);
-            items.push({ title: '正文', detail: chosen.content.action || chosen.title || '整理后的正文', pill: '修改', tone: '',
+            const shrink = this.view.plugin.shrinkWarning(chosen);
+            items.push({ title: tr('正文', 'Text'), detail: shrink || chosen.content.action || chosen.title || tr('整理后的正文', 'Tidied text'), pill: tr('修改', 'Change'), tone: shrink ? 'is-warn' : '',
                 on: !!draft.diffId, toggle: () => { draft.diffId = draft.diffId ? '' : chosen.id; },
                 preview: () => this.view.plugin.openNotePreview(chosen) });
         }
         // 属性全被勾掉时不再写属性
-        if (suggestions.meta && !items.some(i => i.title.startsWith('属性 ') && i.on)) draft.useMeta = false;
+        if (suggestions.meta && !items.some(i => i.title.startsWith(tr('属性 ', 'Property ')) && i.on)) draft.useMeta = false;
         return items;
     }
 
@@ -85,9 +86,9 @@ class ReviewChecklistModal extends GlassModal {
         contentEl.empty();
         const items = this.items();
         const head = contentEl.createDiv({ cls: 'ai-review-head' });
-        head.createEl('h2', { text: '审核 AI 建议' });
-        head.createEl('p', { text: `${group.file.name} · 勾选要应用的项` });
-        const list = contentEl.createDiv({ cls: 'ai-review-list', attr: { role: 'group', 'aria-label': '建议清单' } });
+        head.createEl('h2', { text: tr('审核 AI 建议', 'Review AI suggestions') });
+        head.createEl('p', { text: tr(`${group.file.name} · 勾选要应用的项`, `${group.file.name} · tick what to apply`) });
+        const list = contentEl.createDiv({ cls: 'ai-review-list', attr: { role: 'group', 'aria-label': tr('建议清单', 'Suggestions') } });
         for (const item of items) {
             const row = list.createDiv({ cls: item.on ? 'ai-review-row is-on' : 'ai-review-row', attr: { role: 'checkbox', 'aria-checked': String(item.on), tabindex: '0' } });
             const tick = row.createSpan({ cls: 'ai-review-check', attr: { 'aria-hidden': 'true' } });
@@ -96,7 +97,7 @@ class ReviewChecklistModal extends GlassModal {
             copy.createDiv({ cls: 'ai-review-title', text: item.title });
             copy.createDiv({ cls: 'ai-review-detail', text: item.detail });
             if (item.preview) {
-                const look = row.createEl('button', { text: '预览', cls: 'ai-review-preview', attr: { 'aria-label': '在左边预览整理后的正文' } });
+                const look = row.createEl('button', { text: tr('预览', 'Preview'), cls: 'ai-review-preview', attr: { 'aria-label': tr('在左边预览整理后的正文', 'Preview the tidied text on the left') } });
                 look.onclick = event => { event.stopPropagation(); item.preview(); };
             }
             row.createSpan({ cls: `ap-pill ${item.tone}`.trim(), text: item.pill });
@@ -104,11 +105,11 @@ class ReviewChecklistModal extends GlassModal {
             row.onclick = flip;
             row.onkeydown = event => { if (event.key === ' ' || event.key === 'Enter') { event.preventDefault(); flip(); } };
         }
-        if (!items.length) contentEl.createEl('p', { cls: 'ai-review-empty', text: '这篇没有可应用的建议。' });
+        if (!items.length) contentEl.createEl('p', { cls: 'ai-review-empty', text: tr('这篇没有可应用的建议。', 'Nothing in this note can be applied.') });
         const count = items.filter(i => i.on).length;
         const foot = contentEl.createDiv({ cls: 'modal-button-container' });
-        foot.createEl('button', { text: '取消' }).onclick = () => this.close();
-        const apply = foot.createEl('button', { text: `应用 ${count} 项`, cls: 'mod-cta' });
+        foot.createEl('button', { text: tr('取消', 'Cancel') }).onclick = () => this.close();
+        const apply = foot.createEl('button', { text: tr(`应用 ${count} 项`, `Apply ${count}`), cls: 'mod-cta' });
         apply.disabled = !count;
         apply.onclick = async () => {
             if (this.view.noteApplying) return;
@@ -136,7 +137,7 @@ function confirmAction(app, message, confirmText) {
         };
         modal.contentEl.createEl('p', { text: message });
         const buttons = modal.contentEl.createDiv({ cls: 'modal-button-container' });
-        buttons.createEl('button', { text: '取消' }).addEventListener('click', () => finish(false));
+        buttons.createEl('button', { text: tr('取消', 'Cancel') }).addEventListener('click', () => finish(false));
         buttons.createEl('button', { cls: 'mod-warning', text: confirmText }).addEventListener('click', () => finish(true));
         modal.onClose = () => finish(false);
         modal.open();
@@ -146,13 +147,85 @@ function confirmAction(app, message, confirmText) {
 const ASSISTANT_VIEW_TYPE = "ai-assistant-view";
 const ASSISTANT_WORKBENCH_TYPE = "ai-assistant-workbench-view";
 const REDACTED_API_KEY = '[REDACTED]';
-// 服务商、型号和示例地址是专名，按各家原样拼写，界面文字里从这里取
-const PROVIDER_NAMES = { deepseek: 'DeepSeek', local: 'Ollama、LM Studio' };
-const DEEPSEEK_MODELS = [['deepseek-flash', 'DeepSeek Flash'], ['deepseek-v4-pro', 'DeepSeek V4 Pro']];
-const DEEPSEEK_OFFICIAL_URL = 'https://api.deepseek.com/chat/completions';
+// 服务商、型号和示例地址是专名，按各家原样拼写，界面文字里从这里取。
+// 地址和型号核自各家官方文档（2026-10-29）；国内常用的放前面，默认 DeepSeek。
+const PROVIDERS = {
+    deepseek: { name: ['DeepSeek', 'DeepSeek'], url: 'https://api.deepseek.com/chat/completions',
+        models: [['deepseek-flash', 'DeepSeek Flash'], ['deepseek-v4-pro', 'DeepSeek V4 Pro']], keyPage: 'https://platform.deepseek.com/api_keys' },
+    qwen: { name: ['通义千问（阿里云百炼）', 'Qwen (Alibaba Cloud Model Studio)'], url: 'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions',
+        models: [['qwen-plus', 'Qwen Plus'], ['qwen-max', 'Qwen Max'], ['qwen-flash', 'Qwen Flash']], keyPage: 'https://bailian.console.aliyun.com/' },
+    siliconflow: { name: ['硅基流动', 'SiliconFlow'], url: 'https://api.siliconflow.cn/v1/chat/completions',
+        models: [['deepseek-ai/DeepSeek-V4-Flash', 'DeepSeek V4 Flash'], ['Qwen/Qwen3-32B', 'Qwen3 32B']], keyPage: 'https://cloud.siliconflow.cn/account/ak' },
+    kimi: { name: ['Kimi（月之暗面）', 'Kimi (Moonshot AI)'], url: 'https://api.moonshot.cn/v1/chat/completions',
+        models: [['kimi-k3', 'Kimi K3'], ['kimi-k2.6', 'Kimi K2.6']], keyPage: 'https://platform.kimi.com/' },
+    zhipu: { name: ['智谱 GLM', 'Zhipu GLM'], url: 'https://open.bigmodel.cn/api/paas/v4/chat/completions',
+        models: [['glm-5.3', 'GLM-5.3'], ['glm-5.3-flash', 'GLM-5.3 Flash']], keyPage: 'https://open.bigmodel.cn/' },
+    local: { name: ['本地模型（Ollama、LM Studio）', 'Local model (Ollama, LM Studio)'], url: 'http://localhost:11434/v1/chat/completions', models: [], local: true },
+    gemini: { name: ['Google Gemini', 'Google Gemini'], url: '', models: [['gemini-2.5-flash', 'Gemini 2.5 Flash'], ['gemini-2.5-pro', 'Gemini 2.5 Pro']], keyPage: 'https://aistudio.google.com/apikey' },
+    openai: { name: ['自定义（OpenAI 兼容格式）', 'Custom (OpenAI-compatible)'], url: '', models: [] },
+};
+const providerInfo = (id) => PROVIDERS[id] || PROVIDERS.openai;
+const hostOf = (url) => /^[a-z]+:\/\/([^/?#]+)/i.exec(String(url || '').trim())?.[1].toLowerCase() || '';
+const presetForUrl = (url) => {
+    const host = hostOf(url);
+    return host ? ['deepseek', 'qwen', 'siliconflow', 'kimi', 'zhipu'].find(id => hostOf(PROVIDERS[id].url) === host) || null : null;
+};
+const providerName = (id) => { const [zh, en] = providerInfo(id).name; return tr(zh, en); };
+// 错误说明和诊断里不能出现密钥：遮掉请求头里的那个值，以及常见的密钥样式
+function redactSecrets(text, headers = {}) {
+    let out = String(text ?? '');
+    const values = [headers.Authorization?.replace(/^Bearer\s+/i, ''), headers['x-goog-api-key']].filter(v => v && v.length >= 6);
+    for (const value of values) out = out.split(value).join('[key]');
+    return out
+        .replace(/Bearer\s+[^\s"',]+/gi, 'Bearer [key]')
+        .replace(/\bsk-[A-Za-z0-9_-]{6,}/g, 'sk-[key]')
+        .replace(/\bAIza[0-9A-Za-z_-]{10,}/g, '[key]');
+}
+
+// 把一次失败归到用户能处理的那一类
+function classifyApiError(error) {
+    if (error?.kind) return error.kind;
+    const status = error?.status;
+    const text = `${error?.detail || ''} ${error?.message || ''}`;
+    if (status === 401 || status === 403) return 'auth';
+    if (status === 402) return 'quota';
+    if (status === 429) return /quota|balance|insufficient|billing|arrear|余额|欠费|额度/i.test(text) ? 'quota' : 'rate';
+    if (status === 404) return /model/i.test(text) ? 'model' : 'url';
+    if ((status === 400 || status === 422) && /model[^.]*(not|exist|found|invalid)|supported (api )?model|you passed|invalid model|model_not_found|模型不存在|模型.*不支持/i.test(text)) return 'model';
+    if (status >= 500) return 'server';
+    if (!status && /net::|ERR_|ENOTFOUND|ECONNREFUSED|ECONNRESET|getaddrinfo|Failed to fetch|network|CORS|certificate/i.test(text)) return 'network';
+    return 'other';
+}
+
+// 每类失败：一句发生了什么，一个下一步
+function describeApiProblem(kind, config = null, error = null) {
+    const name = config ? providerName(config.apiProvider) : '';
+    const keyPage = config ? providerInfo(config.apiProvider).keyPage || '' : '';
+    const detail = error?.detail ? ` ${error.detail}` : '';
+    const table = {
+        'no-config': [tr('还没有 AI 配置。', 'There is no AI configuration yet.'), tr('在设置里新增一条配置。', 'Add a configuration in settings.')],
+        'no-key': [tr('这条配置还没有填 API 密钥。', 'This configuration has no API key.'), tr(`到${name}后台获取密钥，粘贴到“API 密钥”后点保存。`, `Get a key from ${name}, paste it into API key and save.`)],
+        'no-url': [tr('自定义服务需要填写接口地址。', 'A custom service needs an API URL.'), tr(`填写完整地址，例如 ${API_URL_EXAMPLE}。`, `Enter the full address, for example ${API_URL_EXAMPLE}.`)],
+        'no-model': [tr('还没有填写模型。', 'No model is set.'), tr('在“主模型”里填写服务商给的模型名。', 'Enter the model name from your provider under Main model.')],
+        'auth': [tr(`密钥不对或已失效（HTTP ${error?.status || 401}）。`, `The key was rejected (HTTP ${error?.status || 401}).`), tr('到服务商后台重新复制密钥，确认没有多余空格，并且密钥属于这家服务商。', 'Copy the key again from the provider, check for extra spaces and that the key belongs to this provider.')],
+        'quota': [tr('账户余额或额度不足。', 'The account is out of balance or quota.'), tr('到服务商后台充值或查看额度，然后再测一次。', 'Top up or check the quota with the provider, then test again.')],
+        'rate': [tr('请求太频繁，被服务商限流（HTTP 429）。', 'Too many requests; the provider is rate limiting (HTTP 429).'), tr('等一分钟再试。', 'Wait a minute and try again.')],
+        'model': [tr('服务商不认这个模型名。', 'The provider does not recognise this model name.'), tr('从下拉框里选一个预设模型，或到服务商文档核对型号拼写。', 'Pick a preset model, or check the spelling against the provider\'s docs.')],
+        'url': [tr('接口地址找不到（HTTP 404）。', 'The API URL was not found (HTTP 404).'), tr('检查接口地址；预设服务商可以把地址留空，用官方地址。', 'Check the API URL; for a preset provider you can leave it empty to use the official one.')],
+        'timeout': [tr('等了太久没有回答。', 'No answer in time.'), tr('检查网络和代理；本地模型请确认本地服务已经启动。', 'Check your network and proxy; for a local model make sure the local server is running.')],
+        'network': [tr('连不上服务器。', 'Could not reach the server.'), tr('检查网络、代理和地址拼写；本地模型请确认本地服务已启动，手机上访问不到电脑的 localhost。', 'Check the network, proxy and address; for a local model make sure the server is running. A phone cannot reach your computer\'s localhost.')],
+        'server': [tr(`服务商那边出错（HTTP ${error?.status || 500}）。`, `The provider had an error (HTTP ${error?.status || 500}).`), tr('稍后再试；一直失败可以加一条备用配置。', 'Try again later; if it keeps failing, add a backup configuration.')],
+        'empty': [tr('服务商有回答，但没有内容。', 'The provider answered with no content.'), tr('换一个模型再试。', 'Try another model.')],
+        'other': [tr(`连接失败。${detail}`, `Connection failed.${detail}`), tr('复制诊断信息，对照服务商文档检查。', 'Copy the diagnostics and compare them with the provider\'s docs.')],
+    };
+    const [message, next] = table[kind] || table.other;
+    return { kind, message, next, keyPage: kind === 'no-key' || kind === 'auth' || kind === 'quota' ? keyPage : '' };
+}
+
 const API_URL_EXAMPLE = 'https://api.example.com/v1/chat/completions';
-const GEMINI_MODEL_EXAMPLES = { main: 'gemini-2.5-pro', auxiliary: 'gemini-2.5-flash' };
-const LOCAL_MODEL_DEFAULT_URL = 'http://localhost:11434/v1/chat/completions';
+const LM_STUDIO_URL = 'http://localhost:1234/v1/chat/completions';
+const LOCAL_MODEL_EXAMPLE = 'qwen3:8b';
+const LOCAL_MODEL_DEFAULT_URL = PROVIDERS.local.url;
 
 
 class FallbackEncryptedSettings {
@@ -193,7 +266,7 @@ class FallbackEncryptedSettings {
             return decodeURIComponent(escape(atob(payload.slice(6))));
         }
         if (!window.crypto?.subtle) {
-            throw new Error('当前环境不支持 Web Crypto，无法解密 API Key。');
+            throw new Error(tr('当前环境不支持 Web Crypto，无法解密 API Key。', 'Web Crypto is not available here, so the API key cannot be decrypted.'));
         }
         const combined = this.base64ToArrayBuffer(payload);
         const iv = combined.slice(0, 12);
@@ -416,12 +489,13 @@ const DEFAULT_SETTINGS = {
     apiConfigs: [
         {
             id: 'default',
-            name: '默认配置',
-            apiProvider: 'openai',
+            name: 'DeepSeek',
+            apiProvider: 'deepseek',
             apiKey: '',
-            apiUrl: 'https://api.openai.com/v1/chat/completions',
-            modelName: '',
+            apiUrl: '',
+            modelName: 'deepseek-flash',
             auxiliaryModelName: '',
+            deepseekThinking: false,
             enabled: true
         }
     ],
@@ -437,8 +511,9 @@ const DEFAULT_SETTINGS = {
     // Tagger Settings
     taggerSuggestionsCount: 12,
     taggerExistingOnly: false,
-    taggerEnableTranslation: true,
-    taggerTranslationTargetLanguage: '中文',
+    // 把过长的英文标签翻成短的中文标签；英文界面下默认不翻
+    taggerEnableTranslation: isChineseInterface(),
+    taggerTranslationTargetLanguage: tr('中文', 'English'),
     taggerTranslationMinLength: 16,
     taggerPrompt: TAGGER_DEFAULT_PROMPT,
 
@@ -476,13 +551,13 @@ const DEFAULT_SETTINGS = {
 class AssistantNotePreview extends ItemView {
     constructor(leaf,plugin){super(leaf);this.plugin=plugin;}
     getViewType(){return 'ai-assistant-note-preview';}
-    getDisplayText(){return '笔记整文预览';}
+    getDisplayText(){return tr('笔记整文预览', 'Whole-note preview');}
     getIcon(){return 'file-check';}
-    async onOpen(){this.contentEl.createEl('p',{text:'在笔记助手中选择正文建议。'});}
+    async onOpen(){this.contentEl.createEl('p',{text:tr('在笔记助手中选择正文建议。', 'Choose a text suggestion in the note assistant.')});}
     async showTask(task){
         this.contentEl.empty();
         this.contentEl.addClass('ap', 'sn-document-preview');
-        this.contentEl.createEl('p',{text:'整文预览 · 原笔记尚未修改',cls:'sn-muted'});
+        this.contentEl.createEl('p',{text:tr('整文预览 · 原笔记尚未修改', 'Whole-note preview · the note is not changed yet'),cls:'sn-muted'});
         this.contentEl.createEl('h2',{text:task.content.file.basename});
         const body=this.contentEl.createDiv({cls:'markdown-rendered'});
         const c=task.content,h=c.reviewHunks||this.plugin.buildReviewHunks(c.originalContent,c.proposedContent);
@@ -505,7 +580,7 @@ class AssistantView extends ItemView {
     }
 
     getViewType() { return this.expanded ? ASSISTANT_WORKBENCH_TYPE : ASSISTANT_VIEW_TYPE; }
-    getDisplayText() { return this.expanded ? "笔记工作台" : "笔记助手"; }
+    getDisplayText() { return this.expanded ? tr("笔记工作台", 'Note workbench') : tr("笔记助手", 'Note assistant'); }
     getIcon() { return "anchor"; }
 
     async onOpen() {
@@ -592,22 +667,22 @@ class AssistantView extends ItemView {
         const groups = this.getNoteGroups();
 
         const head = root.createDiv({ cls: 'mist-head' });
-        head.createEl('h3', { text: '笔记助手', cls: 'mist-title' });
-        const more = head.createEl('button', { cls: 'clickable-icon mist-more', attr: { 'aria-label': '更多', 'aria-haspopup': 'menu' } });
+        head.createEl('h3', { text: tr('笔记助手', 'Note assistant'), cls: 'mist-title' });
+        const more = head.createEl('button', { cls: 'clickable-icon mist-more', attr: { 'aria-label': tr('更多', 'More'), 'aria-haspopup': 'menu' } });
         setIcon?.(more, 'ellipsis');
         more.onclick = event => this.openMistMenu(event);
 
         // Only two places in daily use: choosing what to do, and reviewing what the AI proposed.
         const pending = groups.filter(g => this.noteStatus(g) === '待确认').length;
-        const views = root.createEl('nav', { cls: 'mist-views', attr: { 'aria-label': '笔记助手视图' } });
-        for (const [id, label] of [['prepare', '整理'], ['review', pending ? `本篇建议 · ${pending}` : '本篇建议']]) {
+        const views = root.createEl('nav', { cls: 'mist-views', attr: { 'aria-label': tr('笔记助手视图', 'Note assistant views') } });
+        for (const [id, label] of [['prepare', tr('整理', 'Tidy')], ['review', pending ? tr(`本篇建议 · ${pending}`, `This note · ${pending}`) : tr('本篇建议', 'This note')]]) {
             const button = views.createEl('button', { text: label, cls: 'mist-view', attr: { 'aria-current': page === id ? 'page' : 'false' } });
             button.onclick = () => { this.workbenchPage = id; this.render(); this.plugin.refreshAssistantViews?.(this); };
         }
 
         const body = root.createDiv({ cls: 'mist-body' });
         if (!['prepare', 'review'].includes(page)) {
-            body.createEl('button', { text: '← 回到整理', cls: 'mist-back' }).onclick = () => { this.workbenchPage = 'prepare'; this.render(); };
+            body.createEl('button', { text: tr('← 回到整理', '← Back to Tidy'), cls: 'mist-back' }).onclick = () => { this.workbenchPage = 'prepare'; this.render(); };
         }
         if (page === 'settings') {
             const settings = new AiAssistantSettingTab(this.plugin.app, this.plugin);
@@ -619,9 +694,9 @@ class AssistantView extends ItemView {
         if (page === 'history') {
             const history = body.createDiv({ cls: 'mist-history' });
             const actions = history.createDiv({ cls: 'mist-links' });
-            actions.createEl('button', { text: '回滚上次修改', cls: 'mist-link' }).onclick = () => this.plugin.rollbackLastChange();
-            actions.createEl('button', { text: '重新应用刚才的回滚', cls: 'mist-link' }).onclick = () => this.plugin.redoLastRollback();
-            if (!this.plugin.getRecentHistory().length) this.renderMistEmpty(history, '还没有处理记录', '完成一次整理后，可以在这里找回笔记。');
+            actions.createEl('button', { text: tr('回滚上次修改', 'Undo last change'), cls: 'mist-link' }).onclick = () => this.plugin.rollbackLastChange();
+            actions.createEl('button', { text: tr('重新应用刚才的回滚', 'Redo the undone change'), cls: 'mist-link' }).onclick = () => this.plugin.redoLastRollback();
+            if (!this.plugin.getRecentHistory().length) this.renderMistEmpty(history, tr('还没有处理记录', 'No history yet'), tr('完成一次整理后，可以在这里找回笔记。', 'After your first run you can find notes here again.'));
             else this.renderRecentHistory(history);
             return;
         }
@@ -629,7 +704,7 @@ class AssistantView extends ItemView {
             const tools = body.createDiv({ cls: 'mist-tools' });
             this.renderQuickActions(tools);
             const diagnostics = tools.createEl('details', { cls: 'ai-assistant-diagnostics' });
-            diagnostics.createEl('summary', { text: '使用情况与连接信息' });
+            diagnostics.createEl('summary', { text: tr('使用情况与连接信息', 'Usage and connection') });
             this.renderUsageStats(diagnostics); this.renderFileInfo(diagnostics); this.renderAIStatus(diagnostics);
             return;
         }
@@ -639,12 +714,12 @@ class AssistantView extends ItemView {
 
     mistSecondaryEntries() {
         return [
-            ['处理记录', () => { this.workbenchPage = 'history'; this.render(); }, 'history'],
-            ['批量整理', () => this.showBatchProcessingModal(), 'files'],
-            ['任务列表', () => { this.workbenchPage = 'queue'; this.render(); }, 'list-checks'],
-            ['自定义动作', () => this.showAtelierCustomActions(), 'wand-sparkles'],
-            ['其他工具', () => { this.workbenchPage = 'tools'; this.render(); }, 'wrench'],
-            ['设置', () => { this.plugin.app.setting.open(); this.plugin.app.setting.openTabById(this.plugin.manifest.id); }, 'settings']
+            [tr('处理记录', 'History'), () => { this.workbenchPage = 'history'; this.render(); }, 'history'],
+            [tr('批量整理', 'Batch tidy'), () => this.showBatchProcessingModal(), 'files'],
+            [tr('任务列表', 'Task list'), () => { this.workbenchPage = 'queue'; this.render(); }, 'list-checks'],
+            [tr('自定义动作', 'Custom actions'), () => this.showAtelierCustomActions(), 'wand-sparkles'],
+            [tr('其他工具', 'Other tools'), () => { this.workbenchPage = 'tools'; this.render(); }, 'wrench'],
+            [tr('设置', 'Settings'), () => { this.plugin.app.setting.open(); this.plugin.app.setting.openTabById(this.plugin.manifest.id); }, 'settings']
         ];
     }
 
@@ -666,15 +741,15 @@ class AssistantView extends ItemView {
         if (!recent.length) return;
         const section = container.createDiv({ cls: 'mist-recent' });
         const label = section.createDiv({ cls: 'mist-recent-head' });
-        label.createSpan({ text: '最近处理', cls: 'mist-label' });
-        label.createEl('button', { text: '全部', cls: 'mist-link' }).onclick = () => { this.workbenchPage = 'history'; this.render(); };
+        label.createSpan({ text: tr('最近处理', 'Recent'), cls: 'mist-label' });
+        label.createEl('button', { text: tr('全部', 'All'), cls: 'mist-link' }).onclick = () => { this.workbenchPage = 'history'; this.render(); };
         const list = section.createDiv({ cls: 'mist-recent-list' });
         for (const { item, file } of recent) {
-            const row = list.createEl('button', { cls: 'mist-recent-row', attr: { 'aria-label': `打开 ${file.basename}` } });
+            const row = list.createEl('button', { cls: 'mist-recent-row', attr: { 'aria-label': tr(`打开 ${file.basename}`, `Open ${file.basename}`) } });
             setIcon?.(row.createSpan({ cls: 'mist-recent-icon', attr: { 'aria-hidden': 'true' } }), 'file-text');
             const copy = row.createSpan({ cls: 'mist-recent-copy' });
             copy.createSpan({ text: file.basename, cls: 'mist-recent-name' });
-            copy.createSpan({ text: `${item.action || '整理'} · ${this.mistTimeLabel(item.timestamp)}`, cls: 'mist-recent-meta' });
+            copy.createSpan({ text: tr(`${item.action || '整理'} · ${this.mistTimeLabel(item.timestamp)}`, `${item.action || 'Tidy'} · ${this.mistTimeLabel(item.timestamp)}`), cls: 'mist-recent-meta' });
             row.onclick = () => this.plugin.app.workspace.getLeaf(false).openFile(file);
         }
     }
@@ -683,10 +758,10 @@ class AssistantView extends ItemView {
         const when = new Date(timestamp || Date.now());
         const now = new Date();
         const time = `${String(when.getHours()).padStart(2, '0')}:${String(when.getMinutes()).padStart(2, '0')}`;
-        if (when.toDateString() === now.toDateString()) return `今天 ${time}`;
+        if (when.toDateString() === now.toDateString()) return tr(`今天 ${time}`, `Today ${time}`);
         const yesterday = new Date(now); yesterday.setDate(now.getDate() - 1);
-        if (when.toDateString() === yesterday.toDateString()) return `昨天 ${time}`;
-        return `${when.getMonth() + 1}月${when.getDate()}日`;
+        if (when.toDateString() === yesterday.toDateString()) return tr(`昨天 ${time}`, `Yesterday ${time}`);
+        return tr(`${when.getMonth() + 1}月${when.getDate()}日`, `${when.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`);
     }
 
     openReviewChecklist(group) {
@@ -728,6 +803,17 @@ class AssistantView extends ItemView {
         return anchor.content.noteDraft;
     }
 
+    // 状态键保持中文（逻辑里用来比较），显示时再翻
+    statusLabel(status) {
+        return { '已确认': tr('已确认', 'Confirmed'), '需重试': tr('需重试', 'Retry'), '待确认': tr('待确认', 'To confirm') }[status] || status;
+    }
+
+    // 使用统计的键是存进 data.json 的中文名，显示时再翻
+    actionLabel(key) {
+        const en = { '标签': 'Tags', '结构': 'Structure', '元数据': 'Properties', '移动': 'Move', '假名': 'Furigana', '一键处理': 'One-click', '其他': 'Other' };
+        return isChineseInterface() ? key : en[key] || key;
+    }
+
     noteStatus(group) {
         if (group.tasks.at(-1)?.content.noteApplied) return '已确认';
         if (group.tasks.at(-1)?.type === 'error') return '需重试';
@@ -737,35 +823,35 @@ class AssistantView extends ItemView {
     renderNoteQueue(container) {
         const groups = this.getNoteGroups();
         const count = status => groups.filter(g => this.noteStatus(g) === status).length;
-        container.createEl('p', { text: `${count('待确认')} 篇待确认 · ${count('已确认')} 篇已确认 · ${count('需重试')} 篇需重试`, cls: 'mist-caption' });
-        container.createEl('button', { text: '＋ 批量整理笔记', cls: 'mist-link' }).onclick = () => this.showBatchProcessingModal();
+        container.createEl('p', { text: tr(`${count('待确认')} 篇待确认 · ${count('已确认')} 篇已确认 · ${count('需重试')} 篇需重试`, `${count('待确认')} to confirm · ${count('已确认')} confirmed · ${count('需重试')} to retry`), cls: 'mist-caption' });
+        container.createEl('button', { text: tr('＋ 批量整理笔记', '+ Batch tidy notes'), cls: 'mist-link' }).onclick = () => this.showBatchProcessingModal();
         this.queueSelection ||= new Set();
         for (const group of groups) {
             const row = container.createDiv({ cls: 'mist-queue-row' });
-            const check = row.createEl('input', { type: 'checkbox', attr: { 'aria-label': `选择 ${group.file.basename}` } });
+            const check = row.createEl('input', { type: 'checkbox', attr: { 'aria-label': tr(`选择 ${group.file.basename}`, `Select ${group.file.basename}`) } });
             check.checked = this.queueSelection.has(group.file.path);
             check.disabled = this.noteStatus(group) !== '待确认';
             check.onchange = () => { check.checked ? this.queueSelection.add(group.file.path) : this.queueSelection.delete(group.file.path); };
             const copy = row.createDiv({ cls: 'mist-queue-name' });
             copy.createEl('strong', { text: group.file.basename });
-            copy.createEl('small', { text: this.noteStatus(group) });
-            row.createEl('button', { text: '查看', cls: 'mist-link' }).onclick = () => { this.selectedTaskId = group.tasks.at(-1).id; this.workbenchPage = 'review'; this.render(); };
+            copy.createEl('small', { text: this.statusLabel(this.noteStatus(group)) });
+            row.createEl('button', { text: tr('查看', 'View'), cls: 'mist-link' }).onclick = () => { this.selectedTaskId = group.tasks.at(-1).id; this.workbenchPage = 'review'; this.render(); };
         }
-        if (!groups.length) this.renderMistEmpty(container, '还没有待确认的笔记', '生成的建议会按笔记集中在这里。');
+        if (!groups.length) this.renderMistEmpty(container, tr('还没有待确认的笔记', 'No notes to confirm'), tr('生成的建议会按笔记集中在这里。', 'Suggestions gather here, one note at a time.'));
         if (groups.length) {
             const foot = container.createDiv({ cls: 'mist-foot' });
-            const apply = foot.createEl('button', { text: '接受勾选的笔记', cls: 'mist-primary' });
+            const apply = foot.createEl('button', { text: tr('接受勾选的笔记', 'Accept ticked notes'), cls: 'mist-primary' });
             apply.onclick = async () => {
                 if (this.noteApplying) return;
                 const chosen = groups.filter(g => this.queueSelection.has(g.file.path) && this.noteStatus(g) === '待确认');
-                if (!chosen.length) { new Notice('先勾选要接受的笔记。'); return; }
+                if (!chosen.length) { new Notice(tr('先勾选要接受的笔记。', 'Tick the notes to accept first.')); return; }
                 this.noteApplying = true; apply.disabled = true; let done = 0;
                 try {
                     for (const g of chosen) {
                         try { await this.plugin.applyNoteGroup(g, this.noteDraft(g)); done++; }
-                        catch (e) { new Notice(`${g.file.basename}：${e.message}`, 6000); }
+                        catch (e) { new Notice(tr(`${g.file.basename}：${e.message}`, `${g.file.basename}: ${e.message}`), 6000); }
                     }
-                } finally { this.noteApplying = false; this.queueSelection.clear(); this.render(); new Notice(`已确认 ${done} / ${chosen.length} 篇。`); }
+                } finally { this.noteApplying = false; this.queueSelection.clear(); this.render(); new Notice(tr(`已确认 ${done} / ${chosen.length} 篇。`, `Confirmed ${done} of ${chosen.length}.`)); }
             };
         }
         for (const task of this.tasks.filter(t => t.type === 'batch-process' && t.content?.canInterrupt)) this.renderTask(container, task);
@@ -776,41 +862,55 @@ class AssistantView extends ItemView {
         const note = container.createDiv({ cls: 'mist-note' });
         setIcon?.(note.createDiv({ cls: 'mist-note-glyph', attr: { 'aria-hidden': 'true' } }), 'file-text');
         const copy = note.createDiv({ cls: 'mist-note-copy' });
-        copy.createEl('strong', { text: file ? file.basename : '选择一篇笔记' });
-        copy.createEl('small', { text: file ? (file.parent?.path === '/' ? '笔记库根目录' : (file.parent?.path || file.path)) : '打开或选择 Markdown 文件' });
-        if (allowSwap) note.createEl('button', { text: '换一篇', cls: 'mist-link', attr: { 'aria-label': '选择要整理的笔记' } }).onclick = () => this.chooseAtelierNote();
+        copy.createEl('strong', { text: file ? file.basename : tr('选择一篇笔记', 'Choose a note') });
+        copy.createEl('small', { text: file ? (file.parent?.path === '/' ? tr('笔记库根目录', 'Vault root') : (file.parent?.path || file.path)) : tr('打开或选择 Markdown 文件', 'Open or choose a Markdown file') });
+        if (allowSwap) note.createEl('button', { text: file ? tr('换一篇', 'Change') : tr('选择笔记', 'Choose note'), cls: 'mist-link', attr: { 'aria-label': tr('选择要整理的笔记', 'Choose the note to tidy') } }).onclick = () => this.chooseAtelierNote();
     }
 
-    renderMistEmpty(container, title, text) {
+    // 空状态：一句发生了什么，最多一个下一步
+    renderMistEmpty(container, title, text, action = null) {
         const empty = container.createDiv({ cls: 'mist-empty' });
         empty.createEl('strong', { text: title });
         empty.createEl('p', { text });
+        if (action) empty.createEl('button', { text: action[0], cls: 'mist-primary' }).onclick = action[1];
+        return empty;
+    }
+
+    openPluginSettings() {
+        this.plugin.app.setting.open();
+        this.plugin.app.setting.openTabById(this.plugin.manifest.id);
     }
 
     renderMistPrepare(body, file, busy) {
         const chosen = this.sessionActions || this.plugin.settings.oneClickProcessActions || {};
-        const actions = [['meta', '标题与摘要', '补全笔记属性'], ['tagger', '标签', '连接已有分类'], ['mover', '归档', '建议存放位置'], ['structurizer', '整理正文', '梳理段落与标题'], ['furigana', '假名', '给日文加读音']];
+        const actions = [['meta', tr('标题与摘要', 'Title & summary'), tr('补全笔记属性', 'Fill in properties')], ['tagger', tr('标签', 'Tags'), tr('连接已有分类', 'Link to existing tags')], ['mover', tr('归档', 'Folder'), tr('建议存放位置', 'Suggest where it goes')], ['structurizer', tr('整理正文', 'Tidy text'), tr('梳理段落与标题', 'Sort paragraphs and headings')], ['furigana', tr('假名', 'Furigana'), tr('给日文加读音', 'Add readings to Japanese')]];
+        const configured = this.plugin.hasUsableConfig();
+        if (!configured) {
+            this.renderMistEmpty(body, tr('还没连上 AI 服务', 'No AI service connected yet'),
+                tr('先看一个示例：建议是预先写好的，不联网，不花钱。', 'See an example first: the suggestions are pre-written, nothing is sent and nothing is charged.'),
+                [tr('载入示例', 'Load example'), () => this.plugin.loadDemo()]).addClass('mist-setup');
+        }
         this.renderMistNote(body, file);
-        body.createEl('p', { text: '想做什么', cls: 'mist-label' });
-        const list = body.createDiv({ cls: 'mist-acts', attr: { role: 'group', 'aria-label': '选择处理功能' } });
+        body.createEl('p', { text: tr('想做什么', 'What to do'), cls: 'mist-label' });
+        const list = body.createDiv({ cls: 'mist-acts', attr: { role: 'group', 'aria-label': tr('选择处理功能', 'Choose actions') } });
         for (const [key, label, hint] of actions) {
             const on = !!chosen[key];
             const pill = list.createEl('button', { cls: on ? 'mist-act is-on' : 'mist-act', attr: { 'data-action': key, 'aria-pressed': String(on), title: hint } });
             pill.createSpan({ text: label });
-            if (key === 'mover') pill.createEl('small', { text: '建议放哪' });
+            if (key === 'mover') pill.createEl('small', { text: tr('建议放哪', 'Where it goes') });
             pill.onclick = () => { this.sessionActions = { ...chosen, [key]: !on }; this.render(); };
         }
         const ask = body.createEl('label', { cls: 'mist-ask' });
-        ask.createSpan({ text: '补充一句（可不填）' });
-        const input = ask.createEl('textarea', { attr: { rows: '2', placeholder: '例如：标签尽量用库里已有的', 'aria-label': '补充要求' } });
+        ask.createSpan({ text: tr('补充一句（可不填）', 'Add a note (optional)') });
+        const input = ask.createEl('textarea', { attr: { rows: '2', placeholder: tr('例如：标签尽量用库里已有的', 'For example: prefer tags already in the vault'), 'aria-label': tr('补充要求', 'Extra request') } });
         input.value = this.sessionInstruction || '';
         input.oninput = () => { this.sessionInstruction = input.value; };
 
         const selected = actions.filter(([key]) => chosen[key]);
         const go = body.createDiv({ cls: 'mist-go' });
-        go.createEl('small', { text: !file ? '先打开一篇 Markdown 笔记' : selected.length ? '结果集中在这篇，原文先不动' : '至少选一件事', cls: 'mist-caption' });
-        const run = go.createEl('button', { text: busy ? '正在生成…' : '生成建议 →', cls: 'mist-primary', attr: { 'aria-label': '为当前笔记生成修改建议' } });
-        run.disabled = !file || !selected.length || busy;
+        go.createEl('small', { text: !configured ? tr('先在设置里连上 AI 服务', 'Connect an AI service in settings first') : !file ? tr('先打开一篇 Markdown 笔记', 'Open a Markdown note first') : selected.length ? tr('结果集中在这篇，原文先不动', 'Results gather here; the note is untouched for now') : tr('至少选一件事', 'Pick at least one action'), cls: 'mist-caption' });
+        const run = go.createEl('button', { text: busy ? tr('正在生成…', 'Generating…') : tr('生成建议 →', 'Generate suggestions →'), cls: 'mist-primary', attr: { 'aria-label': tr('为当前笔记生成修改建议', 'Generate suggestions for the current note') } });
+        run.disabled = !configured || !file || !selected.length || busy;
         run.onclick = async () => {
             if (this.workbenchRunning || !file) return;
             this.workbenchRunning = true; this.workbenchCancelled = false; this.workbenchPage = 'review';
@@ -836,16 +936,23 @@ class AssistantView extends ItemView {
             const task = selectedLoose || loose.at(-1);
             this.selectedTaskId = task.id;
             if (loose.length > 1) {
-                const select = body.createEl('select', { cls: 'mist-select', attr: { 'aria-label': '选择处理结果' } });
-                for (const t of loose) select.createEl('option', { value: t.id, text: `${t.status === 'loading' ? '生成中 · ' : t.content?.applied ? '已接受 · ' : ''}${t.title || '处理结果'}` });
+                const select = body.createEl('select', { cls: 'mist-select', attr: { 'aria-label': tr('选择处理结果', 'Choose a result') } });
+                for (const t of loose) select.createEl('option', { value: t.id, text: tr(`${t.status === 'loading' ? '生成中 · ' : t.content?.applied ? '已接受 · ' : ''}${t.title || '处理结果'}`, `${t.status === 'loading' ? 'Generating · ' : t.content?.applied ? 'Accepted · ' : ''}${t.title || 'Result'}`) });
                 select.value = task.id;
                 select.onchange = () => { this.selectedTaskId = select.value; this.render(); };
             }
             this.renderTask(body, task);
             return;
         }
-        this.renderMistEmpty(body, this.workbenchRunning ? '正在准备建议' : '这里会出现这篇的建议', this.workbenchRunning ? '正在读取笔记，原文不会被改动。' : '在“整理”里选好要做的事，生成后集中在这里确认。');
-        if (!this.workbenchRunning) body.createEl('button', { text: '去整理', cls: 'mist-link' }).onclick = () => { this.workbenchPage = 'prepare'; this.render(); };
+        if (this.workbenchRunning) {
+            this.renderMistEmpty(body, tr('正在准备建议', 'Preparing suggestions'), this.plugin.currentProgress || tr('正在读取笔记，原文不会被改动。', 'Reading the note; the original is not changed.'));
+        } else if (this.plugin.lastCancelled && file && this.plugin.lastCancelled === file.path) {
+            this.renderMistEmpty(body, tr('已取消', 'Cancelled'), tr('原文没有改动。', 'The note was not changed.'),
+                [tr('重新生成', 'Generate again'), () => { this.workbenchPage = 'prepare'; this.render(); }]);
+        } else {
+            this.renderMistEmpty(body, tr('这里会出现这篇的建议', 'Suggestions for this note appear here'), tr('在“整理”里选好要做的事，生成后集中在这里确认。', 'Choose what to do under Tidy; the suggestions gather here for you to confirm.'),
+                [tr('去整理', 'Go to Tidy'), () => { this.workbenchPage = 'prepare'; this.render(); }]);
+        }
     }
 
     renderMistNoteReview(body, group, groups) {
@@ -854,10 +961,16 @@ class AssistantView extends ItemView {
         const status = this.noteStatus(group);
         const done = status === '已确认';
         this.renderMistNote(body, group.file, false);
+        if (group.tasks.some(t => t.content?.demo)) {
+            const configured = this.plugin.hasUsableConfig();
+            this.renderMistEmpty(body, tr('这是演示', 'This is a demo'),
+                tr('下面的建议是预先写好的，没有联网，也没有花钱。可以照常勾选、应用和撤销，只会改这篇示例笔记。', 'The suggestions below are pre-written; nothing was sent or charged. You can tick, apply and undo them as usual; only this example note changes.'),
+                configured ? [tr('删除示例笔记', 'Delete example note'), () => this.plugin.removeDemo()] : [tr('连接 AI 服务', 'Connect an AI service'), () => this.openPluginSettings()]).addClass('mist-demo');
+        }
         const others = groups.filter(g => g !== group && this.noteStatus(g) === '待确认').length;
         const state = body.createDiv({ cls: 'mist-state' });
-        state.createSpan({ text: done ? '已确认 · 可以撤销' : status === '需重试' ? '生成失败 · 原文没有改动' : '建议已生成 · 原文还没改', cls: done ? 'mist-dot is-done' : 'mist-dot' });
-        if (others) state.createEl('button', { text: `还有 ${others} 篇`, cls: 'mist-link' }).onclick = () => { this.workbenchPage = 'queue'; this.render(); };
+        state.createSpan({ text: done ? tr('已确认 · 可以撤销', 'Confirmed · can be undone') : status === '需重试' ? tr('生成失败 · 原文没有改动', 'Failed · the note was not changed') : tr('建议已生成 · 原文还没改', 'Suggestions ready · the note is not changed yet'), cls: done ? 'mist-dot is-done' : 'mist-dot' });
+        if (others) state.createEl('button', { text: tr(`还有 ${others} 篇`, `${others} more`), cls: 'mist-link' }).onclick = () => { this.workbenchPage = 'queue'; this.render(); };
 
         const part = (key, title, hint) => {
             const el = body.createDiv({ cls: 'mist-part' });
@@ -870,19 +983,19 @@ class AssistantView extends ItemView {
             return el;
         };
         if (suggestions.meta) {
-            const paper = part('useMeta', '标题与摘要', '可以直接改').createDiv({ cls: 'mist-paper' });
-            for (const [key, label] of [['title', '标题'], ['summary', '摘要'], ['tldr', '一句话总结']]) {
+            const paper = part('useMeta', tr('标题与摘要', 'Title & summary'), tr('可以直接改', 'Edit freely')).createDiv({ cls: 'mist-paper' });
+            for (const [key, label] of [['title', tr('标题', 'Title')], ['summary', tr('摘要', 'Summary')], ['tldr', tr('一句话总结', 'One-line summary')]]) {
                 const input = paper.createEl('textarea', { cls: `mist-edit mist-edit-${key}`, attr: { rows: key === 'title' ? '1' : '2', 'aria-label': label, placeholder: label } });
                 input.value = draft.meta[key] || ''; input.disabled = done;
                 input.oninput = () => { draft.meta[key] = input.value; };
             }
             const rename = paper.createEl('label', { cls: 'mist-rename' });
             const check = rename.createEl('input', { type: 'checkbox' }); check.checked = draft.rename; check.disabled = done;
-            rename.createSpan({ text: '同时用标题重命名文件' });
+            rename.createSpan({ text: tr('同时用标题重命名文件', 'Also rename the file to the title') });
             check.onchange = () => { draft.rename = check.checked; };
         }
         if (suggestions.tags?.length) {
-            const chips = part('useTags', '标签', '点一下去掉').createDiv({ cls: 'mist-chips' });
+            const chips = part('useTags', tr('标签', 'Tags'), tr('点一下去掉', 'Tap to remove')).createDiv({ cls: 'mist-chips' });
             for (const tag of suggestions.tags) {
                 const value = tag.final || tag.display || tag;
                 const kept = draft.tags.includes(value);
@@ -892,7 +1005,7 @@ class AssistantView extends ItemView {
             }
         }
         if (suggestions.mover?.length) {
-            const el = part('useFolder', '归档');
+            const el = part('useFolder', tr('归档', 'Folder'));
             const path = el.createDiv({ cls: 'mist-path' });
             path.createSpan({ text: `${group.file.parent?.path || '/'}/`.replace('//', '/'), cls: 'mist-from' });
             path.createSpan({ text: '→', attr: { 'aria-hidden': 'true' } });
@@ -900,12 +1013,12 @@ class AssistantView extends ItemView {
             const alts = suggestions.mover.map(v => v.path).filter(p => p && p !== draft.folder);
             if (alts.length && !done) {
                 const row = el.createDiv({ cls: 'mist-alts' });
-                row.createSpan({ text: '也可以放：' });
+                row.createSpan({ text: tr('也可以放：', 'Or:') });
                 for (const p of alts) row.createEl('button', { text: p, cls: 'mist-alt' }).onclick = () => { draft.folder = p; this.render(); };
             }
             if (!done) {
-                const other = el.createEl('select', { cls: 'mist-select', attr: { 'aria-label': '其他文件夹' } });
-                other.createEl('option', { value: '', text: '其他文件夹…' });
+                const other = el.createEl('select', { cls: 'mist-select', attr: { 'aria-label': tr('其他文件夹', 'Other folder') } });
+                other.createEl('option', { value: '', text: tr('其他文件夹…', 'Other folder…') });
                 for (const f of this.plugin.app.vault.getAllLoadedFiles().filter(f => f.children)) other.createEl('option', { value: f.path, text: f.path });
                 other.onchange = () => { if (other.value) { draft.folder = other.value; this.render(); } };
             }
@@ -915,26 +1028,33 @@ class AssistantView extends ItemView {
             const el = body.createDiv({ cls: 'mist-part' });
             const head = el.createDiv({ cls: 'mist-part-head is-static' });
             head.createSpan({ text: draft.diffId ? '✓' : '', cls: 'mist-tick' });
-            head.createSpan({ text: '正文' });
+            head.createSpan({ text: tr('正文', 'Text') });
             const note = el.createDiv({ cls: 'mist-body-note' });
             if (diffs.length > 1 || !draft.diffId) {
-                const select = note.createEl('select', { cls: 'mist-select', attr: { 'aria-label': '选择正文版本' } });
-                select.createEl('option', { value: '', text: '保留当前正文' });
+                const select = note.createEl('select', { cls: 'mist-select', attr: { 'aria-label': tr('选择正文版本', 'Choose a text version') } });
+                select.createEl('option', { value: '', text: tr('保留当前正文', 'Keep current text') });
                 for (const task of diffs) select.createEl('option', { value: task.id, text: task.content.action || task.title });
                 select.value = draft.diffId;
                 select.onchange = () => { draft.diffId = select.value; this.render(); };
             } else {
-                note.createSpan({ text: diffs[0].content.action || diffs[0].title || '已生成整理后的正文' });
+                note.createSpan({ text: diffs[0].content.action || diffs[0].title || tr('已生成整理后的正文', 'Tidied text is ready') });
             }
-            note.createEl('button', { text: '在左边看 ↗', cls: 'mist-link is-strong' }).onclick = () => {
+            note.createEl('button', { text: tr('在左边看 ↗', 'View on the left ↗'), cls: 'mist-link is-strong' }).onclick = () => {
                 const task = diffs.find(t => t.id === draft.diffId);
-                if (task) this.plugin.openNotePreview(task); else new Notice('先选择一个正文版本。');
+                if (task) this.plugin.openNotePreview(task); else new Notice(tr('先选择一个正文版本。', 'Choose a text version first.'));
             };
+            const shrink = this.plugin.shrinkWarning(diffs.find(t => t.id === draft.diffId));
+            if (shrink) el.createDiv({ text: shrink, cls: 'assistant-shrink-warning', attr: { role: 'alert' } });
         }
         const error = group.tasks.at(-1)?.type === 'error' ? group.tasks.at(-1) : null;
+        if (!error && !done && !suggestions.meta && !suggestions.tags?.length && !suggestions.mover?.length && !diffs.length) {
+            this.renderMistEmpty(body, tr('这次没有建议', 'No suggestions this time'), tr('AI 认为这篇不需要改，原文没有改动。', 'The AI found nothing to change; the note is untouched.'),
+                [tr('换个功能再试', 'Try other actions'), () => { this.workbenchPage = 'prepare'; this.render(); }]);
+        }
         if (error) {
-            body.createEl('p', { text: error.content.message, cls: 'mist-caption' });
-            body.createEl('button', { text: '重新生成本篇建议', cls: 'mist-link is-strong' }).onclick = async () => {
+            const problem = error.content.kind && error.content.kind !== 'other' ? describeApiProblem(error.content.kind, this.plugin.getActiveApiConfig()) : null;
+            body.createEl('p', { text: problem ? `${problem.message} ${problem.next}` : error.content.message, cls: 'mist-caption' });
+            body.createEl('button', { text: tr('重新生成本篇建议', 'Generate again'), cls: 'mist-link is-strong' }).onclick = async () => {
                 if (this.workbenchRunning) return;
                 this.workbenchRunning = true;
                 try { await this.plugin.runOneClickSmartProcess(group.file); } finally { this.workbenchRunning = false; this.render(); }
@@ -942,8 +1062,8 @@ class AssistantView extends ItemView {
         }
         const count = [draft.useMeta && suggestions.meta, draft.useTags && draft.tags.length, draft.useFolder && suggestions.mover?.length, draft.diffId].filter(Boolean).length;
         const foot = body.createDiv({ cls: 'mist-foot' });
-        foot.createEl('button', { text: '稍后再看', cls: 'mist-link' }).onclick = () => { this.workbenchPage = 'queue'; this.render(); };
-        const accept = foot.createEl('button', { text: done ? '撤销这篇' : `审核并应用 · ${count} 项`, cls: done ? 'mist-primary is-quiet' : 'mist-primary' });
+        foot.createEl('button', { text: tr('稍后再看', 'Later'), cls: 'mist-link' }).onclick = () => { this.workbenchPage = 'queue'; this.render(); };
+        const accept = foot.createEl('button', { text: done ? tr('撤销这篇', 'Undo this note') : tr(`审核并应用 · ${count} 项`, `Review and apply · ${count}`), cls: done ? 'mist-primary is-quiet' : 'mist-primary' });
         accept.disabled = !!this.noteApplying || !!this.workbenchRunning || (!done && !count);
         accept.onclick = async () => {
             if (this.noteApplying) return;
@@ -954,7 +1074,7 @@ class AssistantView extends ItemView {
             } catch (e) { new Notice(e.message, 7000); }
             finally { this.noteApplying = false; this.render(); this.plugin.refreshAssistantViews?.(this); }
         };
-        if (!done) body.createEl('p', { text: '确认后可以一键撤销', cls: 'mist-caption' });
+        if (!done) body.createEl('p', { text: tr('确认后可以一键撤销', 'You can undo with one click afterwards'), cls: 'mist-caption' });
     }
 
     chooseAtelierNote() {
@@ -970,36 +1090,36 @@ class AssistantView extends ItemView {
             getItemText(file){return file.path}
             onChooseItem(file){choose(file)}
         }
-        const picker=new NotePicker(this.plugin.app);picker.setPlaceholder('选择要整理的笔记…');picker.open();
+        const picker=new NotePicker(this.plugin.app);picker.setPlaceholder(tr('选择要整理的笔记…', 'Choose the note to tidy…'));picker.open();
     }
 
     showAtelierCustomActions() {
         const modal=new GlassModal(this.plugin.app);modal.modalEl.addClass('assistant-atelier-modal');
-        modal.contentEl.createEl('h2',{text:'按自己的方式处理'});
+        modal.contentEl.createEl('h2',{text:tr('按自己的方式处理', 'Your own way')});
         const actions=(this.plugin.settings.customActions||[]).filter(a=>a.enabled!==false);
-        if(!actions.length)modal.contentEl.createEl('p',{text:'在插件设置中添加常用要求，保存为自定义动作。'});
+        if(!actions.length)modal.contentEl.createEl('p',{text:tr('在插件设置中添加常用要求，保存为自定义动作。', 'Add frequent requests in plugin settings and save them as custom actions.')});
         for(const action of actions){
-            const button=modal.contentEl.createEl('button',{text:action.name||'自定义动作',cls:'at-custom-action'});
+            const button=modal.contentEl.createEl('button',{text:action.name||tr('自定义动作', 'Custom actions'),cls:'at-custom-action'});
             button.onclick=()=>{modal.close();this.plugin.runCustomAction(action.id, this.pinnedFile || this.plugin.assistantLastFile)};
         }
-        modal.contentEl.createEl('button',{text:'管理自定义动作',cls:'at-custom-action'}).onclick=()=>{modal.close();this.plugin.app.setting.open();this.plugin.app.setting.openTabById(this.plugin.manifest.id)};
+        modal.contentEl.createEl('button',{text:tr('管理自定义动作', 'Manage custom actions'),cls:'at-custom-action'}).onclick=()=>{modal.close();this.plugin.app.setting.open();this.plugin.app.setting.openTabById(this.plugin.manifest.id)};
         modal.open();
     }
 
     openAtelierSettings() {
         const modal=new GlassModal(this.plugin.app);modal.modalEl.addClass('assistant-atelier-modal');
-        modal.contentEl.createEl('h2',{text:'处理偏好'});
-        modal.contentEl.createEl('p',{text:'调整默认步骤。模型、提示词和全部高级选项可在完整设置中管理。'});
+        modal.contentEl.createEl('h2',{text:tr('处理偏好', 'Preferences')});
+        modal.contentEl.createEl('p',{text:tr('调整默认步骤。模型、提示词和全部高级选项可在完整设置中管理。', 'Change the default steps. Models, prompts and every advanced option are in the full settings.')});
         const chosen={...(this.plugin.settings.oneClickProcessActions||{})};
-        for(const [key,label] of [['structurizer','整理结构'],['furigana','日文注音'],['meta','补全属性'],['tagger','补充标签'],['mover','建议位置']]){
+        for(const [key,label] of [['structurizer',tr('整理结构', 'Tidy structure')],['furigana',tr('日文注音', 'Japanese readings')],['meta',tr('补全属性', 'Fill properties')],['tagger',tr('补充标签', 'Add tags')],['mover',tr('建议位置', 'Suggest folder')]]){
             const row=modal.contentEl.createEl('label',{cls:'at-settings-row'});
             const check=row.createEl('input',{type:'checkbox'});check.checked=!!chosen[key];
             row.createSpan({text:label});check.onchange=()=>{chosen[key]=check.checked};
         }
         const buttons=modal.contentEl.createDiv({cls:'at-settings-actions'});
-        const save=buttons.createEl('button',{text:'保存默认步骤',cls:'mod-cta'});
-        save.onclick=async()=>{save.disabled=true;this.plugin.settings.oneClickProcessActions=chosen;await this.plugin.saveSettings();modal.close();this.render();this.plugin.refreshAssistantViews?.(this);new Notice('默认处理步骤已保存。')};
-        buttons.createEl('button',{text:'完整设置 ↗'}).onclick=()=>{modal.close();this.plugin.app.setting.open();this.plugin.app.setting.openTabById(this.plugin.manifest.id)};
+        const save=buttons.createEl('button',{text:tr('保存默认步骤', 'Save default steps'),cls:'mod-cta'});
+        save.onclick=async()=>{save.disabled=true;this.plugin.settings.oneClickProcessActions=chosen;await this.plugin.saveSettings();modal.close();this.render();this.plugin.refreshAssistantViews?.(this);new Notice(tr('默认处理步骤已保存。', 'Default steps saved.'))};
+        buttons.createEl('button',{text:tr('完整设置 ↗', 'Full settings ↗')}).onclick=()=>{modal.close();this.plugin.app.setting.open();this.plugin.app.setting.openTabById(this.plugin.manifest.id)};
         modal.open();
     }
 
@@ -1012,7 +1132,7 @@ class AssistantView extends ItemView {
 
     cancelWorkbenchRequest() {
         this.workbenchCancelled = true;
-        this.plugin.cancelCurrentRequest('用户取消');
+        this.plugin.cancelCurrentRequest(tr('用户取消', 'Cancelled by user'));
     }
 
     renderCurrentRequestBanner(container) {
@@ -1020,9 +1140,9 @@ class AssistantView extends ItemView {
             return;
         }
         const banner = container.createDiv({ cls: "ai-assistant-active-request" });
-        const label = this.plugin.currentRequestLabel || 'AI 请求';
-        banner.createEl("span", { text: `正在运行: ${label}` });
-        const cancelButton = banner.createEl("button", { text: "取消" });
+        const label = this.plugin.currentProgress || this.plugin.currentRequestLabel || tr('AI 请求', 'AI request');
+        banner.createEl("span", { text: label });
+        const cancelButton = banner.createEl("button", { text: tr('取消', 'Cancel') });
         cancelButton.addEventListener("click", () => this.cancelWorkbenchRequest());
     }
 
@@ -1043,14 +1163,14 @@ class AssistantView extends ItemView {
         header.addClass('ai-assistant-u-header');
 
         // Add title to header
-        header.createEl("h3", { text: task.title || 'AI 处理结果' });
+        header.createEl("h3", { text: task.title || tr('AI 处理结果', 'AI result') });
 
         const headerActions = header.createDiv();
         headerActions.addClass('ai-assistant-u-header-actions');
 
         // Add navigation button to header if file exists
         if (task.content && task.content.file) {
-            const navButton = headerActions.createEl("button", { text: "定位笔记" });
+            const navButton = headerActions.createEl("button", { text: tr("定位笔记", 'Show note') });
             navButton.addEventListener("click", () => {
                 this.plugin.app.workspace.getLeaf().openFile(task.content.file);
             });
@@ -1061,22 +1181,22 @@ class AssistantView extends ItemView {
                 cls: "ai-assistant-card-close",
                 text: "×"
             });
-            closeButton.setAttr("aria-label", "关闭卡片");
+            closeButton.setAttr("aria-label", tr("关闭卡片", 'Close card'));
             closeButton.addEventListener("click", () => this.removeTask(task.id));
         }
 
         if (task.status === 'loading') {
-            card.createEl("p", { text: task.message || "AI 正在处理中，请稍候..." });
+            card.createEl("p", { text: task.message || tr("AI 正在处理中，请稍候...", 'The AI is working, please wait…') });
             const streamingContent = task.streamingContent || task.content?.streamingContent;
             const chars = streamingContent ? streamingContent.length : 0;
             const meta = card.createDiv({ cls: "ai-assistant-streaming-meta" });
-            meta.setText(chars > 0 ? `已收到 ${chars} 字` : '正在生成，结果到齐后一次显示');
+            meta.setText(chars > 0 ? tr(`已收到 ${chars} 字`, `Received ${chars} characters`) : tr('正在生成，结果到齐后一次显示', 'Generating; the result appears when complete'));
             if (streamingContent) {
                 const streamBox = card.createEl("pre", { cls: "ai-assistant-streaming-output" });
                 streamBox.setText(streamingContent + '▌');
             }
             const buttonContainer = card.createDiv({ cls: "ai-assistant-button-container" });
-            const cancelButton = buttonContainer.createEl("button", { text: "取消当前请求" });
+            const cancelButton = buttonContainer.createEl("button", { text: tr("取消当前请求", 'Cancel request') });
             cancelButton.addEventListener("click", () => this.cancelWorkbenchRequest());
         } else if (task.status === 'displaying') {
             switch (task.type) {
@@ -1140,7 +1260,7 @@ class AssistantView extends ItemView {
                 details.setAttr('open', true);
                 isFirstSection = false;
             }
-            details.createEl('summary', { text: '属性 · 标题与摘要' });
+            details.createEl('summary', { text: tr('属性 · 标题与摘要', 'Properties · title & summary') });
             const content = details.createDiv();
             this.renderOneClickMetaSection(content, { ...task, meta: suggestions.meta });
         }
@@ -1150,7 +1270,7 @@ class AssistantView extends ItemView {
                 details.setAttr('open', true);
                 isFirstSection = false;
             }
-            details.createEl('summary', { text: '属性 · 标签' });
+            details.createEl('summary', { text: tr('属性 · 标签', 'Properties · tags') });
             const content = details.createDiv();
             this.renderOneClickTaggerSection(content, { ...task, tags: suggestions.tags });
         }
@@ -1160,13 +1280,13 @@ class AssistantView extends ItemView {
                 details.setAttr('open', true);
                 isFirstSection = false;
             }
-            details.createEl('summary', { text: '位置 · 归档建议' });
+            details.createEl('summary', { text: tr('位置 · 归档建议', 'Location · folder') });
             const content = details.createDiv();
             this.renderOneClickMoverSection(content, { ...task, mover: suggestions.mover });
         }
 
         const buttonContainer = card.createDiv({ cls: "ai-assistant-button-container" });
-        const cancelButton = buttonContainer.createEl("button", { text: "全部跳过" });
+        const cancelButton = buttonContainer.createEl("button", { text: tr("全部跳过", 'Skip all') });
         cancelButton.addEventListener("click", () => this.removeTask(task.id));
     }
 
@@ -1174,8 +1294,8 @@ class AssistantView extends ItemView {
         container.addClass('ai-assistant-meta-section');
         const existing = this.plugin.app.metadataCache.getFileCache(task.content.file)?.frontmatter || {};
         const before = container.createEl('details', { cls: 'assistant-review-current-properties' });
-        before.createEl('summary', { text: '查看当前属性' });
-        for (const key of ['title','summary','tldr']) before.createEl('p', { text: `${key}: ${existing[key] ?? '未设置'}` });
+        before.createEl('summary', { text: tr('查看当前属性', 'Current properties') });
+        for (const key of ['title','summary','tldr']) before.createEl('p', { text: tr(`${key}: ${existing[key] ?? '未设置'}`, `${key}: ${existing[key] ?? 'not set'}`) });
         const { title, summary, tldr } = task.meta;
 
 
@@ -1189,7 +1309,7 @@ class AssistantView extends ItemView {
 
         // 标题编辑区域
         const titleSection = container.createDiv({ cls: "meta-field-section" });
-        titleSection.createEl("label", { text: "标题:", cls: "meta-field-label" });
+        titleSection.createEl("label", { text: tr("标题:", 'Title:'), cls: "meta-field-label" });
         const titleInput = titleSection.createEl("input", {
             type: "text",
             value: title,
@@ -1201,19 +1321,19 @@ class AssistantView extends ItemView {
 
         // 摘要编辑区域
         const summarySection = container.createDiv({ cls: "meta-field-section" });
-        summarySection.createEl("label", { text: "摘要:", cls: "meta-field-label" });
+        summarySection.createEl("label", { text: tr("摘要:", 'Summary:'), cls: "meta-field-label" });
         const summaryTextarea = summarySection.createEl("textarea", {
             cls: "meta-field-textarea"
         });
         summaryTextarea.value = summary || '';
-        summaryTextarea.placeholder = "请输入摘要...";
+        summaryTextarea.placeholder = tr("请输入摘要...", 'Enter a summary…');
         summaryTextarea.addEventListener("input", (e) => {
             editableData.summary = e.target.value;
         });
 
         // 一句话总结编辑区域
         const tldrSection = container.createDiv({ cls: "meta-field-section" });
-        tldrSection.createEl("label", { text: "一句话总结:", cls: "meta-field-label" });
+        tldrSection.createEl("label", { text: tr("一句话总结:", 'One-line summary:'), cls: "meta-field-label" });
         const tldrInput = tldrSection.createEl("input", {
             type: "text",
             value: tldr,
@@ -1235,15 +1355,15 @@ class AssistantView extends ItemView {
         const buttonContainer = container.createDiv({ cls: "ai-assistant-button-container" });
 
         // 重命名文件按钮
-        const renameButton = buttonContainer.createEl("button", { text: "重命名文件", cls: "mod-cta" });
+        const renameButton = buttonContainer.createEl("button", { text: tr("重命名文件", 'Rename file'), cls: "mod-cta" });
         renameButton.addEventListener("click", async () => {
             const paths = getUpdatedPaths();
             if (!paths.canRename) {
-                new Notice("无法重命名：目标文件已存在或路径相同");
+                new Notice(tr("无法重命名：目标文件已存在或路径相同", 'Cannot rename: the target exists or the path is the same'));
                 return;
             }
 
-            let notice = new Notice("正在重命名并更新元数据...", 0);
+            let notice = new Notice(tr("正在重命名并更新元数据...", 'Renaming and updating properties…'), 0);
             try {
                 // 使用安全重命名方法
                 const newFile = await this.plugin.safeRenameFile(task.content.file, paths.newPath);
@@ -1251,10 +1371,10 @@ class AssistantView extends ItemView {
                 // 更新元数据
                 await this.plugin.updateFrontmatter(newFile, editableData.title, editableData.summary, editableData.tldr);
                 notice.hide();
-                new Notice(`文件已重命名为: ${paths.finalFilename}.md`, 4000);
+                new Notice(tr(`文件已重命名为: ${paths.finalFilename}.md`, `File renamed to: ${paths.finalFilename}.md`), 4000);
 
                 // 添加到历史记录
-                this.plugin.addToHistory(paths.finalFilename, newFile.path, "重命名+元数据", this.plugin.generateFileId(newFile));
+                this.plugin.addToHistory(paths.finalFilename, newFile.path, tr("重命名+元数据", 'Rename + properties'), this.plugin.generateFileId(newFile));
 
                 // 更新任务内容
                 const newContent = { ...task.content, file: newFile };
@@ -1262,37 +1382,37 @@ class AssistantView extends ItemView {
                 this.updateTask(task.id, { content: newContent });
             } catch (err) {
                 notice.hide();
-                console.error("重命名错误详情:", err);
+                console.error(tr("重命名错误详情:", 'Rename error details:'), err);
 
                 // 提供更详细的错误信息和建议
-                let errorMessage = `重命名文件时出错: ${err.message}`;
+                let errorMessage = tr(`重命名文件时出错: ${err.message}`, `Error renaming the file: ${err.message}`);
                 let suggestions = [];
 
-                if (err.message.includes('已存在')) {
-                    suggestions.push('请尝试使用不同的文件名');
-                } else if (err.message.includes('非法字符')) {
-                    suggestions.push('请移除文件名中的特殊字符');
-                } else if (err.message.includes('过长')) {
-                    suggestions.push('请使用更短的文件名');
-                } else if (err.message.includes('找不到文件')) {
-                    suggestions.push('请稍后重试，或手动重命名文件');
+                if (err.message.includes(tr('已存在', 'already exists'))) {
+                    suggestions.push(tr('请尝试使用不同的文件名', 'Try a different file name'));
+                } else if (err.message.includes(tr('非法字符', 'invalid characters'))) {
+                    suggestions.push(tr('请移除文件名中的特殊字符', 'Remove special characters from the file name'));
+                } else if (err.message.includes(tr('过长', 'too long'))) {
+                    suggestions.push(tr('请使用更短的文件名', 'Use a shorter file name'));
+                } else if (err.message.includes(tr('找不到文件', 'Could not find'))) {
+                    suggestions.push(tr('请稍后重试，或手动重命名文件', 'Try again later, or rename the file by hand'));
                 }
 
                 if (suggestions.length > 0) {
-                    errorMessage += `\n建议: ${suggestions.join(', ')}`;
+                    errorMessage += tr(`\n建议: ${suggestions.join(', ')}`, `\nSuggestions: ${suggestions.join(', ')}`);
                 }
 
                 new Notice(errorMessage, 8000);
             }
         });
 
-        const noRenameButton = buttonContainer.createEl("button", { text: "仅更新元数据" });
+        const noRenameButton = buttonContainer.createEl("button", { text: tr("仅更新元数据", 'Properties only') });
         noRenameButton.addEventListener("click", async () => {
             await this.plugin.updateFrontmatter(task.content.file, editableData.title, editableData.summary, editableData.tldr, false);
-            new Notice("元数据已更新，文件名保持不变。");
+            new Notice(tr("元数据已更新，文件名保持不变。", 'Properties updated; the file name is unchanged.'));
 
             // 添加到历史记录
-            this.plugin.addToHistory(task.content.file.basename, task.content.file.path, "更新元数据", this.plugin.generateFileId(task.content.file));
+            this.plugin.addToHistory(task.content.file.basename, task.content.file.path, tr("更新元数据", 'Update properties'), this.plugin.generateFileId(task.content.file));
 
             const newContent = { ...task.content };
             delete newContent.suggestions.meta;
@@ -1313,7 +1433,7 @@ class AssistantView extends ItemView {
 
             if (suggestion.is_new) {
                 label.addClass('ai-assistant-u-accent');
-                label.setAttribute('title', '新建议的标签');
+                label.setAttribute('title', tr('新建议的标签', 'Newly suggested tags'));
             }
 
             checkbox.addEventListener("change", () => {
@@ -1323,13 +1443,13 @@ class AssistantView extends ItemView {
         });
 
         const buttonContainer = container.createDiv({ cls: "ai-assistant-button-container" });
-        const confirmButton = buttonContainer.createEl("button", { text: "添加选中标签", cls: "mod-cta" });
+        const confirmButton = buttonContainer.createEl("button", { text: tr("添加选中标签", 'Add selected tags'), cls: "mod-cta" });
 
         confirmButton.addEventListener("click", async () => {
-            if (selectedTags.size === 0) return new Notice("没有选择任何标签。");
+            if (selectedTags.size === 0) return new Notice(tr("没有选择任何标签。", 'No tags selected.'));
 
             const tagsToAdd = Array.from(selectedTags);
-            let notice = new Notice(`正在更新笔记标签...`, 0);
+            let notice = new Notice(tr(`正在更新笔记标签...`, `Updating tags…`), 0);
             try {
                 await this.plugin.app.fileManager.processFrontMatter(task.content.file, (fm) => {
                     fm.tags = fm.tags || [];
@@ -1337,23 +1457,23 @@ class AssistantView extends ItemView {
                     fm.tags = [...new Set([...existingFmTags, ...tagsToAdd])];
                 });
                 notice.hide();
-                new Notice("笔记标签已成功更新！", 5000);
+                new Notice(tr("笔记标签已成功更新！", 'Tags updated.'), 5000);
 
                 // 添加到历史记录
-                this.plugin.addToHistory(task.content.file.basename, task.content.file.path, `添加${tagsToAdd.length}个标签`, this.plugin.generateFileId(task.content.file));
+                this.plugin.addToHistory(task.content.file.basename, task.content.file.path, tr(`添加${tagsToAdd.length}个标签`, `Add ${tagsToAdd.length} tags`), this.plugin.generateFileId(task.content.file));
 
                 const newContent = { ...task.content };
                 delete newContent.suggestions.tags;
                 this.updateTask(task.id, { content: newContent });
             } catch (e) {
                 notice.hide();
-                new Notice(`更新标签失败: ${e.message}`, 0);
+                new Notice(tr(`更新标签失败: ${e.message}`, `Updating tags failed: ${e.message}`), 0);
             }
         });
     }
 
     renderOneClickMoverSection(container, task) {
-        container.createEl('p', { text: `当前位置：${task.content.file.path}`, cls: 'assistant-review-path' });
+        container.createEl('p', { text: tr(`当前位置：${task.content.file.path}`, `Current location: ${task.content.file.path}`), cls: 'assistant-review-path' });
         container.addClass('ai-assistant-mover-list');
 
         task.mover.forEach(suggestion => {
@@ -1363,10 +1483,10 @@ class AssistantView extends ItemView {
             const pathSpan = pathDiv.createEl("span", { text: suggestion.path });
             if (suggestion.is_new) {
                 pathSpan.addClass('ai-assistant-u-accent');
-                pathSpan.setAttribute('title', '将创建新文件夹');
+                pathSpan.setAttribute('title', tr('将创建新文件夹', 'A new folder will be created'));
             }
 
-            const button = moverItem.createEl("button", { text: "移动", cls: "mod-cta" });
+            const button = moverItem.createEl("button", { text: tr("移动", 'Move'), cls: "mod-cta" });
             button.addEventListener("click", async () => {
                 await this.moveFileToFolder(task, suggestion.path, suggestion.is_new);
             });
@@ -1376,11 +1496,11 @@ class AssistantView extends ItemView {
         const customMoverItem = container.createDiv({ cls: "ai-assistant-mover-item ai-assistant-custom-mover" });
         const customPathDiv = customMoverItem.createDiv({ cls: "ai-assistant-mover-path" });
         customPathDiv.createEl("span", {
-            text: "选择其他位置...",
+            text: tr("选择其他位置...", 'Choose another location…'),
             cls: "custom-location-text"
         });
 
-        const customButton = customMoverItem.createEl("button", { text: "浏览", cls: "mod-secondary" });
+        const customButton = customMoverItem.createEl("button", { text: tr("浏览", 'Browse'), cls: "mod-secondary" });
         customButton.addEventListener("click", () => {
             this.showFolderSelectionForMove(task);
         });
@@ -1391,28 +1511,28 @@ class AssistantView extends ItemView {
         const newPath = `${destinationFolder}/${task.content.file.name}`;
 
         if (task.content.file.path === newPath) {
-            new Notice("文件已在目标文件夹中。");
+            new Notice(tr("文件已在目标文件夹中。", 'The file is already in that folder.'));
             return;
         }
         if (this.app.vault.getAbstractFileByPath(newPath)) {
-            new Notice(`目标位置已存在同名文件，无法移动。`);
+            new Notice(tr(`目标位置已存在同名文件，无法移动。`, `A file with the same name exists there, so it was not moved.`));
             return;
         }
 
-        let notice = new Notice(`正在移动文件...`, 0);
+        let notice = new Notice(tr(`正在移动文件...`, `Moving file…`), 0);
         try {
             if (isNew && !await this.app.vault.adapter.exists(destinationFolder)) {
                 await this.app.vault.createFolder(destinationFolder);
-                new Notice(`已创建新文件夹: ${destinationFolder}`, 4000);
+                new Notice(tr(`已创建新文件夹: ${destinationFolder}`, `Created folder: ${destinationFolder}`), 4000);
             }
             await this.app.fileManager.renameFile(task.content.file, newPath);
             notice.hide();
-            new Notice(`笔记已成功移动到: ${destinationFolder}`, 5000);
+            new Notice(tr(`笔记已成功移动到: ${destinationFolder}`, `Note moved to: ${destinationFolder}`), 5000);
 
             const newFile = this.plugin.app.vault.getAbstractFileByPath(newPath);
 
             // 添加到历史记录
-            this.plugin.addToHistory(newFile.basename, newFile.path, "移动文件", this.plugin.generateFileId(newFile));
+            this.plugin.addToHistory(newFile.basename, newFile.path, tr("移动文件", 'Move file'), this.plugin.generateFileId(newFile));
 
             const newContent = { ...task.content, file: newFile };
             delete newContent.suggestions.mover;
@@ -1420,7 +1540,7 @@ class AssistantView extends ItemView {
 
         } catch (err) {
             notice.hide();
-            new Notice(`移动文件时出错: ${err.message}`, 0);
+            new Notice(tr(`移动文件时出错: ${err.message}`, `Error moving the file: ${err.message}`), 0);
         }
     }
 
@@ -1449,10 +1569,10 @@ class AssistantView extends ItemView {
             const pathSpan = pathDiv.createEl("span", { text: suggestion.path });
             if (suggestion.is_new) {
                 pathSpan.addClass('ai-assistant-u-accent');
-                pathSpan.setAttribute('title', '将创建新文件夹');
+                pathSpan.setAttribute('title', tr('将创建新文件夹', 'A new folder will be created'));
             }
 
-            const button = moverItem.createEl("button", { text: "移动", cls: "mod-cta" });
+            const button = moverItem.createEl("button", { text: tr("移动", 'Move'), cls: "mod-cta" });
             button.addEventListener("click", async () => {
                 await this.moveFileToFolderStandalone(file, suggestion.path, suggestion.is_new, task.id);
             });
@@ -1462,17 +1582,17 @@ class AssistantView extends ItemView {
         const customMoverItem = card.createDiv({ cls: "ai-assistant-mover-item ai-assistant-custom-mover" });
         const customPathDiv = customMoverItem.createDiv({ cls: "ai-assistant-mover-path" });
         customPathDiv.createEl("span", {
-            text: "选择其他位置...",
+            text: tr("选择其他位置...", 'Choose another location…'),
             cls: "custom-location-text"
         });
 
-        const customButton = customMoverItem.createEl("button", { text: "浏览", cls: "mod-secondary" });
+        const customButton = customMoverItem.createEl("button", { text: tr("浏览", 'Browse'), cls: "mod-secondary" });
         customButton.addEventListener("click", () => {
             this.showFolderSelectionForMoveStandalone(file, task.id);
         });
 
         const buttonContainer = card.createDiv({ cls: "ai-assistant-button-container" });
-        const cancelButton = buttonContainer.createEl("button", { text: "取消" });
+        const cancelButton = buttonContainer.createEl("button", { text: tr("取消", 'Cancel') });
         cancelButton.addEventListener("click", () => this.removeTask(task.id));
     }
 
@@ -1481,34 +1601,34 @@ class AssistantView extends ItemView {
         const newPath = `${destinationFolder}/${file.name}`;
 
         if (file.path === newPath) {
-            new Notice("文件已在目标文件夹中。");
+            new Notice(tr("文件已在目标文件夹中。", 'The file is already in that folder.'));
             return;
         }
         if (this.app.vault.getAbstractFileByPath(newPath)) {
-            new Notice(`目标位置已存在同名文件，无法移动。`);
+            new Notice(tr(`目标位置已存在同名文件，无法移动。`, `A file with the same name exists there, so it was not moved.`));
             return;
         }
 
-        let moveNotice = new Notice(`正在移动文件...`, 0);
+        let moveNotice = new Notice(tr(`正在移动文件...`, `Moving file…`), 0);
         try {
             if (isNew && !await this.app.vault.adapter.exists(destinationFolder)) {
                 await this.app.vault.createFolder(destinationFolder);
-                new Notice(`已创建新文件夹: ${destinationFolder}`, 4000);
+                new Notice(tr(`已创建新文件夹: ${destinationFolder}`, `Created folder: ${destinationFolder}`), 4000);
             }
             await this.app.fileManager.renameFile(file, newPath);
             moveNotice.hide();
-            new Notice(`笔记已成功移动到: ${destinationFolder}`, 5000);
+            new Notice(tr(`笔记已成功移动到: ${destinationFolder}`, `Note moved to: ${destinationFolder}`), 5000);
 
             // 添加到历史记录
             const newFile = this.plugin.app.vault.getAbstractFileByPath(newPath);
             if (newFile) {
-                this.plugin.addToHistory(newFile.basename, newFile.path, "移动文件", this.plugin.generateFileId(newFile));
+                this.plugin.addToHistory(newFile.basename, newFile.path, tr("移动文件", 'Move file'), this.plugin.generateFileId(newFile));
             }
 
             this.removeTask(taskId);
         } catch (err) {
             moveNotice.hide();
-            new Notice(`移动文件时出错: ${err.message}`, 0);
+            new Notice(tr(`移动文件时出错: ${err.message}`, `Error moving the file: ${err.message}`), 0);
         }
     }
 
@@ -1541,7 +1661,7 @@ class AssistantView extends ItemView {
 
             if (suggestion.is_new) {
                 label.addClass('ai-assistant-u-accent');
-                label.setAttribute('title', '新建议的标签');
+                label.setAttribute('title', tr('新建议的标签', 'Newly suggested tags'));
             }
 
             checkbox.addEventListener("change", () => {
@@ -1551,15 +1671,15 @@ class AssistantView extends ItemView {
         });
 
         const buttonContainer = card.createDiv({ cls: "ai-assistant-button-container" });
-        const confirmButton = buttonContainer.createEl("button", { text: "添加选中标签", cls: "mod-cta" });
-        const cancelButton = buttonContainer.createEl("button", { text: "取消" });
+        const confirmButton = buttonContainer.createEl("button", { text: tr("添加选中标签", 'Add selected tags'), cls: "mod-cta" });
+        const cancelButton = buttonContainer.createEl("button", { text: tr("取消", 'Cancel') });
 
         cancelButton.addEventListener("click", () => this.removeTask(task.id));
         confirmButton.addEventListener("click", async () => {
-            if (selectedTags.size === 0) return new Notice("没有选择任何标签。");
+            if (selectedTags.size === 0) return new Notice(tr("没有选择任何标签。", 'No tags selected.'));
 
             const tagsToAdd = Array.from(selectedTags);
-            let updateNotice = new Notice(`正在更新笔记标签...`, 0);
+            let updateNotice = new Notice(tr(`正在更新笔记标签...`, `Updating tags…`), 0);
             try {
                 await this.plugin.app.fileManager.processFrontMatter(file, (fm) => {
                     fm.tags = fm.tags || [];
@@ -1567,15 +1687,15 @@ class AssistantView extends ItemView {
                     fm.tags = [...new Set([...existingFmTags, ...tagsToAdd])];
                 });
                 updateNotice.hide();
-                new Notice("笔记标签已成功更新！", 5000);
+                new Notice(tr("笔记标签已成功更新！", 'Tags updated.'), 5000);
 
                 // 添加到历史记录
-                this.plugin.addToHistory(file.basename, file.path, `添加${tagsToAdd.length}个标签`, this.plugin.generateFileId(file));
+                this.plugin.addToHistory(file.basename, file.path, tr(`添加${tagsToAdd.length}个标签`, `Add ${tagsToAdd.length} tags`), this.plugin.generateFileId(file));
 
                 this.removeTask(task.id);
             } catch (e) {
                 updateNotice.hide();
-                new Notice(`更新标签失败: ${e.message}`, 0);
+                new Notice(tr(`更新标签失败: ${e.message}`, `Updating tags failed: ${e.message}`), 0);
             }
         });
     }
@@ -1594,7 +1714,7 @@ class AssistantView extends ItemView {
 
         // 标题编辑区域
         const titleSection = card.createDiv({ cls: "meta-field-section" });
-        titleSection.createEl("label", { text: "建议标题:", cls: "meta-field-label" });
+        titleSection.createEl("label", { text: tr("建议标题:", 'Suggested title:'), cls: "meta-field-label" });
         const titleInput = titleSection.createEl("input", {
             type: "text",
             value: title,
@@ -1606,19 +1726,19 @@ class AssistantView extends ItemView {
 
         // 摘要编辑区域
         const summarySection = card.createDiv({ cls: "meta-field-section" });
-        summarySection.createEl("label", { text: "摘要:", cls: "meta-field-label" });
+        summarySection.createEl("label", { text: tr("摘要:", 'Summary:'), cls: "meta-field-label" });
         const summaryTextarea = summarySection.createEl("textarea", {
             cls: "meta-field-textarea"
         });
         summaryTextarea.value = summary || '';
-        summaryTextarea.placeholder = "请输入摘要...";
+        summaryTextarea.placeholder = tr("请输入摘要...", 'Enter a summary…');
         summaryTextarea.addEventListener("input", (e) => {
             editableData.summary = e.target.value;
         });
 
         // 一句话总结编辑区域
         const tldrSection = card.createDiv({ cls: "meta-field-section" });
-        tldrSection.createEl("label", { text: "一句话总结:", cls: "meta-field-label" });
+        tldrSection.createEl("label", { text: tr("一句话总结:", 'One-line summary:'), cls: "meta-field-label" });
         const tldrInput = tldrSection.createEl("input", {
             type: "text",
             value: tldr,
@@ -1640,15 +1760,15 @@ class AssistantView extends ItemView {
         const buttonContainer = card.createDiv({ cls: "ai-assistant-button-container" });
 
         // 重命名文件按钮
-        const renameButton = buttonContainer.createEl("button", { text: "重命名文件", cls: "mod-cta" });
+        const renameButton = buttonContainer.createEl("button", { text: tr("重命名文件", 'Rename file'), cls: "mod-cta" });
         renameButton.addEventListener("click", async () => {
             const paths = getUpdatedPaths();
             if (!paths.canRename) {
-                new Notice("无法重命名：目标文件已存在或路径相同");
+                new Notice(tr("无法重命名：目标文件已存在或路径相同", 'Cannot rename: the target exists or the path is the same'));
                 return;
             }
 
-            let renameNotice = new Notice("正在重命名并更新元数据...", 0);
+            let renameNotice = new Notice(tr("正在重命名并更新元数据...", 'Renaming and updating properties…'), 0);
             try {
                 // 使用安全重命名方法
                 const newFile = await this.plugin.safeRenameFile(file, paths.newPath);
@@ -1656,58 +1776,58 @@ class AssistantView extends ItemView {
                 // 更新元数据
                 await this.plugin.updateFrontmatter(newFile, editableData.title, editableData.summary, editableData.tldr);
                 renameNotice.hide();
-                new Notice(`文件已重命名为: ${paths.finalFilename}.md`, 4000);
+                new Notice(tr(`文件已重命名为: ${paths.finalFilename}.md`, `File renamed to: ${paths.finalFilename}.md`), 4000);
 
                 // 添加到历史记录
-                this.plugin.addToHistory(paths.finalFilename, newFile.path, "重命名+元数据", this.plugin.generateFileId(newFile));
+                this.plugin.addToHistory(paths.finalFilename, newFile.path, tr("重命名+元数据", 'Rename + properties'), this.plugin.generateFileId(newFile));
 
                 this.removeTask(task.id);
             } catch (err) {
                 renameNotice.hide();
-                console.error("重命名错误详情:", err);
+                console.error(tr("重命名错误详情:", 'Rename error details:'), err);
 
                 // 提供更详细的错误信息和建议
-                let errorMessage = `重命名文件时出错: ${err.message}`;
+                let errorMessage = tr(`重命名文件时出错: ${err.message}`, `Error renaming the file: ${err.message}`);
                 let suggestions = [];
 
-                if (err.message.includes('已存在')) {
-                    suggestions.push('请尝试使用不同的文件名');
-                } else if (err.message.includes('非法字符')) {
-                    suggestions.push('请移除文件名中的特殊字符');
-                } else if (err.message.includes('过长')) {
-                    suggestions.push('请使用更短的文件名');
-                } else if (err.message.includes('找不到文件')) {
-                    suggestions.push('请稍后重试，或手动重命名文件');
+                if (err.message.includes(tr('已存在', 'already exists'))) {
+                    suggestions.push(tr('请尝试使用不同的文件名', 'Try a different file name'));
+                } else if (err.message.includes(tr('非法字符', 'invalid characters'))) {
+                    suggestions.push(tr('请移除文件名中的特殊字符', 'Remove special characters from the file name'));
+                } else if (err.message.includes(tr('过长', 'too long'))) {
+                    suggestions.push(tr('请使用更短的文件名', 'Use a shorter file name'));
+                } else if (err.message.includes(tr('找不到文件', 'Could not find'))) {
+                    suggestions.push(tr('请稍后重试，或手动重命名文件', 'Try again later, or rename the file by hand'));
                 }
 
                 if (suggestions.length > 0) {
-                    errorMessage += `\n建议: ${suggestions.join(', ')}`;
+                    errorMessage += tr(`\n建议: ${suggestions.join(', ')}`, `\nSuggestions: ${suggestions.join(', ')}`);
                 }
 
                 new Notice(errorMessage, 8000);
             }
         });
 
-        const noRenameButton = buttonContainer.createEl("button", { text: "仅更新元数据" });
+        const noRenameButton = buttonContainer.createEl("button", { text: tr("仅更新元数据", 'Properties only') });
         noRenameButton.addEventListener("click", async () => {
             await this.plugin.updateFrontmatter(file, editableData.title, editableData.summary, editableData.tldr);
-            new Notice("元数据已更新，文件名保持不变。");
+            new Notice(tr("元数据已更新，文件名保持不变。", 'Properties updated; the file name is unchanged.'));
 
             // 添加到历史记录
-            this.plugin.addToHistory(file.basename, file.path, "更新元数据", this.plugin.generateFileId(file));
+            this.plugin.addToHistory(file.basename, file.path, tr("更新元数据", 'Update properties'), this.plugin.generateFileId(file));
 
             this.removeTask(task.id);
         });
 
-        const cancelButton = buttonContainer.createEl("button", { text: "取消" });
+        const cancelButton = buttonContainer.createEl("button", { text: tr("取消", 'Cancel') });
         cancelButton.addEventListener("click", () => this.removeTask(task.id));
     }
 
     renderStructurizerTask(card, task) {
-        card.createEl("p", { text: "笔记的结构和格式已成功优化。" });
+        card.createEl("p", { text: tr("笔记的结构和格式已成功优化。", 'The note structure and formatting were improved.') });
 
         const buttonContainer = card.createDiv({ cls: "ai-assistant-button-container" });
-        const closeButton = buttonContainer.createEl("button", { text: "好的", cls: "mod-cta" });
+        const closeButton = buttonContainer.createEl("button", { text: tr("好的", 'OK'), cls: "mod-cta" });
         closeButton.addEventListener("click", () => this.removeTask(task.id));
     }
 
@@ -1715,21 +1835,23 @@ class AssistantView extends ItemView {
         const content = task.content || {};
         if (!content.reviewHunks) content.reviewHunks = this.plugin.buildReviewHunks(content.originalContent || '', content.proposedContent || '');
         if (!Array.isArray(content.reviewSelected)) content.reviewSelected = content.reviewHunks.map(h => h.id);
+        const shrink = this.plugin.shrinkWarning(task);
+        if (shrink) card.createDiv({ text: shrink, cls: 'assistant-shrink-warning', attr: { role: 'alert' } });
         if (content.reviewMode !== 'changes') {
             this.renderFullArticlePreview(card, task, expanded);
             return;
         }
         card.addClass('assistant-review-surface');
-        card.createDiv({ text: content.file?.path || '当前笔记', cls: 'assistant-review-path' });
+        card.createDiv({ text: content.file?.path || tr('当前笔记', 'Current note'), cls: 'assistant-review-path' });
         const summary = card.createDiv({ cls: 'assistant-review-summary', attr: { 'aria-live': 'polite' } });
         const controls = card.createDiv({ cls: 'assistant-review-toolbar' });
-        controls.createEl('button', { text: '整文预览' }).onclick = () => {
+        controls.createEl('button', { text: tr('整文预览', 'Whole-note preview') }).onclick = () => {
             content.reviewMode = 'article'; card.empty(); this.renderDiffPreviewTask(card, task, expanded);
         };
-        if (!expanded) controls.createEl('button', { text: '展开审阅' }).onclick = () => {
+        if (!expanded) controls.createEl('button', { text: tr('展开审阅', 'Review in full') }).onclick = () => {
             const modal = new GlassModal(this.plugin.app);
             modal.modalEl.addClass('assistant-review-modal');
-            const paint = () => { modal.contentEl.empty(); modal.contentEl.createEl('h2', { text: task.title || '审阅修改' }); this.renderDiffPreviewTask(modal.contentEl, task, true); };
+            const paint = () => { modal.contentEl.empty(); modal.contentEl.createEl('h2', { text: task.title || tr('审阅修改', 'Review changes') }); this.renderDiffPreviewTask(modal.contentEl, task, true); };
             modal.onOpen = paint;
             modal.open();
         };
@@ -1741,12 +1863,12 @@ class AssistantView extends ItemView {
             const checkbox = label.createEl('input', { type: 'checkbox' });
             checkbox.checked = content.reviewSelected.includes(hunk.id);
             checkbox.disabled = !!content.applied || !!content.applying;
-            label.createSpan({ text: hunk.atomic ? '整篇建议（保持文档结构完整）' : `修改 ${hunk.id + 1} · 原文第 ${hunk.start + 1} 行` });
+            label.createSpan({ text: hunk.atomic ? tr('整篇建议（保持文档结构完整）', 'Whole-note suggestion (keeps the document structure)') : tr(`修改 ${hunk.id + 1} · 原文第 ${hunk.start + 1} 行`, `Change ${hunk.id + 1} · line ${hunk.start + 1}`) });
             const columns = row.createDiv({ cls: 'assistant-review-columns' });
-            for (const [title, value, kind] of [['原内容',hunk.before,'before'],['建议内容',hunk.after,'after']]) {
+            for (const [title, value, kind] of [[tr('原内容', 'Original'),hunk.before,'before'],[tr('建议内容', 'Suggested'),hunk.after,'after']]) {
                 const column = columns.createDiv();
                 column.createEl('span', { text: title, cls: 'assistant-review-muted' });
-                column.createEl('pre', { text: value || (kind === 'before' ? '（此处新增）' : '（删除这段）'), cls: `assistant-review-${kind}` });
+                column.createEl('pre', { text: value || (kind === 'before' ? tr('（此处新增）', '(added here)') : tr('（删除这段）', '(remove this part)')), cls: `assistant-review-${kind}` });
             }
             const updateRow = () => row.toggleClass('is-skipped', !checkbox.checked);
             checkbox.addEventListener('change', () => {
@@ -1759,8 +1881,8 @@ class AssistantView extends ItemView {
         const apply = buttons.createEl('button', { cls: 'mod-cta' });
         const updateSummary = () => {
             const count = content.reviewSelected.length;
-            summary.setText(content.applied ? `已接受 ${count} 项修改` : `${content.reviewHunks.length} 项建议 · 已选择 ${count} 项`);
-            apply.setText(content.applied ? '撤回本次正文修改' : content.applying ? '正在应用…' : `接受所选 ${count} 项`);
+            summary.setText(content.applied ? tr(`已接受 ${count} 项修改`, `Accepted ${count} changes`) : tr(`${content.reviewHunks.length} 项建议 · 已选择 ${count} 项`, `${content.reviewHunks.length} suggestions · ${count} selected`));
+            apply.setText(content.applied ? tr('撤回本次正文修改', 'Undo this text change') : content.applying ? tr('正在应用…', 'Applying…') : tr(`接受所选 ${count} 项`, `Accept ${count} selected`));
             apply.disabled = !!content.applying || (!content.applied && !count);
         };
         apply.onclick = async () => {
@@ -1776,8 +1898,8 @@ class AssistantView extends ItemView {
                 this.render();
             }
         };
-        if (!content.applied) buttons.createEl('button', { text: '全不选' }).onclick = () => { if (content.applying) return; content.reviewSelected = []; checks.forEach(c => { c.checked = false; c.dispatchEvent(new Event('change')); }); updateSummary(); };
-        card.createEl('p', { text: '只应用勾选的正文差异。笔记有新编辑时将停止应用；属性与位置建议单独确认。', cls: 'assistant-review-muted' });
+        if (!content.applied) buttons.createEl('button', { text: tr('全不选', 'Select none') }).onclick = () => { if (content.applying) return; content.reviewSelected = []; checks.forEach(c => { c.checked = false; c.dispatchEvent(new Event('change')); }); updateSummary(); };
+        card.createEl('p', { text: tr('只应用勾选的正文差异。笔记有新编辑时将停止应用；属性与位置建议单独确认。', 'Only the ticked text changes are applied. If the note was edited meanwhile, nothing is applied; property and folder suggestions are confirmed separately.'), cls: 'assistant-review-muted' });
         updateSummary();
     }
 
@@ -1788,21 +1910,21 @@ class AssistantView extends ItemView {
         const repaint = () => { card.empty(); this.renderDiffPreviewTask(card, task, expanded); };
         const original = content.articleSource === 'original';
         const tabs = toolbar.createDiv({ cls: 'assistant-article-tabs' });
-        for (const [value, name] of [['result', '优化后'], ['original', '原文']]) {
+        for (const [value, name] of [['result', tr('优化后', 'Tidied')], ['original', tr('原文', 'Original')]]) {
             const button = tabs.createEl('button', { text: name, attr: { 'aria-pressed': String(original === (value === 'original')) } });
             button.onclick = () => { content.articleSource = value; repaint(); };
         }
-        toolbar.createEl('button', { text: '查看具体修改', cls: 'assistant-article-text-button' }).onclick = () => {
+        toolbar.createEl('button', { text: tr('查看具体修改', 'See the changes'), cls: 'assistant-article-text-button' }).onclick = () => {
             content.reviewMode = 'changes'; repaint();
         };
-        if (!expanded) toolbar.createEl('button', { text: '展开阅读', cls: 'assistant-article-text-button' }).onclick = () => {
+        if (!expanded) toolbar.createEl('button', { text: tr('展开阅读', 'Read in full'), cls: 'assistant-article-text-button' }).onclick = () => {
             const modal = new GlassModal(this.plugin.app);
             modal.modalEl.addClass('assistant-review-modal');
             modal.onOpen = () => this.renderDiffPreviewTask(modal.contentEl, task, true);
             modal.open();
         };
         const selected = content.reviewSelected;
-        card.createEl('p', { text: content.applied ? '已应用，可撤回本次修改。' : selected.length === content.reviewHunks.length ? '整篇排版预览 · 原笔记尚未修改' : '当前预览包含你选择的修改 · 原笔记尚未修改', cls: 'assistant-review-muted' });
+        card.createEl('p', { text: content.applied ? tr('已应用，可撤回本次修改。', 'Applied; you can undo this change.') : selected.length === content.reviewHunks.length ? tr('整篇排版预览 · 原笔记尚未修改', 'Whole-note layout preview · the note is not changed yet') : tr('当前预览包含你选择的修改 · 原笔记尚未修改', 'Preview includes your chosen changes · the note is not changed yet'), cls: 'assistant-review-muted' });
         const article = card.createDiv({ cls: 'assistant-article-preview markdown-rendered' });
         const text = original ? content.originalContent : this.plugin.composeReviewContent(content.originalContent, content.reviewHunks, selected);
         const body = (text || '').replace(/^---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/, '');
@@ -1812,11 +1934,11 @@ class AssistantView extends ItemView {
             });
         } else article.createEl('pre', { text: body });
         const actions = card.createDiv({ cls: 'assistant-review-actions' });
-        const apply = actions.createEl('button', { text: content.applied ? '撤回本次修改' : content.applying ? '正在应用…' : selected.length === content.reviewHunks.length ? '应用整篇优化' : '应用所选修改', cls: 'mod-cta' });
+        const apply = actions.createEl('button', { text: content.applied ? tr('撤回本次修改', 'Undo this change') : content.applying ? tr('正在应用…', 'Applying…') : selected.length === content.reviewHunks.length ? tr('应用整篇优化', 'Apply whole note') : tr('应用所选修改', 'Apply selected changes'), cls: 'mod-cta' });
         apply.disabled = !!content.applying || (!content.applied && !selected.length);
         apply.onclick = async () => {
             if (content.applying) return;
-            content.applying = true; apply.disabled = true; apply.setText('正在处理…');
+            content.applying = true; apply.disabled = true; apply.setText(tr('正在处理…', 'Working…'));
             try {
                 if (content.applied) await this.plugin.undoReviewTask(task.id);
                 else await this.plugin.applyDiffPreview(task.id);
@@ -1841,7 +1963,7 @@ class AssistantView extends ItemView {
         output.setText(content.result || content.message || '');
 
         const buttonContainer = card.createDiv({ cls: "ai-assistant-button-container" });
-        const closeButton = buttonContainer.createEl("button", { text: "关闭", cls: "mod-cta" });
+        const closeButton = buttonContainer.createEl("button", { text: tr("关闭", 'Close'), cls: "mod-cta" });
         closeButton.addEventListener("click", () => this.removeTask(task.id));
     }
 
@@ -1852,7 +1974,7 @@ class AssistantView extends ItemView {
         if (content.type === 'error') {
             card.createEl("p", { text: content.message, cls: "error-message" });
             const buttonContainer = card.createDiv({ cls: "ai-assistant-button-container" });
-            const closeButton = buttonContainer.createEl("button", { text: "确定", cls: "mod-cta" });
+            const closeButton = buttonContainer.createEl("button", { text: tr("确定", 'OK'), cls: "mod-cta" });
             closeButton.addEventListener("click", () => this.removeTask(task.id));
             return;
         }
@@ -1865,12 +1987,12 @@ class AssistantView extends ItemView {
             const progressInfo = card.createDiv({ cls: "batch-progress-info" });
 
             progressInfo.createEl("p", {
-                text: `正在处理第 ${content.processedCount} / ${content.totalFiles} 个文件`
+                text: tr(`正在处理第 ${content.processedCount} / ${content.totalFiles} 个文件`, `Processing file ${content.processedCount} of ${content.totalFiles}`)
             });
 
             if (content.currentFile) {
                 progressInfo.createEl("p", {
-                    text: `当前文件: ${content.currentFile}`,
+                    text: tr(`当前文件: ${content.currentFile}`, `Current file: ${content.currentFile}`),
                     cls: "current-file-name"
                 });
             }
@@ -1892,17 +2014,17 @@ class AssistantView extends ItemView {
 
         if (content.canInterrupt) {
             const interruptButton = buttonContainer.createEl("button", {
-                text: "🛑 中断处理",
+                text: tr("🛑 中断处理", 'Stop'),
                 cls: "mod-warning interrupt-btn"
             });
             interruptButton.addEventListener("click", () => {
                 this.batchProcessInterrupted = true;
                 interruptButton.disabled = true;
-                interruptButton.textContent = "正在中断...";
+                interruptButton.textContent = tr("正在中断...", 'Stopping…');
             });
         }
 
-        const closeButton = buttonContainer.createEl("button", { text: "关闭" });
+        const closeButton = buttonContainer.createEl("button", { text: tr("关闭", 'Close') });
         closeButton.addEventListener("click", () => this.removeTask(task.id));
     }
 
@@ -1915,29 +2037,29 @@ class AssistantView extends ItemView {
         const folderInfo = infoContainer.createDiv({ cls: "info-item" });
         folderInfo.createSpan({ cls: "info-icon", text: "📁" });
         const folderInfoContent = folderInfo.createDiv({ cls: "info-content" });
-        folderInfoContent.createEl("strong", { text: "文件夹路径:" });
+        folderInfoContent.createEl("strong", { text: tr("文件夹路径:", 'Folder:') });
         folderInfoContent.createEl("br");
         folderInfoContent.createEl("code", { text: content.folderPath });
 
         const fileInfo = infoContainer.createDiv({ cls: "info-item" });
         fileInfo.createSpan({ cls: "info-icon", text: "📄" });
         const fileInfoContent = fileInfo.createDiv({ cls: "info-content" });
-        fileInfoContent.createEl("strong", { text: "文件数量:" });
+        fileInfoContent.createEl("strong", { text: tr("文件数量:", 'Files:') });
         fileInfoContent.createEl("br");
-        fileInfoContent.appendText(`${content.fileCount} 个 Markdown 文件`);
+        fileInfoContent.appendText(tr(`${content.fileCount} 个 Markdown 文件`, `${content.fileCount} Markdown files`));
 
         const warningBox = infoContainer.createDiv({ cls: "warning-box" });
         warningBox.createSpan({ cls: "warning-icon", text: "⚠️" });
         const warningContent = warningBox.createDiv({ cls: "warning-content" });
-        warningContent.createEl("strong", { text: "注意:" });
-        warningContent.appendText(" 批量处理会把每篇笔记发给你配置的 AI 服务，可能需要较长时间，过程中可以随时中断。");
+        warningContent.createEl("strong", { text: tr("注意:", 'Note:') });
+        warningContent.appendText(tr(" 批量处理会把每篇笔记发给你配置的 AI 服务，可能需要较长时间，过程中可以随时中断。", ' Batch processing sends every note to your AI service and may take a while. You can stop at any time.'));
 
         this.plugin.renderBatchSendSummary(infoContainer, content.files);
 
         const buttonContainer = card.createDiv({ cls: "ai-assistant-button-container" });
 
         const confirmButton = buttonContainer.createEl("button", {
-            text: "开始处理",
+            text: tr("开始处理", 'Start'),
             cls: "mod-cta"
         });
         confirmButton.addEventListener("click", () => {
@@ -1945,7 +2067,7 @@ class AssistantView extends ItemView {
             this.plugin.runBatchProcess(content.files);
         });
 
-        const cancelButton = buttonContainer.createEl("button", { text: "取消" });
+        const cancelButton = buttonContainer.createEl("button", { text: tr("取消", 'Cancel') });
         cancelButton.addEventListener("click", () => this.removeTask(task.id));
     }
 
@@ -1959,7 +2081,7 @@ class AssistantView extends ItemView {
         });
 
         const buttonContainer = card.createDiv({ cls: "ai-assistant-button-container" });
-        const closeButton = buttonContainer.createEl("button", { text: "确定", cls: "mod-cta" });
+        const closeButton = buttonContainer.createEl("button", { text: tr("确定", 'OK'), cls: "mod-cta" });
         closeButton.addEventListener("click", () => this.removeTask(task.id));
     }
 
@@ -1977,46 +2099,46 @@ class AssistantView extends ItemView {
 
         // 标题区域，包含刷新按钮
         const titleContainer = section.createDiv({ cls: "section-title-container" });
-        const title = titleContainer.createEl("h3", { text: "快速操作" });
+        const title = titleContainer.createEl("h3", { text: tr("快速操作", 'Quick actions') });
         title.addClass('ai-assistant-u-title');
 
         // 刷新按钮放在标题旁边
         const refreshBtn = titleContainer.createEl("button", {
-            text: "刷新",
+            text: tr("刷新", 'Refresh'),
             cls: "ai-assistant-refresh-btn"
         });
-        refreshBtn.title = "刷新面板";
+        refreshBtn.title = tr("刷新面板", 'Refresh panel');
         refreshBtn.addEventListener('click', () => {
             this.render();
-            new Notice("面板已刷新", 1500);
+            new Notice(tr("面板已刷新", 'Panel refreshed'), 1500);
         });
 
         const actionGrid = section.createDiv({ cls: "ai-assistant-action-grid" });
 
         const actions = [
             {
-                name: "回滚上次",
+                name: tr("回滚上次", 'Undo last'),
                 icon: "↩",
-                desc: "恢复最近一次应用的内容变更",
+                desc: tr("恢复最近一次应用的内容变更", 'Restore the last applied change'),
                 action: () => this.plugin.rollbackLastChange()
             },
             {
-                name: "撤销回滚",
+                name: tr("撤销回滚", 'Redo'),
                 icon: "↪",
-                desc: "重新应用刚刚回滚的 AI 变更",
+                desc: tr("重新应用刚刚回滚的 AI 变更", 'Re-apply the AI change you just undid'),
                 action: () => this.plugin.redoLastRollback()
             },
             {
-                name: "批量处理",
+                name: tr("批量处理", 'Batch tidy'),
                 icon: "📦",
-                desc: "选择文件或文件夹",
+                desc: tr("选择文件或文件夹", 'Choose files or a folder'),
                 action: () => this.showBatchProcessingModal()
             },
 
             {
-                name: "打开设置",
+                name: tr("打开设置", 'Open settings'),
                 icon: "⚙️",
-                desc: "快速打开插件设置",
+                desc: tr("快速打开插件设置", 'Open plugin settings'),
                 action: () => {
                     this.plugin.app.setting.open();
                     this.plugin.app.setting.openTabById('ai-assistant-suite');
@@ -2027,7 +2149,7 @@ class AssistantView extends ItemView {
         const customActions = (this.plugin.settings.customActions || []).filter(action => action.enabled !== false);
         customActions.forEach(action => {
             actions.push({
-                name: action.name || '自定义动作',
+                name: action.name || tr('自定义动作', 'Custom actions'),
                 icon: "✦",
                 desc: this.plugin.getCustomActionModeLabel(action.outputMode),
                 action: () => this.plugin.runCustomAction(action.id)
@@ -2035,7 +2157,7 @@ class AssistantView extends ItemView {
         });
 
         actions.forEach(action => {
-            const actionBtn = actionGrid.createEl("button", { cls: "ai-assistant-action-btn", attr: { type: "button", "aria-label": action.name + "：" + action.desc } });
+            const actionBtn = actionGrid.createEl("button", { cls: "ai-assistant-action-btn", attr: { type: "button", "aria-label": action.name + tr("：", ': ') + action.desc } });
             actionBtn.createEl("span", { text: action.icon, cls: "action-icon" });
             actionBtn.createEl("span", { text: action.name, cls: "action-name" });
             actionBtn.createEl("span", { text: action.desc, cls: "action-desc" });
@@ -2062,17 +2184,17 @@ class AssistantView extends ItemView {
         if (!currentFile) return;
 
         const section = container.createDiv({ cls: "ai-assistant-section" });
-        section.createEl("h3", { text: "📄 当前文件信息" });
+        section.createEl("h3", { text: tr("📄 当前文件信息", 'Current file') });
 
         const infoGrid = section.createDiv({ cls: "ai-assistant-info-grid" });
 
         // 文件基本信息
         const fileInfo = infoGrid.createDiv({ cls: "info-item" });
-        fileInfo.createEl("span", { text: "文件名:", cls: "info-label" });
+        fileInfo.createEl("span", { text: tr("文件名:", 'Name:'), cls: "info-label" });
         fileInfo.createEl("span", { text: currentFile.basename, cls: "info-value" });
 
         const pathInfo = infoGrid.createDiv({ cls: "info-item" });
-        pathInfo.createEl("span", { text: "路径:", cls: "info-label" });
+        pathInfo.createEl("span", { text: tr("路径:", 'Path:'), cls: "info-label" });
         pathInfo.createEl("span", { text: currentFile.path, cls: "info-value" });
 
         // 文件统计
@@ -2080,15 +2202,15 @@ class AssistantView extends ItemView {
             const stats = this.getFileStats(content);
 
             const wordInfo = infoGrid.createDiv({ cls: "info-item" });
-            wordInfo.createEl("span", { text: "字数:", cls: "info-label" });
+            wordInfo.createEl("span", { text: tr("字数:", 'Words:'), cls: "info-label" });
             wordInfo.createEl("span", { text: stats.words.toString(), cls: "info-value" });
 
             const charInfo = infoGrid.createDiv({ cls: "info-item" });
-            charInfo.createEl("span", { text: "字符数:", cls: "info-label" });
+            charInfo.createEl("span", { text: tr("字符数:", 'Characters:'), cls: "info-label" });
             charInfo.createEl("span", { text: stats.chars.toString(), cls: "info-value" });
 
             const lineInfo = infoGrid.createDiv({ cls: "info-item" });
-            lineInfo.createEl("span", { text: "行数:", cls: "info-label" });
+            lineInfo.createEl("span", { text: tr("行数:", 'Lines:'), cls: "info-label" });
             lineInfo.createEl("span", { text: stats.lines.toString(), cls: "info-value" });
         });
     }
@@ -2105,21 +2227,21 @@ class AssistantView extends ItemView {
     // 渲染AI状态监控
     renderAIStatus(container) {
         const section = container.createDiv({ cls: "ai-assistant-section" });
-        section.createEl("h3", { text: "🤖 AI状态监控" });
+        section.createEl("h3", { text: tr("🤖 AI状态监控", 'AI status') });
 
         const statusGrid = section.createDiv({ cls: "ai-assistant-status-grid" });
 
         // API状态
         const apiStatus = statusGrid.createDiv({ cls: "status-item" });
-        apiStatus.createEl("span", { text: "API状态:", cls: "status-label" });
+        apiStatus.createEl("span", { text: tr("API状态:", 'API:'), cls: "status-label" });
         const apiIndicator = apiStatus.createEl("span", { cls: "status-indicator" });
 
         const hasValidConfig = this.plugin.settings.apiConfigs?.some(c => c.enabled !== false && this.plugin.isConfigUsable(c));
         if (hasValidConfig) {
-            apiIndicator.setText("🟢 已配置");
+            apiIndicator.setText(tr("🟢 已配置", 'Configured'));
             apiIndicator.addClass("status-good");
         } else {
-            apiIndicator.setText("🔴 未配置");
+            apiIndicator.setText(tr("🔴 未配置", 'Not configured'));
             apiIndicator.addClass("status-error");
         }
 
@@ -2127,10 +2249,10 @@ class AssistantView extends ItemView {
 
         // 模型信息
         const modelStatus = statusGrid.createDiv({ cls: "status-item" });
-        modelStatus.createEl("span", { text: "主模型:", cls: "status-label" });
+        modelStatus.createEl("span", { text: tr("主模型:", 'Main model:'), cls: "status-label" });
         const activeConfig = this.plugin.getActiveApiConfig();
         modelStatus.createEl("span", {
-            text: activeConfig?.modelName || "未设置",
+            text: activeConfig?.modelName || tr("未设置", 'Not set'),
             cls: "status-value"
         });
     }
@@ -2141,7 +2263,7 @@ class AssistantView extends ItemView {
         if (history.length === 0) return;
 
         const section = container.createDiv({ cls: "ai-assistant-section" });
-        section.createEl("h3", { text: "📚 最近处理" });
+        section.createEl("h3", { text: tr("📚 最近处理", 'Recent') });
 
         const historyList = section.createDiv({ cls: "ai-assistant-history-list" });
 
@@ -2173,12 +2295,12 @@ class AssistantView extends ItemView {
 
         if (validHistory.length === 0) {
             const emptyMessage = historyList.createDiv({ cls: "history-empty" });
-            emptyMessage.textContent = "暂无有效的处理历史";
+            emptyMessage.textContent = tr("暂无有效的处理历史", 'No valid history');
             return;
         }
 
         validHistory.forEach(item => { // 显示所有历史，通过CSS控制滚动
-            const historyItem = historyList.createEl("button", { cls: "history-item", attr: { type: "button", "aria-label": "打开笔记：" + item.fileName } });
+            const historyItem = historyList.createEl("button", { cls: "history-item", attr: { type: "button", "aria-label": tr("打开笔记：", 'Open note: ') + item.fileName } });
 
             // 显示当前文件名（可能已更新）
             const fileNameSpan = historyItem.createEl("span", {
@@ -2189,7 +2311,7 @@ class AssistantView extends ItemView {
             // 如果文件被重命名，显示提示
             const file = this.findFileByHistory(item);
             if (file && file.path !== item.filePath) {
-                fileNameSpan.title = `原路径: ${item.filePath}\n当前路径: ${file.path}`;
+                fileNameSpan.title = tr(`原路径: ${item.filePath}\n当前路径: ${file.path}`, `Old path: ${item.filePath}\nCurrent path: ${file.path}`);
                 fileNameSpan.addClass("history-renamed");
             }
 
@@ -2213,10 +2335,10 @@ class AssistantView extends ItemView {
                     this.addTask({
                         id: Date.now().toString(),
                         type: 'error',
-                        title: '文件访问错误',
+                        title: tr('文件访问错误', 'File access error'),
                         status: 'displaying',
                         content: {
-                            message: `文件 "${item.fileName}" 不存在或已被移动`,
+                            message: tr(`文件 "${item.fileName}" 不存在或已被移动`, `File "${item.fileName}" does not exist or was moved`),
                             type: 'error'
                         }
                     });
@@ -2226,11 +2348,11 @@ class AssistantView extends ItemView {
 
         // 清理历史按钮
         const clearBtn = section.createEl("button", {
-            text: "清理历史",
+            text: tr("清理历史", 'Clear history'),
             cls: "ai-assistant-clear-history-btn"
         });
         clearBtn.addEventListener("click", async () => {
-            const confirmed = await confirmAction(this.app, '确定要清理所有处理历史记录吗？此操作不可撤销。', '清理');
+            const confirmed = await confirmAction(this.app, tr('确定要清理所有处理历史记录吗？此操作不可撤销。', 'Clear all history? This cannot be undone.'), tr('清理', 'Clear'));
             if (confirmed) {
                 // 清理插件设置中的历史记录
                 this.plugin.settings.processingHistory = [];
@@ -2244,10 +2366,10 @@ class AssistantView extends ItemView {
                 this.addTask({
                     id: Date.now().toString(),
                     type: 'success',
-                    title: '历史记录已清理',
+                    title: tr('历史记录已清理', 'History cleared'),
                     status: 'displaying',
                     content: {
-                        message: '所有历史记录已成功清理',
+                        message: tr('所有历史记录已成功清理', 'All history cleared'),
                         type: 'success'
                     }
                 });
@@ -2289,10 +2411,10 @@ class AssistantView extends ItemView {
         const now = Date.now();
         const diff = now - timestamp;
 
-        if (diff < 60000) return "刚刚";
-        if (diff < 3600000) return `${Math.floor(diff / 60000)}分钟前`;
-        if (diff < 86400000) return `${Math.floor(diff / 3600000)}小时前`;
-        return `${Math.floor(diff / 86400000)}天前`;
+        if (diff < 60000) return tr("刚刚", 'just now');
+        if (diff < 3600000) return tr(`${Math.floor(diff / 60000)}分钟前`, `${Math.floor(diff / 60000)} min ago`);
+        if (diff < 86400000) return tr(`${Math.floor(diff / 3600000)}小时前`, `${Math.floor(diff / 3600000)} h ago`);
+        return tr(`${Math.floor(diff / 86400000)}天前`, `${Math.floor(diff / 86400000)} d ago`);
     }
 
     // 渲染使用统计
@@ -2301,7 +2423,7 @@ class AssistantView extends ItemView {
         if (history.length === 0) return;
 
         const section = container.createDiv({ cls: "ai-assistant-section" });
-        section.createEl("h3", { text: "📊 使用统计" });
+        section.createEl("h3", { text: tr("📊 使用统计", 'Usage') });
 
         const statsGrid = section.createDiv({ cls: "ai-assistant-stats-grid" });
 
@@ -2321,7 +2443,7 @@ class AssistantView extends ItemView {
         // 总处理次数
         const totalCount = this.plugin.settings.totalProcessedCount || history.length;
         const totalStat = statsGrid.createDiv({ cls: "stat-item" });
-        totalStat.createEl("span", { text: "总处理次数:", cls: "stat-label" });
+        totalStat.createEl("span", { text: tr("总处理次数:", 'Total runs:'), cls: "stat-label" });
         totalStat.createEl("span", { text: totalCount.toString(), cls: "stat-value" });
 
         // 最常用功能
@@ -2330,9 +2452,9 @@ class AssistantView extends ItemView {
 
         if (mostUsed) {
             const mostUsedStat = statsGrid.createDiv({ cls: "stat-item" });
-            mostUsedStat.createEl("span", { text: "最常用功能:", cls: "stat-label" });
+            mostUsedStat.createEl("span", { text: tr("最常用功能:", 'Most used:'), cls: "stat-label" });
             mostUsedStat.createEl("span", {
-                text: `${mostUsed[0]} (${mostUsed[1]}次)`,
+                text: tr(`${mostUsed[0]} (${mostUsed[1]}次)`, `${this.actionLabel(mostUsed[0])} (${mostUsed[1]})`),
                 cls: "stat-value"
             });
         }
@@ -2345,11 +2467,11 @@ class AssistantView extends ItemView {
             ).length;
 
         const todayStat = statsGrid.createDiv({ cls: "stat-item" });
-        todayStat.createEl("span", { text: "今日处理:", cls: "stat-label" });
+        todayStat.createEl("span", { text: tr("今日处理:", 'Today:'), cls: "stat-label" });
         todayStat.createEl("span", { text: todayCount.toString(), cls: "stat-value" });
 
         if (Object.keys(actionCounts).length > 0) {
-            const chartTitle = section.createEl("h4", { text: "各功能累计次数", cls: "stat-subtitle" });
+            const chartTitle = section.createEl("h4", { text: tr("各功能累计次数", 'Runs per action'), cls: "stat-subtitle" });
             chartTitle.addClass('ai-assistant-u-chart-title');
 
             const chartContainer = section.createDiv({ cls: "usage-chart" });
@@ -2395,7 +2517,7 @@ class PromptEditModal extends GlassModal {
         headerContainer.createEl('h2', { text: this.title });
 
         const modeToggle = headerContainer.createEl('button', {
-            text: '预览模式',
+            text: tr('预览模式', 'Preview'),
             cls: 'prompt-mode-toggle'
         });
 
@@ -2412,10 +2534,10 @@ class PromptEditModal extends GlassModal {
         modeToggle.addEventListener('click', () => {
             this.isPreviewMode = !this.isPreviewMode;
             if (this.isPreviewMode) {
-                modeToggle.textContent = '编辑模式';
+                modeToggle.textContent = tr('编辑模式', 'Edit');
                 this.showPreview();
             } else {
-                modeToggle.textContent = '预览模式';
+                modeToggle.textContent = tr('预览模式', 'Preview');
                 this.showEdit();
             }
         });
@@ -2424,18 +2546,18 @@ class PromptEditModal extends GlassModal {
         const buttonContainer = contentEl.createDiv({ cls: 'prompt-modal-buttons' });
 
         const saveBtn = buttonContainer.createEl('button', {
-            text: '保存',
+            text: tr('保存', 'Save'),
             cls: 'mod-cta'
         });
         saveBtn.addEventListener('click', async () => {
             if (this.saved) {
                 await this.plugin.saveSettings();
-                new Notice('Prompt 已保存!');
+                new Notice(tr('Prompt 已保存!', 'Prompt saved.'));
             }
             this.close();
         });
 
-        const cancelBtn = buttonContainer.createEl('button', { text: '取消' });
+        const cancelBtn = buttonContainer.createEl('button', { text: tr('取消', 'Cancel') });
         cancelBtn.addEventListener('click', () => this.close());
     }
 
@@ -2519,20 +2641,20 @@ class BatchFileSelectionModal extends GlassModal {
 
     onOpen() {
         const { contentEl } = this;
-        contentEl.createEl('h2', { text: '选择要批量处理的文件' });
+        contentEl.createEl('h2', { text: tr('选择要批量处理的文件', 'Choose files to process') });
 
         // 全选/取消全选按钮
         const buttonContainer = contentEl.createDiv({ cls: 'batch-selection-buttons' });
         buttonContainer.addClass('ai-assistant-u-button-row');
 
-        const selectAllBtn = buttonContainer.createEl('button', { text: '全选' });
+        const selectAllBtn = buttonContainer.createEl('button', { text: tr('全选', 'Select all') });
         selectAllBtn.onclick = () => {
             const checkboxes = contentEl.querySelectorAll('input[type="checkbox"]');
             checkboxes.forEach(cb => cb.checked = true);
             this.selectedFiles = [...this.files];
         };
 
-        const deselectAllBtn = buttonContainer.createEl('button', { text: '取消全选' });
+        const deselectAllBtn = buttonContainer.createEl('button', { text: tr('取消全选', 'Select none') });
         deselectAllBtn.onclick = () => {
             const checkboxes = contentEl.querySelectorAll('input[type="checkbox"]');
             checkboxes.forEach(cb => cb.checked = false);
@@ -2565,13 +2687,13 @@ class BatchFileSelectionModal extends GlassModal {
         const confirmContainer = contentEl.createDiv();
         confirmContainer.addClass('ai-assistant-u-confirm-row');
 
-        const confirmBtn = confirmContainer.createEl('button', { text: '开始批量处理', cls: 'mod-cta' });
+        const confirmBtn = confirmContainer.createEl('button', { text: tr('开始批量处理', 'Start batch'), cls: 'mod-cta' });
         confirmBtn.onclick = () => {
             this.close();
             this.onChoose(this.selectedFiles);
         };
 
-        const cancelBtn = confirmContainer.createEl('button', { text: '取消' });
+        const cancelBtn = confirmContainer.createEl('button', { text: tr('取消', 'Cancel') });
         cancelBtn.onclick = () => {
             this.close();
             this.onChoose(null);
@@ -2596,7 +2718,7 @@ class AiAssistantSuite extends Plugin {
         const hasLegacy = legacyKeys.some(key => this.settings[key] !== undefined);
         if (!hasLegacy) return false;
         if (!Array.isArray(this.settings.apiConfigs) || !this.settings.apiConfigs.some(c => c.apiKey || c.apiUrl)) {
-            const config = { id: 'default', name: '默认配置', enabled: true };
+            const config = { id: 'default', name: tr('默认配置', 'Default'), enabled: true };
             for (const key of legacyKeys) if (this.settings[key] !== undefined) config[key] = this.settings[key];
             this.settings.apiConfigs = [config];
             this.settings.activeConfigId = config.id;
@@ -2613,9 +2735,8 @@ class AiAssistantSuite extends Plugin {
             if (!config.id) config.id = `config_${index}_${Date.now()}`;
             if (!config.name) config.name = `Config ${index + 1}`;
             if (!config.apiProvider) config.apiProvider = 'openai';
-            if (config.apiProvider === 'openai' && /^https:\/\/api\.deepseek\.com(?:\/|$)/i.test(config.apiUrl || '')) {
-                config.apiProvider = 'deepseek';
-            }
+            // 旧版只有“OpenAI 兼容”一项：地址是哪家官方的，就认成那家预设，地址和型号原样保留
+            if (config.apiProvider === 'openai') config.apiProvider = presetForUrl(config.apiUrl) || 'openai';
             if (config.enabled === undefined) config.enabled = true;
         });
         if (!this.settings.activeConfigId && this.settings.apiConfigs[0]) {
@@ -2734,9 +2855,9 @@ class AiAssistantSuite extends Plugin {
         return merged;
     }
 
-    beginAiOperation(label = 'AI 请求') {
+    beginAiOperation(label = tr('AI 请求', 'AI request')) {
         if (this.currentAbortController && !this.currentAbortController.signal.aborted) {
-            this.cancelCurrentRequest('新的 AI 操作已开始');
+            this.cancelCurrentRequest(tr('新的 AI 操作已开始', 'A new AI task started'));
         }
         this.currentAbortController = new AbortController();
         this.currentRequestLabel = label;
@@ -2752,13 +2873,13 @@ class AiAssistantSuite extends Plugin {
         }
     }
 
-    cancelCurrentRequest(reason = '用户取消') {
+    cancelCurrentRequest(reason = tr('用户取消', 'Cancelled by user')) {
         if (!this.currentAbortController || this.currentAbortController.signal.aborted) {
-            new Notice('当前没有正在运行的 AI 请求。', 2000);
+            new Notice(tr('当前没有正在运行的 AI 请求。', 'No AI request is running.'), 2000);
             return;
         }
         this.currentAbortController.abort(reason);
-        new Notice('AI 请求已取消。', 2500);
+        new Notice(tr('AI 请求已取消。', 'AI request cancelled.'), 2500);
         this.view?.render();
     }
 
@@ -2769,7 +2890,7 @@ class AiAssistantSuite extends Plugin {
             error?.message?.includes('取消');
     }
 
-    createAbortError(message = 'AI 请求已取消') {
+    createAbortError(message = tr('AI 请求已取消', 'AI request cancelled')) {
         const error = new Error(message);
         error.name = 'AbortError';
         error.code = 'ABORTED';
@@ -2778,7 +2899,7 @@ class AiAssistantSuite extends Plugin {
 
     normalizeActionName(action) {
         if (!action) return '其他';
-        if (action.includes('标签')) return '标签';
+        if (action.includes('标签') || /\btags?\b/i.test(action)) return '标签';
         const mapping = {
             '结构优化': '结构',
             '优化结构': '结构',
@@ -2792,7 +2913,14 @@ class AiAssistantSuite extends Plugin {
             '日文假名标注': '假名',
             '假名标注': '假名',
             '假名': '假名',
-            '一键智能处理': '一键处理'
+            '一键智能处理': '一键处理',
+            // 英文界面下记下的动作名，归到同一个键
+            'Tidy structure': '结构',
+            'Rename + properties': '元数据',
+            'Update properties': '元数据',
+            'Move file': '移动',
+            'Move note': '移动',
+            'Furigana': '假名'
         };
         return mapping[action] || action;
     }
@@ -2855,12 +2983,18 @@ class AiAssistantSuite extends Plugin {
         this.registerView('ai-assistant-note-preview', leaf => new AssistantNotePreview(leaf,this));
         this.registerView(ASSISTANT_WORKBENCH_TYPE, leaf => (this.view = new AssistantView(leaf, this, true)));
 
-        this.addRibbonIcon("anchor", "打开 AI 助手面板", () => {
+        this.addRibbonIcon("anchor", tr("打开 AI 助手面板", 'Open AI assistant panel'), () => {
             this.activateView();
         });
 
-        this.addRibbonIcon('zap', 'AI 智能处理', () => {
+        this.addRibbonIcon('zap', tr('AI 智能处理', 'AI processing'), () => {
             this.runOneClickSmartProcess();
+        });
+
+        this.addCommand({
+            id: 'load-example',
+            name: tr('载入示例（不联网）', 'Load example (no network)'),
+            callback: () => this.loadDemo()
         });
 
         this.addCommand({
@@ -2928,7 +3062,7 @@ class AiAssistantSuite extends Plugin {
             id: 'cancel-current-ai-request',
             name: tr('取消当前 AI 请求', 'Cancel the current AI request'),
             callback: () => {
-                this.cancelCurrentRequest('用户取消');
+                this.cancelCurrentRequest(tr('用户取消', 'Cancelled by user'));
             }
         });
 
@@ -2999,7 +3133,7 @@ class AiAssistantSuite extends Plugin {
     onunload() {
 
         if (this.currentAbortController && !this.currentAbortController.signal.aborted) {
-            this.currentAbortController.abort('插件卸载');
+            this.currentAbortController.abort(tr('插件卸载', 'Plugin unloaded'));
         }
         this.debounceTimers.clear();
     }
@@ -3011,17 +3145,17 @@ class AiAssistantSuite extends Plugin {
         // 检查文件名是否包含非法字符
         const invalidChars = new RegExp(`[<>:"/\\\\|?*${String.fromCharCode(0)}-${String.fromCharCode(0x1f)}]`);
         if (invalidChars.test(fileName)) {
-            throw new Error('文件名包含非法字符');
+            throw new Error(tr('文件名包含非法字符', 'File name contains invalid characters'));
         }
 
         // 检查文件名长度
         if (fileName.length > 255) {
-            throw new Error('文件名过长');
+            throw new Error(tr('文件名过长', 'File name is too long'));
         }
 
         // 检查是否为空或只包含空格
         if (!fileName.trim()) {
-            throw new Error('文件名不能为空');
+            throw new Error(tr('文件名不能为空', 'File name cannot be empty'));
         }
 
         return true;
@@ -3037,7 +3171,7 @@ class AiAssistantSuite extends Plugin {
             // 检查目标路径是否已存在
             const existingFile = this.app.vault.getAbstractFileByPath(newPath);
             if (existingFile) {
-                throw new Error(`目标文件 "${newPath}" 已存在`);
+                throw new Error(tr(`目标文件 "${newPath}" 已存在`, `Target file "${newPath}" already exists`));
             }
 
             // 确保目标目录存在
@@ -3062,39 +3196,116 @@ class AiAssistantSuite extends Plugin {
             }
 
             if (!newFile) {
-                throw new Error(`重命名后无法找到文件: ${newPath}。请检查文件路径是否有效。`);
+                throw new Error(tr(`重命名后无法找到文件: ${newPath}。请检查文件路径是否有效。`, `Could not find the file after renaming: ${newPath}. Check that the path is valid.`));
             }
 
             return newFile;
         } catch (error) {
-            console.error('重命名文件时出错:', error);
+            console.error(tr('重命名文件时出错:', 'Error renaming file:'), error);
             throw error;
         }
     }
 
-    // 验证API配置
+    // 测试连接：只发一句很短的话，按回答把失败分成几类，每类给一个下一步（不读笔记，不把密钥写进结果）
     async validateApiConfig(configToTest = null) {
-        let config = configToTest;
-        if (!config) {
-            const activeConfigId = this.settings.activeConfigId;
-            config = this.settings.apiConfigs?.find(c => c.id === activeConfigId);
+        const config = configToTest || this.getActiveApiConfig();
+        if (!config) return { valid: false, ...describeApiProblem('no-config') };
+        if (!this.isConfigUsable(config)) return { valid: false, ...describeApiProblem('no-key', config) };
+        if (config.apiProvider === 'openai' && !config.apiUrl) return { valid: false, ...describeApiProblem('no-url', config) };
+        if (config.apiProvider !== 'local' && !config.modelName && !providerInfo(config.apiProvider).models.length) {
+            return { valid: false, ...describeApiProblem('no-model', config) };
         }
-
-        if (!config) {
-            return { valid: false, error: '未找到选中的 API 配置。' };
-        }
-
-        if (!this.isConfigUsable(config) || (!['gemini', 'deepseek', 'local'].includes(config.apiProvider) && !config.apiUrl)) {
-            return { valid: false, error: '请填写 API Key (以及 API URL 如果必要)。' };
-        }
-
         try {
-            const testPrompt = "测试连接，请回复OK";
-            await this.makeApiRequest(testPrompt, null, false, config);
-            return { valid: true, error: null };
+            await this._callSingleConfig('Reply with OK.', null, false, config, { probe: true, timeout: 20000 });
+            this.lastApiProblem = null;
+            return { valid: true, kind: 'ok' };
         } catch (error) {
-            return { valid: false, error: `连接失败: ${error.message}` };
+            const kind = classifyApiError(error);
+            this.lastApiProblem = { kind, status: error?.status || null, at: Date.now(), provider: config.apiProvider };
+            return { valid: false, ...describeApiProblem(kind, config, error) };
         }
+    }
+
+    hasUsableConfig() {
+        return (this.settings.apiConfigs || []).some(c => c.enabled !== false && this.isConfigUsable(c));
+    }
+
+    demoNotePath() {
+        return tr('AI Assistant Suite 示例.md', 'AI Assistant Suite example.md');
+    }
+
+    // 载入示例：在库根目录放一篇标明是演示的笔记，配上预先写好的建议。不联网、不花钱；可以照常应用和撤销
+    async loadDemo() {
+        const path = this.demoNotePath();
+        const zh = isChineseInterface();
+        const body = zh
+            ? '---\nai-assistant-demo: true\n---\n> 这是 AI Assistant Suite 的示例笔记，可以随时删除。\n\n周三和小林聊了下学期的计划 他说实验室三月开始招人 要先发邮件 附上研究计划 还要准备面谈\n\n要做的：研究计划写到两页以内 邮件里说清楚为什么选这个研究室 日语面谈练三次\n\n顺便记一下 他推荐了两本书 一本讲实验设计 一本讲科研写作\n'
+            : '---\nai-assistant-demo: true\n---\n> This is the AI Assistant Suite example note. Delete it any time.\n\nwed talked w/ Sam about next term. lab starts hiring in march, need to email first with a research plan, then an interview\n\ntodo: keep plan under 2 pages, say in the email why this lab, practice interview 3 times\n\nalso he recommended two books one on experiment design one on science writing\n';
+        const structured = zh
+            ? '---\nai-assistant-demo: true\n---\n> 这是 AI Assistant Suite 的示例笔记，可以随时删除。\n\n## 下学期计划（周三与小林）\n\n- 实验室**三月**开始招人。\n- 流程：先发邮件并附研究计划，之后面谈。\n\n## 待办\n\n- [ ] 研究计划控制在两页以内\n- [ ] 邮件里说清楚为什么选这个研究室\n- [ ] 日语面谈练习三次\n\n## 推荐书目\n\n- 一本讲实验设计\n- 一本讲科研写作\n'
+            : '---\nai-assistant-demo: true\n---\n> This is the AI Assistant Suite example note. Delete it any time.\n\n## Next term (Wednesday, with Sam)\n\n- The lab starts hiring in **March**.\n- Steps: email first with a research plan, then an interview.\n\n## To do\n\n- [ ] Keep the plan under two pages\n- [ ] Say in the email why this lab\n- [ ] Practise the interview three times\n\n## Recommended books\n\n- One on experiment design\n- One on science writing\n';
+        let file = this.app.vault.getAbstractFileByPath(path);
+        if (!file) file = await this.app.vault.create(path, body);
+        else await this.app.vault.modify(file, body);
+        await this.app.workspace.getLeaf(false).openFile(file);
+        await this.activateView();
+        const folder = this.app.vault.getRoot().children.find(child => child.children && !child.name.startsWith('.'));
+        const stamp = Date.now();
+        await this.createDiffPreviewTask({ taskId: `demo-diff-${stamp}`, file, action: tr('整理正文（演示）', 'Tidy text (demo)'), title: tr('整理正文（演示）', 'Tidy text (demo)'), originalContent: body, proposedContent: structured });
+        this.view.getTask(`demo-diff-${stamp}`).content.demo = true;
+        this.view.addTask({
+            id: `demo-${stamp}`, type: 'one-click', status: 'displaying', title: tr('示例建议', 'Example suggestions'),
+            content: {
+                demo: true, file, originalContent: body,
+                suggestions: {
+                    meta: zh ? { title: '下学期研究室申请计划', summary: '实验室三月招人，需要先发邮件并附研究计划，再参加面谈。待办包括压缩研究计划、写清选择理由和练习面谈。', tldr: '三月前备好研究计划和邮件，练三次面谈。' }
+                        : { title: 'Lab application plan for next term', summary: 'The lab hires from March: email with a research plan first, then an interview. To do: shorten the plan, explain the choice, practise the interview.', tldr: 'Have the plan and email ready before March; practise three times.' },
+                    tags: (zh ? ['示例/申请', '示例/待办'] : ['example/application', 'example/todo']).map(tag => ({ display: tag, final: tag, is_new: true })),
+                    mover: folder ? [{ path: folder.path, is_new: false }] : null,
+                },
+            },
+        });
+        this.view.workbenchPage = 'review';
+        this.view.render();
+        new Notice(tr('已载入示例。这是演示，没有联网。', 'Example loaded. This is a demo; nothing was sent.'));
+    }
+
+    async removeDemo() {
+        const file = this.app.vault.getAbstractFileByPath(this.demoNotePath())
+            || this.app.vault.getMarkdownFiles().find(f => this.app.metadataCache.getFileCache(f)?.frontmatter?.['ai-assistant-demo'] === true);
+        if (this.view) {
+            this.view.tasks = this.view.tasks.filter(t => !t.content?.demo);
+            this.view.workbenchPage = 'prepare';
+            this.view.render();
+        }
+        if (file) await this.app.fileManager.trashFile(file);
+        new Notice(tr('示例笔记已移到回收站。', 'Example note moved to trash.'));
+    }
+
+    // 模型偶尔会把重复或冗长的段落“整理”掉；正文明显变短时提醒本人先逐段看，再决定要不要应用
+    shrinkWarning(task) {
+        const before = String(task?.content?.originalContent || '').trim().length;
+        const after = String(task?.content?.proposedContent || '').trim().length;
+        if (before < 200 || after >= before * 0.6) return '';
+        const lost = Math.round((1 - after / before) * 100);
+        return tr(`建议的正文比原文短了 ${lost}%，可能删掉了内容。应用前请在左边逐段看一遍。`, `The suggested text is ${lost}% shorter than the original and may drop content. Read it through on the left before applying.`);
+    }
+
+    // 诊断信息：给排错用，只有版本、服务商、地址的域名、模型和最近一次失败的类别；不含密钥、完整地址和笔记内容
+    buildDiagnostics() {
+        const lines = [
+            `AI Assistant Suite ${this.manifest?.version || ''}`,
+            `Obsidian ${typeof apiVersion === 'string' ? apiVersion : ''}`,
+            `Platform: ${Platform.isMobile ? 'mobile' : 'desktop'}${Platform.isMacOS ? ', macOS' : Platform.isWin ? ', Windows' : Platform.isLinux ? ', Linux' : Platform.isIosApp ? ', iOS' : Platform.isAndroidApp ? ', Android' : ''}`,
+            `Language: ${isChineseInterface() ? 'zh' : 'en'}`,
+            `Configurations: ${(this.settings.apiConfigs || []).length}, backups allowed: ${(this.settings.apiConfigs || []).filter(c => c.allowFallback === true).length}`,
+        ];
+        (this.settings.apiConfigs || []).forEach((config, index) => {
+            lines.push(`#${index + 1} provider=${config.apiProvider || 'openai'} host=${hostOf(this.resolveProviderUrl(config)) || '-'} model=${config.modelName || '-'} helper=${config.auxiliaryModelName || '-'} key=${this.hasStoredApiKey(config) ? 'set' : 'none'} enabled=${config.enabled !== false}`);
+        });
+        const last = this.lastApiProblem;
+        lines.push(last ? `Last test: ${last.kind}${last.status ? ` (HTTP ${last.status})` : ''} at ${new Date(last.at).toISOString()}` : 'Last test: none');
+        return lines.join('\n');
     }
 
     getRecentHistory() {
@@ -3193,7 +3404,7 @@ class AiAssistantSuite extends Plugin {
         const bytes = (files || []).reduce((sum, file) => sum + (file?.stat?.size || 0), 0);
         const configs = this.fallbackChain();
         const destinations = configs.map(config => ({
-            name: config.name || config.id || '未命名配置',
+            name: config.name || config.id || tr('未命名配置', 'Unnamed configuration'),
             local: config.apiProvider === 'local'
         }));
         const size = bytes >= 1024 * 1024
@@ -3205,9 +3416,9 @@ class AiAssistantSuite extends Plugin {
     renderBatchSendSummary(container, files) {
         const { notes, size, destinations } = this.describeBatchSend(files);
         const box = container.createDiv({ cls: 'ai-assistant-batch-estimate' });
-        box.createEl('strong', { text: `将发送 ${notes} 篇笔记，约 ${size}。` });
+        box.createEl('strong', { text: tr(`将发送 ${notes} 篇笔记，约 ${size}。`, `Will send ${notes} notes, about ${size}.`) });
         if (destinations.length === 0) {
-            box.createEl('p', { text: '还没有可用的 AI 配置，请先在设置里添加。' });
+            box.createEl('p', { text: tr('还没有可用的 AI 配置，请先在设置里添加。', 'No usable AI configuration yet. Add one in settings first.') });
             return box;
         }
         for (const line of this.batchSendLines(destinations)) box.createEl('p', { text: line });
@@ -3220,13 +3431,13 @@ class AiAssistantSuite extends Plugin {
         if (!first) return [];
         const cloud = destinations.filter(d => !d.local);
         const lines = [first.local
-            ? (cloud.length ? `先发给「${first.name}」（本地模型）。` : `先发给「${first.name}」（本地模型，不离开这台电脑）。`)
-            : `先发给「${first.name}」。`];
+            ? (cloud.length ? tr(`先发给「${first.name}」（本地模型）。`, `Sends to "${first.name}" first (local model).`) : tr(`先发给「${first.name}」（本地模型，不离开这台电脑）。`, `Sends to "${first.name}" first (local model; nothing leaves this computer).`))
+            : tr(`先发给「${first.name}」。`, `Sends to "${first.name}" first.`)];
         if (!backups.length) {
-            lines.push('它失败时会停下来，不改发给其他服务。');
+            lines.push(tr('它失败时会停下来，不改发给其他服务。', 'If it fails, processing stops and nothing goes to another service.'));
         } else {
-            lines.push(`它失败时依次改用：${backups.map(d => d.local ? `${d.name}（本地）` : d.name).join('、')}。`);
-            if (first.local && cloud.length) lines.push(`主服务失败时，笔记可能发给 ${cloud.map(d => `「${d.name}」`).join('、')}，不再只留在这台电脑。`);
+            lines.push(tr(`它失败时依次改用：${backups.map(d => d.local ? `${d.name}（本地）` : d.name).join('、')}。`, `If it fails, these are tried in order: ${backups.map(d => d.local ? `${d.name} (local)` : d.name).join(', ')}.`));
+            if (first.local && cloud.length) lines.push(tr(`主服务失败时，笔记可能发给 ${cloud.map(d => `「${d.name}」`).join('、')}，不再只留在这台电脑。`, `If the main service fails, notes may go to ${cloud.map(d => `"${d.name}"`).join(', ')} and no longer stay on this computer.`));
         }
         return lines;
     }
@@ -3236,7 +3447,7 @@ class AiAssistantSuite extends Plugin {
         let operationController = null;
         const requestOptions = { ...options };
         if (!requestOptions.signal) {
-            operationController = this.beginAiOperation(requestOptions.label || 'AI 请求');
+            operationController = this.beginAiOperation(requestOptions.label || tr('AI 请求', 'AI request'));
             requestOptions.signal = operationController.signal;
         }
 
@@ -3248,7 +3459,7 @@ class AiAssistantSuite extends Plugin {
             const candidates = this.fallbackChain();
 
             if (candidates.length === 0) {
-                throw new Error("没有可用的 API 配置，请在设置中至少启用一个配置。");
+                throw new Error(tr("没有可用的 API 配置，请在设置中至少启用一个配置。", 'No usable API configuration. Enable at least one in settings.'));
             }
 
             const errors = [];
@@ -3262,26 +3473,26 @@ class AiAssistantSuite extends Plugin {
                     const result = await this._callSingleConfig(prompt, modelNameOverride, expectJson, config, requestOptions);
                     this.lastWorkingConfigId = config.id;
                     if (i > 0) {
-                        new Notice(`已切换到备用配置「${label}」并成功`);
+                        new Notice(tr(`已切换到备用配置「${label}」并成功`, `Switched to backup "${label}" and it worked`));
                     }
                     return result;
                 } catch (err) {
                     if (requestOptions.signal?.aborted || this.isCancellationError(err)) {
                         throw this.createAbortError();
                     }
-                    const msg = `配置「${label}」失败: ${err.message}`;
+                    const msg = tr(`配置「${label}」失败: ${err.message}`, `Configuration "${label}" failed: ${err.message}`);
                     errors.push(msg);
                     console.warn(`[AI Assistant] ${msg}`);
                     if (i < candidates.length - 1) {
-                        new Notice(`${label} 失败，尝试下一个配置...`, 2000);
+                        new Notice(tr(`${label} 失败，尝试下一个配置...`, `${label} failed, trying the next configuration…`), 2000);
                     }
                 }
             }
 
             if (candidates.length === 1) {
-                throw new Error(`${errors[0]}\n没有勾选“允许用作备用”的配置，所以没有改发给其他服务。`);
+                throw new Error(tr(`${errors[0]}\n没有勾选“允许用作备用”的配置，所以没有改发给其他服务。`, `${errors[0]}\nNo configuration allows backup use, so nothing was sent to another service.`));
             }
-            throw new Error(`所有 API 配置均失败（共 ${candidates.length} 个）。\n最后错误: ${errors[errors.length - 1]}`);
+            throw new Error(tr(`所有 API 配置均失败（共 ${candidates.length} 个）。\n最后错误: ${errors[errors.length - 1]}`, `All ${candidates.length} API configurations failed.\nLast error: ${errors[errors.length - 1]}`));
         } finally {
             if (operationController) {
                 this.finishAiOperation(operationController);
@@ -3289,19 +3500,34 @@ class AiAssistantSuite extends Plugin {
         }
     }
 
-    resolveDeepSeekUrl(value) {
-        const url = (value?.trim() || 'https://api.deepseek.com').replace(/\/+$/, '');
+    // 预设服务商：留空用官方地址；填基础地址（如 https://api.deepseek.com 或 …/v1）时补上 /chat/completions。
+    // 自定义和本地照填的地址原样用。
+    resolveProviderUrl(config) {
+        const provider = config?.apiProvider || 'openai';
+        const info = providerInfo(provider);
+        const value = (config?.apiUrl || '').trim();
+        if (provider === 'openai') return value;
+        if (provider === 'local') return value || info.url;
+        const url = (value || info.url).replace(/\/+$/, '');
         return /\/chat\/completions$/.test(url) ? url : `${url}/chat/completions`;
+    }
+
+    resolveDeepSeekUrl(value) {
+        return this.resolveProviderUrl({ apiProvider: 'deepseek', apiUrl: value });
+    }
+
+    defaultModelFor(provider) {
+        return providerInfo(provider).models[0]?.[0] || '';
     }
 
     // 对单个 config 执行实际的 API 请求
     async _callSingleConfig(prompt, modelNameOverride, expectJson, activeConfig, options = {}) {
-        const model = modelNameOverride || activeConfig.modelName || (activeConfig.apiProvider === 'deepseek' ? 'deepseek-flash' : '');
+        const model = modelNameOverride || activeConfig.modelName || this.defaultModelFor(activeConfig.apiProvider);
         const provider = activeConfig.apiProvider || 'openai';
         const apiKey = await this.getApiKey(activeConfig);
 
         if (!apiKey && provider !== 'local') {
-            throw new Error('API Key 为空，请在设置中填写。');
+            throw Object.assign(new Error(tr('还没有填写 API 密钥，请在设置里填写。', 'No API key yet. Add one in settings.')), { kind: 'no-key' });
         }
 
         let url, requestOptions;
@@ -3314,6 +3540,7 @@ class AiAssistantSuite extends Plugin {
             if (expectJson) {
                 body.generationConfig = { responseMimeType: "application/json" };
             }
+            if (options.probe) body.generationConfig = { maxOutputTokens: 16 };
             requestOptions = {
                 method: "POST",
                 headers: {
@@ -3323,14 +3550,10 @@ class AiAssistantSuite extends Plugin {
                 body: JSON.stringify(body)
             };
         } else {
-            if (!activeConfig.apiUrl && !['deepseek', 'local'].includes(provider)) {
-                throw new Error('API URL 为空，请在设置中填写。');
+            url = this.resolveProviderUrl(activeConfig);
+            if (!url) {
+                throw Object.assign(new Error(tr('还没有填写接口地址，请在设置里填写。', 'No API URL yet. Add one in settings.')), { kind: 'no-url' });
             }
-            url = provider === 'deepseek'
-                ? this.resolveDeepSeekUrl(activeConfig.apiUrl)
-                : provider === 'local'
-                    ? (activeConfig.apiUrl || LOCAL_MODEL_DEFAULT_URL)
-                    : activeConfig.apiUrl;
             const body = {
                 model: model,
                 messages: [{ role: "user", content: prompt }]
@@ -3340,6 +3563,7 @@ class AiAssistantSuite extends Plugin {
             if (expectJson && provider !== 'local') {
                 body.response_format = { type: "json_object" };
             }
+            if (options.probe) body.max_tokens = 16;
             const headers = { "Content-Type": "application/json" };
             if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
             requestOptions = {
@@ -3350,6 +3574,8 @@ class AiAssistantSuite extends Plugin {
         }
 
         const data = await this.executeJsonRequest(url, requestOptions, options);
+        // 测试连接只看服务商肯不肯答：回答到了就算通，不看内容
+        if (options.probe) return 'OK';
 
         let resultText = "";
         if (provider === 'gemini') {
@@ -3359,8 +3585,8 @@ class AiAssistantSuite extends Plugin {
         }
 
         if (!resultText) {
-            console.error("Invalid Response Data:", data);
-            throw new Error(`AI 未能返回有效内容。`);
+            // 不把回答原样打到控制台：里面可能有笔记内容
+            throw Object.assign(new Error(tr('AI 没有返回内容。', 'The AI returned no content.')), { kind: 'empty' });
         }
 
         // 请求一律走 requestUrl（不受跨域限制、手机可用），它不能逐段读取，所以结果到齐后一次交给界面
@@ -3382,7 +3608,7 @@ class AiAssistantSuite extends Plugin {
             signal: controller.signal,
             clear: () => window.clearTimeout(timer),
             timedOut: () => timedOut,
-            error: () => new Error(`AI 请求超过 ${Math.round(timeoutMs / 1000)} 秒未响应，已停止等待。`)
+            error: () => Object.assign(new Error(tr(`AI 请求超过 ${Math.round(timeoutMs / 1000)} 秒未响应，已停止等待。`, `The AI did not answer within ${Math.round(timeoutMs / 1000)} seconds, so the request was stopped.`)), { kind: 'timeout' })
         };
     }
 
@@ -3413,7 +3639,9 @@ class AiAssistantSuite extends Plugin {
             ]);
             const text = typeof response.text === 'string' ? response.text : '';
             if (response.status < 200 || response.status >= 300) {
-                throw new Error(`HTTP ${response.status}. ${text.substring(0, 200)}`);
+                // 服务商的错误说明可能带着密钥片段，先遮掉再显示
+                const detail = redactSecrets(text.substring(0, 200), requestOptions.headers);
+                throw Object.assign(new Error(`HTTP ${response.status}. ${detail}`), { status: response.status, detail });
             }
             return JSON.parse(text);
         } catch (error) {
@@ -3429,7 +3657,7 @@ class AiAssistantSuite extends Plugin {
 
     truncatePreview(content, maxChars = 12000) {
         if (!content || content.length <= maxChars) return content || '';
-        return content.substring(0, maxChars) + `\n\n... 已截断预览，完整内容会在 Apply 时写入 ...`;
+        return content.substring(0, maxChars) + tr(`\n\n... 已截断预览，完整内容会在 Apply 时写入 ...`, `\n\n... Preview truncated; the full text is written on apply ...`);
     }
 
     getDiffStats(originalContent = '', proposedContent = '') {
@@ -3470,7 +3698,7 @@ class AiAssistantSuite extends Plugin {
         const lines = original.match(/[^\n]*\n|[^\n]+$/g) || [];
         let cursor = 0, result = '';
         for (const hunk of hunks) {
-            if (hunk.start < cursor || lines.slice(hunk.start, hunk.end).join('') !== hunk.before) throw new Error('预览已失效，请重新生成。');
+            if (hunk.start < cursor || lines.slice(hunk.start, hunk.end).join('') !== hunk.before) throw new Error(tr('预览已失效，请重新生成。', 'The preview is out of date. Generate it again.'));
             result += lines.slice(cursor, hunk.start).join('');
             result += selected.includes(hunk.id) ? hunk.after : hunk.before;
             cursor = hunk.end;
@@ -3489,13 +3717,13 @@ class AiAssistantSuite extends Plugin {
     composeNoteGroup(group, draft, current) {
         const source=group.tasks.find(t=>t.id===draft.originalTaskId);
         const diff=group.tasks.find(t=>t.id===draft.diffId);
-        if(source?.content.originalContent!==undefined&&source.content.originalContent!==current)throw new Error('笔记已有新修改，请重新生成建议。');
-        if(diff&&diff.content.originalContent!==current)throw new Error('正文预览已过期，请重新生成。');
+        if(source?.content.originalContent!==undefined&&source.content.originalContent!==current)throw new Error(tr('笔记已有新修改，请重新生成建议。', 'The note changed since. Generate suggestions again.'));
+        if(diff&&diff.content.originalContent!==current)throw new Error(tr('正文预览已过期，请重新生成。', 'The text preview is out of date. Generate it again.'));
         let text=diff?this.composeReviewContent(current,diff.content.reviewHunks||this.buildReviewHunks(current,diff.content.proposedContent),diff.content.reviewSelected|| (diff.content.reviewHunks||this.buildReviewHunks(current,diff.content.proposedContent)).map(h=>h.id)):current;
         if(draft.useMeta||draft.useTags){
             const match=text.match(/^---\r?\n([\s\S]*?)\r?\n(?:---|\.\.\.)(?:\r?\n|$)/);
             const fm=match?(parseYaml(match[1])||{}):{};
-            if(typeof fm!=='object'||Array.isArray(fm))throw new Error('笔记属性不是有效的 YAML 对象，未写入。');
+            if(typeof fm!=='object'||Array.isArray(fm))throw new Error(tr('笔记属性不是有效的 YAML 对象，未写入。', 'The note properties are not a valid YAML object, so nothing was written.'));
             if(draft.useMeta)for(const key of ['title','summary','tldr'])if(draft.meta[key]!==undefined&&!(draft.skipMeta||[]).includes(key))fm[key]=String(draft.meta[key]).trim();
             if(draft.useTags){const old=Array.isArray(fm.tags)?fm.tags:(fm.tags?[String(fm.tags)]:[]);fm.tags=[...new Set([...old,...draft.tags])];}
             const newline=current.includes('\r\n')?'\r\n':'\n';
@@ -3507,19 +3735,19 @@ class AiAssistantSuite extends Plugin {
     applyNoteGroup(group,draft) {
         return this.queueContentWrite(async()=>{
             if(group.tasks.at(-1)?.content.noteApplied)return;
-            if(this.assistantSession?.workbenchRunning||(this.assistantSession?.tasks||[]).some(t=>t.type==='batch-process'&&t.content?.canInterrupt))throw new Error('请等待当前生成任务结束后再确认。');
+            if(this.assistantSession?.workbenchRunning||(this.assistantSession?.tasks||[]).some(t=>t.type==='batch-process'&&t.content?.canInterrupt))throw new Error(tr('请等待当前生成任务结束后再确认。', 'Wait for the current run to finish before confirming.'));
             const file=group.file,originalPath=file.path,current=await this.app.vault.read(file);
             const proposed=this.composeNoteGroup(group,draft,current);
             let folder=draft.useFolder?draft.folder:(file.parent?.path||'/');
             folder=String(folder).replace(/^\/+|\/+$/g,'');
-            if(folder.split('/').some(p=>p==='..'||p==='.')||/[\\:*?"<>|]/.test(folder))throw new Error('目标文件夹路径无效。');
+            if(folder.split('/').some(p=>p==='..'||p==='.')||/[\\:*?"<>|]/.test(folder))throw new Error(tr('目标文件夹路径无效。', 'The folder path is invalid.'));
             let name=file.name||originalPath.split('/').at(-1);
-            if(draft.useMeta&&draft.rename&&!(draft.skipMeta||[]).includes('title')){const title=String(draft.meta.title||'').trim().replace(/[/\\:?*"<>|]/g,'-').slice(0,this.settings.metaFileNameMaxLength||100);if(!title||/^\.+$/.test(title))throw new Error('请填写有效的文件名。');name=title+'.md';}
+            if(draft.useMeta&&draft.rename&&!(draft.skipMeta||[]).includes('title')){const title=String(draft.meta.title||'').trim().replace(/[/\\:?*"<>|]/g,'-').slice(0,this.settings.metaFileNameMaxLength||100);if(!title||/^\.+$/.test(title))throw new Error(tr('请填写有效的文件名。', 'Enter a valid file name.'));name=title+'.md';}
             const destination=folder?folder+'/'+name:name;
-            if(destination!==originalPath&&this.app.vault.getAbstractFileByPath(destination))throw new Error('目标位置已有同名文件，未做修改。');
-            if(proposed===current&&destination===originalPath)throw new Error('没有选中需要应用的修改。');
+            if(destination!==originalPath&&this.app.vault.getAbstractFileByPath(destination))throw new Error(tr('目标位置已有同名文件，未做修改。', 'A file with the same name exists there; nothing was changed.'));
+            if(proposed===current&&destination===originalPath)throw new Error(tr('没有选中需要应用的修改。', 'Nothing selected to apply.'));
             if(folder&&!this.app.vault.getAbstractFileByPath(folder))await this.app.vault.createFolder(folder);
-            const snapshot=await this.saveRollbackSnapshot({file,action:'笔记集中确认',originalContent:current,appliedContent:proposed});
+            const snapshot=await this.saveRollbackSnapshot({file,action:tr('笔记集中确认', 'Note review'),originalContent:current,appliedContent:proposed});
             snapshot.originalPath=originalPath;snapshot.filePath=destination;
             await this.saveSettings();
             let wrote=false;
@@ -3536,8 +3764,8 @@ class AiAssistantSuite extends Plugin {
             snapshot.filePath=file.path;
             for(const task of group.tasks){task.content.noteSnapshotId=snapshot.id;task.content.noteApplied=true;}
             await this.saveSettings();
-            this.addToHistory(file.basename,file.path,'笔记集中确认',this.generateFileId(file));
-            new Notice('本篇建议已应用，可在任务中撤销。');
+            this.addToHistory(file.basename,file.path,tr('笔记集中确认', 'Note review'),this.generateFileId(file));
+            new Notice(tr('本篇建议已应用，可在任务中撤销。', 'Suggestions applied; you can undo them from the task.'));
         });
     }
 
@@ -3545,18 +3773,18 @@ class AiAssistantSuite extends Plugin {
         return this.queueContentWrite(async()=>{
             const id=group.tasks.find(t=>t.content.noteApplied)?.content.noteSnapshotId;
             const snapshot=(this.settings.rollbackHistory||[]).find(s=>s.id===id);
-            if(!snapshot)throw new Error('撤销记录已过期或已撤销。');
+            if(!snapshot)throw new Error(tr('撤销记录已过期或已撤销。', 'The undo record has expired or was already used.'));
             const file=this.app.vault.getAbstractFileByPath(snapshot.filePath);
-            if(!file)throw new Error('笔记已移动或删除，请先恢复位置。');
+            if(!file)throw new Error(tr('笔记已移动或删除，请先恢复位置。', 'The note was moved or deleted. Restore its location first.'));
             const target=snapshot.originalPath||snapshot.filePath;
-            if(target!==file.path&&this.app.vault.getAbstractFileByPath(target))throw new Error('原位置已有文件，无法撤销归档。');
-            if(await this.app.vault.read(file)!==snapshot.appliedContent)throw new Error('笔记有后续编辑，已保留当前内容，无法直接撤销。');
+            if(target!==file.path&&this.app.vault.getAbstractFileByPath(target))throw new Error(tr('原位置已有文件，无法撤销归档。', 'A file already exists at the original location, so the move cannot be undone.'));
+            if(await this.app.vault.read(file)!==snapshot.appliedContent)throw new Error(tr('笔记有后续编辑，已保留当前内容，无法直接撤销。', 'The note was edited since. The current text is kept and cannot be undone directly.'));
             await this.guardedWrite(file,snapshot.appliedContent,snapshot.originalContent);
             try{if(target!==file.path)await this.app.fileManager.renameFile(file,target);}catch(error){await this.guardedWrite(file,snapshot.originalContent,snapshot.appliedContent);throw error;}
             this.settings.rollbackHistory=this.settings.rollbackHistory.filter(s=>s.id!==id);
             this.settings.rollbackRedoHistory=[];
             for(const task of group.tasks){task.content.noteApplied=false;delete task.content.noteSnapshotId;}
-            await this.saveSettings();new Notice('已恢复本篇修改前的内容和位置。');
+            await this.saveSettings();new Notice(tr('已恢复本篇修改前的内容和位置。', 'Restored this note\'s content and location from before.'));
         });
     }
 
@@ -3567,9 +3795,9 @@ class AiAssistantSuite extends Plugin {
             await this.queueContentWrite(async () => {
                 const history = this.settings.rollbackHistory || [];
                 const snapshot = history.find(s => s.id === content.reviewSnapshotId);
-                if (!snapshot) throw new Error('此修改已撤回或不在撤回记录中。');
+                if (!snapshot) throw new Error(tr('此修改已撤回或不在撤回记录中。', 'This change was already undone or is not in the undo record.'));
                 const file = this.app.vault.getAbstractFileByPath(snapshot.filePath);
-                if (!file) throw new Error('目标笔记已移动或删除。');
+                if (!file) throw new Error(tr('目标笔记已移动或删除。', 'The note was moved or deleted.'));
                 await this.guardedWrite(file, snapshot.appliedContent, snapshot.originalContent);
                 this.settings.rollbackHistory = history.filter(s => s.id !== snapshot.id);
                 this.settings.rollbackRedoHistory = [snapshot, ...(this.settings.rollbackRedoHistory || [])].slice(0,30);
@@ -3577,8 +3805,8 @@ class AiAssistantSuite extends Plugin {
                 content.applied = false;
             });
             this.view.render();
-            new Notice('已撤回本次正文修改，审阅选择保留。');
-        } catch (error) { new Notice(`无法撤回：${error.message}`, 6000); }
+            new Notice(tr('已撤回本次正文修改，审阅选择保留。', 'The text change was undone; your review choices are kept.'));
+        } catch (error) { new Notice(tr(`无法撤回：${error.message}`, `Cannot undo: ${error.message}`), 6000); }
     }
 
     async createDiffPreviewTask({ taskId = null, file, action, title, originalContent, proposedContent }) {
@@ -3588,7 +3816,7 @@ class AiAssistantSuite extends Plugin {
             id,
             type: 'diff-preview',
             status: 'displaying',
-            title: title || `变更预览: ${file.basename}`,
+            title: title || tr(`变更预览: ${file.basename}`, `Change preview: ${file.basename}`),
             content: {
                 file,
                 action,
@@ -3611,14 +3839,14 @@ class AiAssistantSuite extends Plugin {
     async applyDiffPreview(taskId) {
         const task = this.view?.getTask(taskId);
         if (!task || task.type !== 'diff-preview') {
-            new Notice('未找到可应用的变更预览。', 3000);
+            new Notice(tr('未找到可应用的变更预览。', 'No change preview to apply.'), 3000);
             return;
         }
 
         const content = task.content || {};
         const file = content.file;
         if (!file) {
-            new Notice('变更预览缺少目标文件。', 3000);
+            new Notice(tr('变更预览缺少目标文件。', 'The change preview has no target file.'), 3000);
             return;
         }
 
@@ -3626,19 +3854,19 @@ class AiAssistantSuite extends Plugin {
         try {
             const hunks = content.reviewHunks || this.buildReviewHunks(content.originalContent || '', content.proposedContent || '');
             const selected = content.reviewSelected || hunks.map(h => h.id);
-            if (!selected.length) { new Notice('请至少选择一项修改。'); return; }
+            if (!selected.length) { new Notice(tr('请至少选择一项修改。', 'Select at least one change.')); return; }
             const proposed = this.composeReviewContent(content.originalContent, hunks, selected);
-            const snapshot = await this.applyContentChange(file, content.action || 'AI 变更', content.originalContent, proposed);
+            const snapshot = await this.applyContentChange(file, content.action || tr('AI 变更', 'AI change'), content.originalContent, proposed);
             content.applied = true;
             content.reviewSnapshotId = snapshot?.id;
-            this.addToHistory(file.basename, file.path, content.action || 'AI 变更', this.generateFileId(file));
+            this.addToHistory(file.basename, file.path, content.action || tr('AI 变更', 'AI change'), this.generateFileId(file));
             this.view.updateTask(taskId, {
-                title: task.title || '变更预览',
+                title: task.title || tr('变更预览', 'Change preview'),
                 content
             });
-            new Notice('变更已应用，可用“回滚上次修改”恢复。', 4000);
+            new Notice(tr('变更已应用，可用“回滚上次修改”恢复。', 'Change applied. Use "Undo last change" to restore.'), 4000);
         } catch (error) {
-            new Notice(`应用变更失败: ${error.message}`, 5000);
+            new Notice(tr(`应用变更失败: ${error.message}`, `Applying the change failed: ${error.message}`), 5000);
             console.error('Apply Diff Preview Error:', error);
         }
     }
@@ -3670,7 +3898,7 @@ class AiAssistantSuite extends Plugin {
     async guardedWrite(file, expected, replacement) {
         await this.app.vault.process(file, current => {
             if (current !== expected) {
-                throw new Error('笔记已有新修改，已保留当前内容。请重新预览后再应用。');
+                throw new Error(tr('笔记已有新修改，已保留当前内容。请重新预览后再应用。', 'The note changed since; the current text is kept. Preview again before applying.'));
             }
             return replacement;
         });
@@ -3680,7 +3908,7 @@ class AiAssistantSuite extends Plugin {
         return this.queueContentWrite(async () => {
             const current = await this.app.vault.read(file);
             if (expected !== null && current !== expected) {
-                throw new Error('笔记已有新修改，已保留当前内容。请重新生成预览。');
+                throw new Error(tr('笔记已有新修改，已保留当前内容。请重新生成预览。', 'The note changed since; the current text is kept. Generate the preview again.'));
             }
             const proposed = typeof replacement === 'function' ? replacement(current) : replacement;
             if (current === proposed) return;
@@ -3705,16 +3933,16 @@ class AiAssistantSuite extends Plugin {
         return this.queueContentWrite(async () => {
             const history = this.settings.rollbackHistory || [];
             const snapshot = history[0];
-            if (!snapshot) { new Notice('没有可撤销的内容修改。'); return; }
+            if (!snapshot) { new Notice(tr('没有可撤销的内容修改。', 'Nothing to undo.')); return; }
             const file = this.app.vault.getAbstractFileByPath(snapshot.filePath);
-            if (!file) { new Notice('原笔记已移动或删除，请先找到原文件。'); return; }
+            if (!file) { new Notice(tr('原笔记已移动或删除，请先找到原文件。', 'The original note was moved or deleted. Find it first.')); return; }
             try {
                 await this.guardedWrite(file, snapshot.appliedContent || '', snapshot.originalContent || '');
                 this.settings.rollbackHistory = history.slice(1);
                 this.settings.rollbackRedoHistory = [snapshot, ...(this.settings.rollbackRedoHistory || [])].slice(0, 30);
                 await this.saveSettings();
-                new Notice(`已撤销：${snapshot.fileName}`);
-            } catch (error) { new Notice(`无法撤销：${error.message}`, 6000); }
+                new Notice(tr(`已撤销：${snapshot.fileName}`, `Undone: ${snapshot.fileName}`));
+            } catch (error) { new Notice(tr(`无法撤销：${error.message}`, `Cannot undo: ${error.message}`), 6000); }
         });
     }
 
@@ -3722,16 +3950,16 @@ class AiAssistantSuite extends Plugin {
         return this.queueContentWrite(async () => {
             const history = this.settings.rollbackRedoHistory || [];
             const snapshot = history[0];
-            if (!snapshot) { new Notice('没有可重做的修改。'); return; }
+            if (!snapshot) { new Notice(tr('没有可重做的修改。', 'Nothing to redo.')); return; }
             const file = this.app.vault.getAbstractFileByPath(snapshot.filePath);
-            if (!file) { new Notice('原笔记已移动或删除，请先找到原文件。'); return; }
+            if (!file) { new Notice(tr('原笔记已移动或删除，请先找到原文件。', 'The original note was moved or deleted. Find it first.')); return; }
             try {
                 await this.guardedWrite(file, snapshot.originalContent || '', snapshot.appliedContent || '');
                 this.settings.rollbackRedoHistory = history.slice(1);
                 this.settings.rollbackHistory = [snapshot, ...(this.settings.rollbackHistory || [])].slice(0, 30);
                 await this.saveSettings();
-                new Notice(`已重做：${snapshot.fileName}`);
-            } catch (error) { new Notice(`无法重做：${error.message}`, 6000); }
+                new Notice(tr(`已重做：${snapshot.fileName}`, `Redone: ${snapshot.fileName}`));
+            } catch (error) { new Notice(tr(`无法重做：${error.message}`, `Cannot redo: ${error.message}`), 6000); }
         });
     }
 
@@ -3746,10 +3974,10 @@ class AiAssistantSuite extends Plugin {
             this.view.addTask({
                 id: Date.now().toString(),
                 type: 'batch-process',
-                title: '批量处理',
+                title: tr('批量处理', 'Batch processing'),
                 status: 'displaying',
                 content: {
-                    message: '未选择任何文件',
+                    message: tr('未选择任何文件', 'No files selected'),
                     type: 'error'
                 }
             });
@@ -3759,7 +3987,7 @@ class AiAssistantSuite extends Plugin {
         const send = this.describeBatchSend(selectedFiles);
         const firstDestination = send.destinations[0];
         if (firstDestination) {
-            new Notice(`开始批量处理：${send.notes} 篇，约 ${send.size}，发给「${firstDestination.name}」${firstDestination.local ? '（本地模型）' : ''}${send.destinations.length > 1 ? `，失败时依次改用其余 ${send.destinations.length - 1} 个配置` : ''}。`, 8000);
+            new Notice(tr(`开始批量处理：${send.notes} 篇，约 ${send.size}，发给「${firstDestination.name}」${firstDestination.local ? '（本地模型）' : ''}${send.destinations.length > 1 ? `，失败时依次改用其余 ${send.destinations.length - 1} 个配置` : ''}。`, `Starting batch: ${send.notes} notes, about ${send.size}, to "${firstDestination.name}"${firstDestination.local ? ' (local model)' : ''}${send.destinations.length > 1 ? `, then the other ${send.destinations.length - 1} configurations if it fails` : ''}.`), 8000);
         }
 
         // 设置中断标志
@@ -3771,7 +3999,7 @@ class AiAssistantSuite extends Plugin {
         this.view.addTask({
             id: taskId,
             type: 'batch-process',
-            title: '批量处理进行中',
+            title: tr('批量处理进行中', 'Batch running'),
             status: 'displaying',
             content: {
                 totalFiles: selectedFiles.length,
@@ -3789,13 +4017,13 @@ class AiAssistantSuite extends Plugin {
             // 检查是否被中断
             if (this.batchProcessInterrupted) {
                 this.view.updateTask(taskId, {
-                    title: '批量处理已中断',
+                    title: tr('批量处理已中断', 'Batch stopped'),
                     content: {
                         ...this.view.getTask(taskId).content,
                         processedCount,
                         errorCount,
                         canInterrupt: false,
-                        message: `处理已中断！已处理: ${processedCount}, 失败: ${errorCount}`
+                        message: tr(`处理已中断！已处理: ${processedCount}, 失败: ${errorCount}`, `Stopped. Done: ${processedCount}, failed: ${errorCount}`)
                     }
                 });
                 return;
@@ -3825,20 +4053,20 @@ class AiAssistantSuite extends Plugin {
                 await new Promise(resolve => window.setTimeout(resolve, 1000));
 
             } catch (error) {
-                console.error(`处理文件 ${file.basename} 时出错:`, error);
+                console.error(tr(`处理文件 ${file.basename} 时出错:`, `Error processing ${file.basename}:`), error);
                 errorCount++;
             }
         }
 
         // 完成处理
         this.view.updateTask(taskId, {
-            title: '批量处理完成',
+            title: tr('批量处理完成', 'Batch finished'),
             content: {
                 ...this.view.getTask(taskId).content,
                 processedCount,
                 errorCount,
                 canInterrupt: false,
-                message: `批量处理完成！成功: ${processedCount}, 失败: ${errorCount}`
+                message: tr(`批量处理完成！成功: ${processedCount}, 失败: ${errorCount}`, `Batch finished. Done: ${processedCount}, failed: ${errorCount}`)
             }
         });
     }
@@ -3853,10 +4081,10 @@ class AiAssistantSuite extends Plugin {
             this.view.addTask({
                 id: Date.now().toString(),
                 type: 'batch-process',
-                title: '文件夹批量处理',
+                title: tr('文件夹批量处理', 'Folder batch'),
                 status: 'displaying',
                 content: {
-                    message: `文件夹 "${folderPath}" 中没有找到 Markdown 文件`,
+                    message: tr(`文件夹 "${folderPath}" 中没有找到 Markdown 文件`, `No Markdown files in folder "${folderPath}"`),
                     type: 'error'
                 }
             });
@@ -3869,7 +4097,7 @@ class AiAssistantSuite extends Plugin {
         this.view.addTask({
             id: taskId,
             type: 'folder-batch-confirm',
-            title: '确认文件夹批量处理',
+            title: tr('确认文件夹批量处理', 'Confirm folder batch'),
             status: 'displaying',
             content: {
                 folderPath,
@@ -3891,13 +4119,13 @@ class AiAssistantSuite extends Plugin {
 
         const hasEnabledConfig = this.settings.apiConfigs && this.settings.apiConfigs.some(c => c.enabled !== false && this.isConfigUsable(c));
         if (!hasEnabledConfig) {
-            new Notice('请先在插件设置里添加并启用至少一个 AI 配置。');
+            new Notice(tr('请先在插件设置里添加并启用至少一个 AI 配置。', 'Add and enable at least one AI configuration in plugin settings first.'));
             return;
         }
 
         const currentFile = targetFile || app.workspace.getActiveFile();
         if (!currentFile) {
-            new Notice("没有活动的笔记文件。");
+            new Notice(tr("没有活动的笔记文件。", 'No active note.'));
             return;
         }
 
@@ -3943,11 +4171,11 @@ class AiAssistantSuite extends Plugin {
         }
 
         if (!contentToProcess || contentToProcess.trim() === "") {
-            new Notice("笔记或选中内容为空，无需处理。");
+            new Notice(tr("笔记或选中内容为空，无需处理。", 'The note or selection is empty; nothing to do.'));
             return;
         }
 
-        let progressNotice = new Notice("AI 正在重构您的笔记结构...", 0);
+        let progressNotice = new Notice(tr("AI 正在重构您的笔记结构...", 'The AI is restructuring your note…'), 0);
         let taskId = `structurizer-${Date.now()}`;
         try {
             await this.activateView();
@@ -3955,15 +4183,15 @@ class AiAssistantSuite extends Plugin {
                 id: taskId,
                 type: 'structurizer',
                 status: 'loading',
-                title: `结构优化生成中: ${currentFile.basename}`,
-                message: '正在接收 AI 输出...',
+                title: tr(`结构优化生成中: ${currentFile.basename}`, `Tidying structure: ${currentFile.basename}`),
+                message: tr('正在接收 AI 输出...', 'Receiving AI output…'),
                 content: { file: currentFile, streamingContent: '' }
             });
 
             const prompt = this.getStructurizerPrompt(contentToProcess);
 
             const newContent = await this.makeApiRequest(prompt, null, false, null, {
-                label: '结构优化',
+                label: tr('结构优化', 'Tidy structure'),
                 stream: true,
                 onStream: (_delta, accumulated) => {
                     this.view?.updateTask(taskId, {
@@ -3991,12 +4219,12 @@ class AiAssistantSuite extends Plugin {
             await this.createDiffPreviewTask({
                 taskId,
                 file: currentFile,
-                action: "结构优化",
-                title: `结构优化预览: ${currentFile.basename}`,
+                action: tr("结构优化", 'Tidy structure'),
+                title: tr(`结构优化预览: ${currentFile.basename}`, `Structure preview: ${currentFile.basename}`),
                 originalContent: originalFullContent,
                 proposedContent
             });
-            new Notice("结构优化预览已生成，请在侧栏确认后应用。", 5000);
+            new Notice(tr("结构优化预览已生成，请在侧栏确认后应用。", 'Structure preview ready. Confirm it in the sidebar to apply.'), 5000);
 
         } catch (error) {
             progressNotice?.hide();
@@ -4004,8 +4232,8 @@ class AiAssistantSuite extends Plugin {
                 this.view?.removeTask(taskId);
                 return;
             }
-            new Notice(`处理失败: ${error.message}`, 0);
-            this.view?.updateTask(taskId, { status: 'displaying', type: 'error', title: '这次处理未完成', content: { type: 'error', file: currentFile, message: error.message } });
+            new Notice(tr(`处理失败: ${error.message}`, `Failed: ${error.message}`), 0);
+            this.view?.updateTask(taskId, { status: 'displaying', type: 'error', title: tr('这次处理未完成', 'This run did not finish'), content: { type: 'error', file: currentFile, message: error.message } });
             console.error("AI Structurizer Error:", error);
         }
     }
@@ -4015,13 +4243,13 @@ class AiAssistantSuite extends Plugin {
 
         const hasEnabledConfig = this.settings.apiConfigs && this.settings.apiConfigs.some(c => c.enabled !== false && this.isConfigUsable(c));
         if (!hasEnabledConfig) {
-            new Notice('请先在插件设置里添加并启用至少一个 AI 配置。');
+            new Notice(tr('请先在插件设置里添加并启用至少一个 AI 配置。', 'Add and enable at least one AI configuration in plugin settings first.'));
             return;
         }
 
         const currentFile = targetFile || app.workspace.getActiveFile();
         if (!currentFile) {
-            new Notice("没有活动的笔记文件。");
+            new Notice(tr("没有活动的笔记文件。", 'No active note.'));
             return;
         }
 
@@ -4066,11 +4294,11 @@ class AiAssistantSuite extends Plugin {
         }
 
         if (!contentToProcess || contentToProcess.trim() === "") {
-            new Notice("笔记或选中内容为空，无需处理。");
+            new Notice(tr("笔记或选中内容为空，无需处理。", 'The note or selection is empty; nothing to do.'));
             return;
         }
 
-        let progressNotice = showProgressNotice ? new Notice("AI 正在为日文汉字添加假名注音...", 0) : null;
+        let progressNotice = showProgressNotice ? new Notice(tr("AI 正在为日文汉字添加假名注音...", 'The AI is adding readings to Japanese kanji…'), 0) : null;
         let taskId = `furigana-${Date.now()}`;
         try {
             await this.activateView();
@@ -4078,15 +4306,15 @@ class AiAssistantSuite extends Plugin {
                 id: taskId,
                 type: 'furigana',
                 status: 'loading',
-                title: `假名标注生成中: ${currentFile.basename}`,
-                message: '正在接收 AI 输出...',
+                title: tr(`假名标注生成中: ${currentFile.basename}`, `Adding furigana: ${currentFile.basename}`),
+                message: tr('正在接收 AI 输出...', 'Receiving AI output…'),
                 content: { file: currentFile, streamingContent: '' }
             });
 
             const prompt = this.getFuriganaPrompt(contentToProcess);
 
             const newContent = await this.makeApiRequest(prompt, null, false, null, {
-                label: '假名标注',
+                label: tr('假名标注', 'Furigana'),
                 stream: true,
                 onStream: (_delta, accumulated) => {
                     this.view?.updateTask(taskId, {
@@ -4129,12 +4357,12 @@ class AiAssistantSuite extends Plugin {
             await this.createDiffPreviewTask({
                 taskId,
                 file: currentFile,
-                action: "日文假名标注",
-                title: `假名标注预览: ${currentFile.basename}`,
+                action: tr("日文假名标注", 'Furigana'),
+                title: tr(`假名标注预览: ${currentFile.basename}`, `Furigana preview: ${currentFile.basename}`),
                 originalContent: originalFullContent,
                 proposedContent
             });
-            new Notice("假名标注预览已生成，请在侧栏确认后应用。", 5000);
+            new Notice(tr("假名标注预览已生成，请在侧栏确认后应用。", 'Furigana preview ready. Confirm it in the sidebar to apply.'), 5000);
 
         } catch (error) {
             progressNotice?.hide();
@@ -4142,8 +4370,8 @@ class AiAssistantSuite extends Plugin {
                 this.view?.removeTask(taskId);
                 return;
             }
-            new Notice(`处理失败: ${error.message}`, 0);
-            this.view?.updateTask(taskId, { status: 'displaying', type: 'error', title: '这次处理未完成', content: { type: 'error', file: currentFile, message: error.message } });
+            new Notice(tr(`处理失败: ${error.message}`, `Failed: ${error.message}`), 0);
+            this.view?.updateTask(taskId, { status: 'displaying', type: 'error', title: tr('这次处理未完成', 'This run did not finish'), content: { type: 'error', file: currentFile, message: error.message } });
             console.error("AI Furigana Error:", error);
         }
     }
@@ -4153,19 +4381,19 @@ class AiAssistantSuite extends Plugin {
         const currentFile = targetFile || app.workspace.getActiveFile();
 
         if (!currentFile) {
-            new Notice("没有活动的笔记文件。");
+            new Notice(tr("没有活动的笔记文件。", 'No active note.'));
             return;
         }
         const hasEnabledConfig = this.settings.apiConfigs && this.settings.apiConfigs.some(c => c.enabled !== false && this.isConfigUsable(c));
         if (!hasEnabledConfig) {
-            new Notice('请先在插件设置里添加并启用至少一个 AI 配置。');
+            new Notice(tr('请先在插件设置里添加并启用至少一个 AI 配置。', 'Add and enable at least one AI configuration in plugin settings first.'));
             return;
         }
 
-        let progressNotice = new Notice("正在准备 AI 文件助手...", 0);
+        let progressNotice = new Notice(tr("正在准备 AI 文件助手...", 'Preparing the folder assistant…'), 0);
 
         try {
-            progressNotice.setMessage("正在扫描仓库文件夹...");
+            progressNotice.setMessage(tr("正在扫描仓库文件夹...", 'Scanning vault folders…'));
 
             const ignoredFoldersList = this.settings.ignoredFolders.split('\n').map(f => f.trim()).filter(Boolean);
 
@@ -4179,10 +4407,10 @@ class AiAssistantSuite extends Plugin {
                 });
 
             if (folderPaths.length === 0) {
-                throw new Error("仓库中未能找到任何可用的文件夹。请检查忽略文件夹列表设置。");
+                throw new Error(tr("仓库中未能找到任何可用的文件夹。请检查忽略文件夹列表设置。", 'No usable folders found. Check the ignored folders setting.'));
             }
 
-            progressNotice.setMessage("正在读取当前笔记内容...");
+            progressNotice.setMessage(tr("正在读取当前笔记内容...", 'Reading the note…'));
             const fileText = await app.vault.read(currentFile);
             const fileCache = app.metadataCache.getFileCache(currentFile);
             let content = fileText;
@@ -4190,10 +4418,10 @@ class AiAssistantSuite extends Plugin {
                 content = fileText.substring(fileCache.frontmatter.position.end.offset).trim();
             }
             if (!content) {
-                throw new Error("笔记内容为空。");
+                throw new Error(tr("笔记内容为空。", 'The note is empty.'));
             }
 
-            progressNotice.setMessage("正在请求 AI 分析最佳文件夹...");
+            progressNotice.setMessage(tr("正在请求 AI 分析最佳文件夹...", 'Asking the AI for the best folder…'));
             const prompt = this.getMoverPrompt(folderPaths, content);
             const messageContent = await this.makeApiRequest(prompt, null, true);
 
@@ -4202,13 +4430,14 @@ class AiAssistantSuite extends Plugin {
                 let contentToParse = messageContent.match(/```json\n([\s\S]*?)\n```/)?.[1] || messageContent;
                 parsedContent = JSON.parse(contentToParse);
             } catch (e) {
-                console.error("解析AI返回的JSON时出错:", e, "原始返回内容:", messageContent);
-                throw new Error("无法解析AI返回的JSON。");
+                // 不打印 AI 的原始回答：里面可能有笔记内容
+                console.error("[AI Assistant] Could not parse the JSON returned by the AI:", e?.message);
+                throw new Error(tr("无法解析AI返回的JSON。", 'Could not parse the JSON returned by the AI.'));
             }
 
             const { suggestions } = parsedContent;
             if (!suggestions || !Array.isArray(suggestions) || suggestions.length === 0) {
-                throw new Error("AI未能提供有效的路径建议。");
+                throw new Error(tr("AI未能提供有效的路径建议。", 'The AI gave no usable folder suggestion.'));
             }
 
             progressNotice.hide();
@@ -4219,7 +4448,7 @@ class AiAssistantSuite extends Plugin {
                 id: taskId,
                 type: 'mover',
                 status: 'displaying',
-                title: `移动笔记: ${currentFile.basename}`,
+                title: tr(`移动笔记: ${currentFile.basename}`, `Move note: ${currentFile.basename}`),
                 content: { suggestions: suggestions, file: currentFile }
             });
 
@@ -4228,7 +4457,7 @@ class AiAssistantSuite extends Plugin {
             if (this.isCancellationError(error)) {
                 return;
             }
-            new Notice(`处理失败: ${error.message}`, 0);
+            new Notice(tr(`处理失败: ${error.message}`, `Failed: ${error.message}`), 0);
             console.error("aiMover Script Error:", error);
         }
     }
@@ -4238,12 +4467,12 @@ class AiAssistantSuite extends Plugin {
         const currentFile = targetFile || app.workspace.getActiveFile();
 
         if (!currentFile) {
-            new Notice("没有活动的笔记文件。");
+            new Notice(tr("没有活动的笔记文件。", 'No active note.'));
             return;
         }
         const hasEnabledConfig = this.settings.apiConfigs && this.settings.apiConfigs.some(c => c.enabled !== false && this.isConfigUsable(c));
         if (!hasEnabledConfig) {
-            new Notice('请先在插件设置里添加并启用至少一个 AI 配置。');
+            new Notice(tr('请先在插件设置里添加并启用至少一个 AI 配置。', 'Add and enable at least one AI configuration in plugin settings first.'));
             return;
         }
 
@@ -4261,18 +4490,18 @@ class AiAssistantSuite extends Plugin {
         }
 
         if (!content || content.trim() === "") {
-            new Notice("笔记内容为空。");
+            new Notice(tr("笔记内容为空。", 'The note is empty.'));
             return;
         }
 
-        let progressNotice = new Notice("正在准备 AI 标签助手...", 0);
+        let progressNotice = new Notice(tr("正在准备 AI 标签助手...", 'Preparing the tag assistant…'), 0);
         let taskId = null;
         try {
-            progressNotice.setMessage("正在扫描知识库中的所有标签...");
+            progressNotice.setMessage(tr("正在扫描知识库中的所有标签...", 'Scanning all tags in the vault…'));
             const allTagsFromCache = this.app.metadataCache.getTags();
             const existingTags = Object.keys(allTagsFromCache).map(tag => tag.substring(1));
 
-            progressNotice.setMessage("正在请求 AI 生成初步标签...");
+            progressNotice.setMessage(tr("正在请求 AI 生成初步标签...", 'Asking the AI for tags…'));
             const taggerPrompt = this.getTaggerPrompt(existingTags, content);
 
             await this.activateView();
@@ -4281,7 +4510,7 @@ class AiAssistantSuite extends Plugin {
                 id: taskId,
                 type: 'tagger',
                 status: 'loading',
-                title: `标签建议: ${currentFile.basename}`
+                title: tr(`标签建议: ${currentFile.basename}`, `Tag suggestions: ${currentFile.basename}`)
             });
 
             let rawTagsContent = await this.makeApiRequest(taggerPrompt);
@@ -4302,7 +4531,7 @@ class AiAssistantSuite extends Plugin {
             const rawAiTags = rawTagsContent.split(/[,，]/).map(tag => tag.replace(/[*-]/g, "").trim()).filter(Boolean);
 
             if (rawAiTags.length === 0) {
-                throw new Error("AI 未能生成任何初步标签。");
+                throw new Error(tr("AI 未能生成任何初步标签。", 'The AI generated no tags.'));
             }
 
             let processedTags = [...rawAiTags];
@@ -4319,7 +4548,7 @@ class AiAssistantSuite extends Plugin {
                 });
 
                 if (tagsToTranslate.length > 0) {
-                    progressNotice.setMessage(`检测到 ${tagsToTranslate.length} 个长英文标签，正在翻译...`);
+                    progressNotice.setMessage(tr(`检测到 ${tagsToTranslate.length} 个长英文标签，正在翻译...`, `Found ${tagsToTranslate.length} long English tags, translating…`));
                     const translationPrompt = this.getTranslationPrompt(tagsToTranslate);
                     try {
                         const translationResult = await this.makeApiRequest(translationPrompt, this.getAuxiliaryModelName());
@@ -4329,12 +4558,12 @@ class AiAssistantSuite extends Plugin {
                                 const originalIndex = originalIndicesOfTagsToTranslate[i];
                                 processedTags[originalIndex] = translatedTag.trim();
                             });
-                            progressNotice.setMessage("翻译完成，准备显示选项...");
+                            progressNotice.setMessage(tr("翻译完成，准备显示选项...", 'Translation done, preparing options…'));
                         } else {
-                            new Notice("翻译结果数量与请求不符，跳过翻译。", 3000);
+                            new Notice(tr("翻译结果数量与请求不符，跳过翻译。", 'Translation count did not match; translation skipped.'), 3000);
                         }
                     } catch (translationError) {
-                        new Notice("翻译过程中发生错误。", 3000);
+                        new Notice(tr("翻译过程中发生错误。", 'Translation failed.'), 3000);
                         console.error("Error during translation fetch:", translationError);
                     }
                 }
@@ -4343,7 +4572,7 @@ class AiAssistantSuite extends Plugin {
             if (this.settings.taggerExistingOnly) {
                 processedTags = this.keepExistingTags(rawAiTags, existingTags);
                 if (processedTags.length === 0) {
-                    new Notice('AI 建议的标签都不在你的现有标签里；可以关掉“只用现有标签”再试。', 6000);
+                    new Notice(tr('AI 建议的标签都不在你的现有标签里；可以关掉“只用现有标签”再试。', 'None of the suggested tags are in your existing tags; turn off "Existing tags only" and try again.'), 6000);
                 }
             }
 
@@ -4367,7 +4596,7 @@ class AiAssistantSuite extends Plugin {
             if (this.isCancellationError(error)) {
                 return;
             }
-            new Notice(`处理失败: ${error.message}`, 0);
+            new Notice(tr(`处理失败: ${error.message}`, `Failed: ${error.message}`), 0);
             console.error("AI Tagger Error:", error);
         }
     }
@@ -4377,16 +4606,16 @@ class AiAssistantSuite extends Plugin {
         const currentFile = targetFile || app.workspace.getActiveFile();
 
         if (!currentFile) {
-            new Notice("没有活动的笔记文件。");
+            new Notice(tr("没有活动的笔记文件。", 'No active note.'));
             return;
         }
         const hasEnabledConfig = this.settings.apiConfigs && this.settings.apiConfigs.some(c => c.enabled !== false && this.isConfigUsable(c));
         if (!hasEnabledConfig) {
-            new Notice('请先在插件设置里添加并启用至少一个 AI 配置。');
+            new Notice(tr('请先在插件设置里添加并启用至少一个 AI 配置。', 'Add and enable at least one AI configuration in plugin settings first.'));
             return;
         }
 
-        let progressNotice = new Notice("正在准备 AI 元数据助手...", 0);
+        let progressNotice = new Notice(tr("正在准备 AI 元数据助手...", 'Preparing the properties assistant…'), 0);
         try {
             let fileText = await app.vault.read(currentFile);
             const fileCache = app.metadataCache.getFileCache(currentFile);
@@ -4406,12 +4635,12 @@ class AiAssistantSuite extends Plugin {
                 const selection = editor.getSelection();
                 if (selection.trim()) {
                     content = selection;
-                    new Notice("使用选中文本生成元数据...");
+                    new Notice(tr("使用选中文本生成元数据...", 'Generating properties from the selection…'));
                 }
             }
 
             if (!content || content.trim() === "") {
-                throw new Error("笔记内容为空，无法生成元数据。");
+                throw new Error(tr("笔记内容为空，无法生成元数据。", 'The note is empty; no properties can be generated.'));
             }
 
             // 根据已有字段调整AI请求
@@ -4419,7 +4648,7 @@ class AiAssistantSuite extends Plugin {
 
             if (hasExistingSummary && hasExistingTldr) {
                 // 如果summary和tldr都存在，只生成title
-                progressNotice.setMessage("检测到已有摘要和总结，仅生成标题...");
+                progressNotice.setMessage(tr("检测到已有摘要和总结，仅生成标题...", 'Summary and one-liner exist; generating the title only…'));
                 const titleOnlyPrompt = this.getTitleOnlyPrompt(content);
                 const messageContent = await this.makeApiRequest(titleOnlyPrompt, null, true);
 
@@ -4428,17 +4657,17 @@ class AiAssistantSuite extends Plugin {
                     const jsonMatch = messageContent.match(/```json\n([\s\S]*?)\n```/);
                     parsedContent = JSON.parse(jsonMatch ? jsonMatch[1] : messageContent);
                 } catch (e) {
-                    throw new Error(`无法解析AI返回的JSON: ${e.message}`);
+                    throw new Error(tr(`无法解析AI返回的JSON: ${e.message}`, `Could not parse the JSON returned by the AI: ${e.message}`));
                 }
 
                 aiGeneratedData = {
-                    title: parsedContent.title || "未命名标题",
+                    title: parsedContent.title || tr("未命名标题", 'Untitled'),
                     summary: existingFrontmatter.summary,
                     tldr: existingFrontmatter.tldr
                 };
             } else {
                 // 正常生成所有字段，但会在后面使用已有的字段
-                progressNotice.setMessage("正在请求 AI 生成元数据...");
+                progressNotice.setMessage(tr("正在请求 AI 生成元数据...", 'Asking the AI for properties…'));
                 const prompt = this.getMetaPrompt(content, hasExistingSummary, hasExistingTldr);
                 const messageContent = await this.makeApiRequest(prompt, null, true);
 
@@ -4447,16 +4676,16 @@ class AiAssistantSuite extends Plugin {
                     const jsonMatch = messageContent.match(/```json\n([\s\S]*?)\n```/);
                     parsedContent = JSON.parse(jsonMatch ? jsonMatch[1] : messageContent);
                 } catch (e) {
-                    throw new Error(`无法解析AI返回的JSON: ${e.message}`);
+                    throw new Error(tr(`无法解析AI返回的JSON: ${e.message}`, `Could not parse the JSON returned by the AI: ${e.message}`));
                 }
 
                 let { title, summary, tldr } = parsedContent;
 
                 // 使用已有字段或AI生成的字段
                 aiGeneratedData = {
-                    title: title || "未命名标题",
-                    summary: hasExistingSummary ? existingFrontmatter.summary : (summary || "暂无摘要，请手动添加"),
-                    tldr: hasExistingTldr ? existingFrontmatter.tldr : (tldr || "暂无总结")
+                    title: title || tr("未命名标题", 'Untitled'),
+                    summary: hasExistingSummary ? existingFrontmatter.summary : (summary || tr("暂无摘要，请手动添加", 'No summary yet, add one by hand')),
+                    tldr: hasExistingTldr ? existingFrontmatter.tldr : (tldr || tr("暂无总结", 'No one-liner yet'))
                 };
             }
 
@@ -4475,7 +4704,7 @@ class AiAssistantSuite extends Plugin {
                 id: taskId,
                 type: 'meta',
                 status: 'displaying',
-                title: `元数据建议: ${currentFile.basename}`,
+                title: tr(`元数据建议: ${currentFile.basename}`, `Property suggestions: ${currentFile.basename}`),
                 content: { title, summary, tldr, finalFilename, newPath, file: currentFile }
             });
 
@@ -4484,7 +4713,7 @@ class AiAssistantSuite extends Plugin {
             if (this.isCancellationError(error)) {
                 return;
             }
-            new Notice(`处理失败: ${error.message}`, 0);
+            new Notice(tr(`处理失败: ${error.message}`, `Failed: ${error.message}`), 0);
             console.error("AI Meta Error:", error);
         }
     }
@@ -4495,6 +4724,7 @@ class AiAssistantSuite extends Plugin {
         try {
             return await this.runOneClickSmartProcessSteps(targetFile, selectedActions, shouldStop);
         } finally {
+            this.currentProgress = null;
             this.currentUserInstruction = '';
         }
     }
@@ -4509,12 +4739,12 @@ class AiAssistantSuite extends Plugin {
         let currentFile = targetFile || app.workspace.getActiveFile();
 
         if (!currentFile) {
-            new Notice("没有活动的笔记文件。");
+            new Notice(tr("没有活动的笔记文件。", 'No active note.'));
             return;
         }
         const hasEnabledConfig = this.settings.apiConfigs && this.settings.apiConfigs.some(c => c.enabled !== false && this.isConfigUsable(c));
         if (!hasEnabledConfig) {
-            new Notice('请先在插件设置里添加并启用至少一个 AI 配置。');
+            new Notice(tr('请先在插件设置里添加并启用至少一个 AI 配置。', 'Add and enable at least one AI configuration in plugin settings first.'));
             return;
         }
 
@@ -4522,38 +4752,49 @@ class AiAssistantSuite extends Plugin {
         const actions = Object.keys(oneClickProcessActions).filter(k => oneClickProcessActions[k]);
 
         if (actions.length === 0) {
-            new Notice('没有在设置中启用任何"一键处理"步骤。');
+            new Notice(tr('没有在设置中启用任何"一键处理"步骤。', 'No one-click steps are enabled in settings.'));
             return;
         }
 
-        let progressNotice = new Notice("启动一键智能处理...", 0);
+        let progressNotice = new Notice(tr('开始整理…', 'Starting…'), 0);
+        // 走到哪一步：通知和侧栏横幅都显示“第 n 步，共 m 步”
+        const interactiveCount = actions.filter(a => a !== 'structurizer' && a !== 'furigana').length ? 1 : 0;
+        const totalSteps = (oneClickProcessActions.structurizer ? 1 : 0) + (oneClickProcessActions.furigana ? 1 : 0) + interactiveCount;
+        let step = 0;
+        const setStep = (text) => {
+            step += 1;
+            this.currentProgress = tr(`第 ${step} 步，共 ${totalSteps} 步：${text}`, `Step ${step} of ${totalSteps}: ${text}`);
+            progressNotice.setMessage(this.currentProgress);
+            this.view?.render();
+        };
+        this.lastCancelled = null;
 
         try {
             // --- 1. Structurizer (if enabled) ---
             if (oneClickProcessActions.structurizer) {
-                progressNotice.setMessage("正在优化笔记结构...");
+                setStep(tr('整理正文结构', 'tidying the structure'));
                 await this.runAiStructurizer(false, currentFile);
-                if (shouldStop()) { progressNotice.hide(); return; }
+                if (shouldStop()) { progressNotice.hide(); this.lastCancelled = currentFile.path; return; }
                 // Re-read file content after potential modification
                 // Keep currentFile pinned to the original target.
             }
 
             if (oneClickProcessActions.furigana) {
-                progressNotice.setMessage("正在为笔记添加日文假名注音...");
+                setStep(tr('给日文加假名', 'adding furigana'));
                 await this.runAiFurigana(false, currentFile, false);
-                if (shouldStop()) { progressNotice.hide(); return; } // 复用一键处理的进度提示，不再额外弹窗
+                if (shouldStop()) { progressNotice.hide(); this.lastCancelled = currentFile.path; return; } // 复用一键处理的进度提示，不再额外弹窗
                 // Keep currentFile pinned to the original target.
             }
 
             const interactiveActions = actions.filter(a => a !== 'structurizer' && a !== 'furigana');
             if (interactiveActions.length === 0) {
                 progressNotice.hide();
-                new Notice("预处理步骤已完成。没有其他已启用的处理步骤。");
+                new Notice(tr("预处理步骤已完成。没有其他已启用的处理步骤。", 'Pre-processing done. No other steps are enabled.'));
                 return;
             }
 
             // --- 2. Prepare for combined AI call ---
-            progressNotice.setMessage("正在准备组合式 AI 请求...");
+            setStep(tr('生成标题、标签和归档建议', 'suggesting title, tags and folder'));
             let contentToProcess = await app.vault.read(currentFile);
             const noteOriginalContent = contentToProcess;
             const fileCache = app.metadataCache.getFileCache(currentFile);
@@ -4566,7 +4807,7 @@ class AiAssistantSuite extends Plugin {
             if (fileCache && fileCache.frontmatter && fileCache.frontmatter.position) {
                 contentToProcess = contentToProcess.substring(fileCache.frontmatter.position.end.offset).trim();
             }
-            if (!contentToProcess) throw new Error("笔记内容为空。");
+            if (!contentToProcess) throw new Error(tr("笔记内容为空。", 'The note is empty.'));
 
             let contextForPrompt = "";
             let jsonStructure = {};
@@ -4611,8 +4852,7 @@ ${contextForPrompt}${this.userInstructionBlock()}
 **需要处理的文本如下：**
 \n\n${contentToProcess}`;
 
-            if (shouldStop()) { progressNotice.hide(); return; }
-            progressNotice.setMessage("正在请求 AI 进行综合分析...");
+            if (shouldStop()) { progressNotice.hide(); this.lastCancelled = currentFile.path; return; }
 
             const messageContent = await this.makeApiRequest(prompt, null, true);
 
@@ -4625,24 +4865,25 @@ ${contextForPrompt}${this.userInstructionBlock()}
                 // 确保meta字段的完整性，使用已有字段或AI生成的字段
                 if (parsedContent.meta) {
                     // 如果某些字段为空，提供默认值
-                    if (!parsedContent.meta.title) parsedContent.meta.title = "未命名标题";
+                    if (!parsedContent.meta.title) parsedContent.meta.title = tr("未命名标题", 'Untitled');
 
                     // 使用已有字段或AI生成的字段
                     if (hasExistingSummary) {
                         parsedContent.meta.summary = existingFrontmatter.summary;
                     } else if (!parsedContent.meta.summary) {
-                        parsedContent.meta.summary = "暂无摘要，请手动添加";
+                        parsedContent.meta.summary = tr("暂无摘要，请手动添加", 'No summary yet, add one by hand');
                     }
 
                     if (hasExistingTldr) {
                         parsedContent.meta.tldr = existingFrontmatter.tldr;
                     } else if (!parsedContent.meta.tldr) {
-                        parsedContent.meta.tldr = "暂无总结";
+                        parsedContent.meta.tldr = tr("暂无总结", 'No one-liner yet');
                     }
                 }
             } catch (e) {
-                console.error("解析AI返回的JSON时出错:", e, "原始返回内容:", messageContent);
-                throw new Error("无法解析AI返回的JSON。");
+                // 不打印 AI 的原始回答：里面可能有笔记内容
+                console.error("[AI Assistant] Could not parse the JSON returned by the AI:", e?.message);
+                throw new Error(tr("无法解析AI返回的JSON。", 'Could not parse the JSON returned by the AI.'));
             }
 
             // --- 3. Process Tagger results if present (incl. translation) ---
@@ -4667,7 +4908,7 @@ ${contextForPrompt}${this.userInstructionBlock()}
                     });
 
                     if (tagsToTranslate.length > 0) {
-                        progressNotice.setMessage(`检测到 ${tagsToTranslate.length} 个长英文标签，正在翻译...`);
+                        progressNotice.setMessage(tr(`检测到 ${tagsToTranslate.length} 个长英文标签，正在翻译...`, `Found ${tagsToTranslate.length} long English tags, translating…`));
                         const translationPrompt = this.getTranslationPrompt(tagsToTranslate);
                         try {
                             const translationResult = await this.makeApiRequest(translationPrompt, this.getAuxiliaryModelName());
@@ -4677,12 +4918,12 @@ ${contextForPrompt}${this.userInstructionBlock()}
                                     const originalIndex = originalIndicesOfTagsToTranslate[i];
                                     processedTags[originalIndex] = translatedTag.trim();
                                 });
-                                progressNotice.setMessage("翻译完成，准备显示选项...");
+                                progressNotice.setMessage(tr("翻译完成，准备显示选项...", 'Translation done, preparing options…'));
                             } else {
-                                new Notice("翻译结果数量与请求不符，跳过翻译。", 3000);
+                                new Notice(tr("翻译结果数量与请求不符，跳过翻译。", 'Translation count did not match; translation skipped.'), 3000);
                             }
                         } catch (translationError) {
-                            new Notice("翻译过程中发生错误。", 3000);
+                            new Notice(tr("翻译过程中发生错误。", 'Translation failed.'), 3000);
                             console.error("Error during translation fetch:", translationError);
                         }
                     }
@@ -4706,7 +4947,7 @@ ${contextForPrompt}${this.userInstructionBlock()}
                 id: taskId,
                 type: 'one-click',
                 status: 'displaying',
-                title: `智能处理建议: ${currentFile.basename}`,
+                title: tr(`智能处理建议: ${currentFile.basename}`, `Suggestions: ${currentFile.basename}`),
                 content: {
                     originalContent: noteOriginalContent,
                     suggestions: {
@@ -4723,16 +4964,17 @@ ${contextForPrompt}${this.userInstructionBlock()}
         } catch (error) {
             progressNotice?.hide();
             if (this.isCancellationError(error)) {
+                this.lastCancelled = currentFile.path;
                 return;
             }
-            new Notice(`一键处理失败: ${error.message}`, 0);
-            this.view?.addTask({ id: `error-${Date.now()}`, status: 'displaying', type: 'error', title: '这次处理未完成', content: { type: 'error', file: currentFile, message: error.message } });
+            new Notice(tr(`整理失败：${error.message}`, `Tidying failed: ${error.message}`), 8000);
+            this.view?.addTask({ id: `error-${Date.now()}`, status: 'displaying', type: 'error', title: tr('这次处理未完成', 'This run did not finish'), content: { type: 'error', file: currentFile, message: error.message, kind: classifyApiError(error) } });
             console.error("One Click Process Error:", error);
         }
     }
 
     async updateFrontmatter(file, title, summary, tldr) {
-        let progressNotice = new Notice("正在更新笔记元数据...", 0);
+        let progressNotice = new Notice(tr("正在更新笔记元数据...", 'Updating note properties…'), 0);
         try {
             await this.app.fileManager.processFrontMatter(file, (fm) => {
                 fm.title = title.trim();
@@ -4740,10 +4982,10 @@ ${contextForPrompt}${this.userInstructionBlock()}
                 if (!fm.tldr) fm.tldr = tldr.trim();
             });
             progressNotice.hide();
-            new Notice("笔记元数据已成功更新！", 5000);
+            new Notice(tr("笔记元数据已成功更新！", 'Note properties updated.'), 5000);
         } catch (err) {
             progressNotice.hide();
-            new Notice(`更新Frontmatter时出错: ${err.message}`, 0);
+            new Notice(tr(`更新Frontmatter时出错: ${err.message}`, `Error updating properties: ${err.message}`), 0);
         }
     }
 
@@ -4899,17 +5141,17 @@ ${content}
     async runSmartAction(action) {
         const hasEnabledConfig = this.settings.apiConfigs && this.settings.apiConfigs.some(c => c.enabled !== false && this.isConfigUsable(c));
         if (!hasEnabledConfig) {
-            new Notice('请先在插件设置里添加并启用至少一个 AI 配置。');
+            new Notice(tr('请先在插件设置里添加并启用至少一个 AI 配置。', 'Add and enable at least one AI configuration in plugin settings first.'));
             return;
         }
 
         const currentFile = this.app.workspace.getActiveFile();
         if (!currentFile) {
-            new Notice("没有活动的笔记文件。");
+            new Notice(tr("没有活动的笔记文件。", 'No active note.'));
             return;
         }
 
-        let progressNotice = new Notice(`正在执行${this.getActionName(action)}...`, 0);
+        let progressNotice = new Notice(tr(`正在执行${this.getActionName(action)}...`, `Running ${this.getActionName(action)}…`), 0);
 
         try {
             // 获取内容
@@ -4919,7 +5161,7 @@ ${content}
                 const selection = activeEditor.getSelection();
                 if (selection && selection.trim()) {
                     content = selection.trim();
-                    new Notice(`使用选中文本进行${this.getActionName(action)}...`);
+                    new Notice(tr(`使用选中文本进行${this.getActionName(action)}...`, `Running ${this.getActionName(action)} on the selection…`));
                 } else {
                     content = await this.app.vault.read(currentFile);
                     // 移除frontmatter
@@ -4933,14 +5175,14 @@ ${content}
             }
 
             if (!content || content.trim() === "") {
-                throw new Error("没有内容可以处理。");
+                throw new Error(tr("没有内容可以处理。", 'Nothing to process.'));
             }
 
             // 构建提示词
             const prompt = this.getSmartActionPrompt(action, content);
 
             // 调用AI
-            progressNotice.setMessage(`正在执行AI${this.getActionName(action)}...`);
+            progressNotice.setMessage(tr(`正在执行AI${this.getActionName(action)}...`, `Running AI ${this.getActionName(action)}…`));
 
             const result = await this.makeApiRequest(prompt, this.getAuxiliaryModelName(), false, null, {
                 label: this.getActionName(action),
@@ -4956,7 +5198,7 @@ ${content}
                 id: taskId,
                 type: 'quick-action',
                 status: 'displaying',
-                title: `${this.getActionIcon(action)} ${this.getActionName(action)}结果`,
+                title: tr(`${this.getActionIcon(action)} ${this.getActionName(action)}结果`, `${this.getActionIcon(action)} ${this.getActionName(action)} result`),
                 content: {
                     action: action,
                     result: result,
@@ -4977,7 +5219,7 @@ ${content}
             if (this.isCancellationError(error)) {
                 return;
             }
-            new Notice(`${this.getActionName(action)}失败: ${error.message}`, 0);
+            new Notice(tr(`${this.getActionName(action)}失败: ${error.message}`, `${this.getActionName(action)} failed: ${error.message}`), 0);
             console.error("Smart Action Error:", error);
         }
     }
@@ -4985,10 +5227,10 @@ ${content}
     // 获取操作名称
     getActionName(action) {
         const actionNames = {
-            'summarize': '总结',
-            'optimize': '优化',
-            'explain': '解释',
-            'analyze': '分析'
+            'summarize': tr('总结', 'Summarise'),
+            'optimize': tr('优化', 'Improve'),
+            'explain': tr('解释', 'Explain'),
+            'analyze': tr('分析', 'Analyse')
         };
         return actionNames[action] || action;
     }
@@ -5044,10 +5286,10 @@ ${content}`
 
     getCustomActionModeLabel(mode) {
         const labels = {
-            sidebar: '显示到侧边栏',
-            diff: '生成变更预览',
-            append: '追加到当前笔记',
-            'new-note': '创建新笔记'
+            sidebar: tr('显示到侧边栏', 'Show in sidebar'),
+            diff: tr('生成变更预览', 'Generate change preview'),
+            append: tr('追加到当前笔记', 'Append to current note'),
+            'new-note': tr('创建新笔记', 'Create new note')
         };
         return labels[mode] || labels.sidebar;
     }
@@ -5055,7 +5297,7 @@ ${content}`
     async getCurrentActionContext(targetFile = null) {
         const currentFile = targetFile || this.app.workspace.getActiveFile() || this.assistantLastFile;
         if (!currentFile) {
-            throw new Error('没有活动的笔记文件。');
+            throw new Error(tr('没有活动的笔记文件。', 'No active note.'));
         }
 
         const editor = this.app.workspace.getActiveFile() === currentFile ? this.app.workspace.activeEditor?.editor : null;
@@ -5128,23 +5370,23 @@ ${content}`
     async runCustomAction(actionId, targetFile = null) {
         const action = (this.settings.customActions || []).find(item => item.id === actionId);
         if (!action || action.enabled === false) {
-            new Notice('未找到启用的自定义动作。', 3000);
+            new Notice(tr('未找到启用的自定义动作。', 'No enabled custom action found.'), 3000);
             return;
         }
         const hasEnabledConfig = this.settings.apiConfigs && this.settings.apiConfigs.some(c => c.enabled !== false && this.isConfigUsable(c));
         if (!hasEnabledConfig) {
-            new Notice('请先在插件设置里添加并启用至少一个 AI 配置。');
+            new Notice(tr('请先在插件设置里添加并启用至少一个 AI 配置。', 'Add and enable at least one AI configuration in plugin settings first.'));
             return;
         }
 
         const taskId = `custom-action-${Date.now()}`;
-        let progressNotice = new Notice(`正在执行 ${action.name || '自定义动作'}...`, 0);
+        let progressNotice = new Notice(tr(`正在执行 ${action.name || '自定义动作'}...`, `Running ${action.name || 'custom action'}…`), 0);
 
         try {
             const context = await this.getCurrentActionContext(targetFile);
             const prompt = this.renderCustomPrompt(action.prompt, context);
             if (!prompt.trim()) {
-                throw new Error('自定义 Action 的 Prompt 为空。');
+                throw new Error(tr('自定义 Action 的 Prompt 为空。', 'The custom action prompt is empty.'));
             }
 
             await this.activateView();
@@ -5152,13 +5394,13 @@ ${content}`
                 id: taskId,
                 type: 'custom-action',
                 status: 'loading',
-                title: `${action.name || '自定义动作'} 生成中`,
-                message: '正在接收 AI 输出...',
+                title: tr(`${action.name || '自定义动作'} 生成中`, `${action.name || 'Custom action'} generating`),
+                message: tr('正在接收 AI 输出...', 'Receiving AI output…'),
                 content: { file: context.file, streamingContent: '' }
             });
 
             const result = await this.makeApiRequest(prompt, this.getAuxiliaryModelName(), false, null, {
-                label: action.name || '自定义动作',
+                label: action.name || tr('自定义动作', 'Custom action'),
                 stream: true,
                 onStream: (_delta, accumulated) => {
                     this.view?.updateTask(taskId, {
@@ -5175,26 +5417,26 @@ ${content}`
                 await this.createDiffPreviewTask({
                     taskId,
                     file: context.file,
-                    action: action.name || '自定义动作',
-                    title: `${action.name || '自定义动作'} 预览: ${context.file.basename}`,
+                    action: action.name || tr('自定义动作', 'Custom action'),
+                    title: tr(`${action.name || '自定义动作'} 预览: ${context.file.basename}`, `${action.name || 'Custom action'} preview: ${context.file.basename}`),
                     originalContent: context.originalContent,
                     proposedContent: this.buildReplacementContent(context, result)
                 });
-                new Notice('自定义动作 预览已生成，请在侧栏确认后应用。', 5000);
+                new Notice(tr('自定义动作 预览已生成，请在侧栏确认后应用。', 'Custom action preview ready. Confirm it in the sidebar to apply.'), 5000);
                 return;
             }
 
             if (outputMode === 'append') {
-                await this.applyContentChange(context.file, action.name || '自定义动作追加', null,
+                await this.applyContentChange(context.file, action.name || tr('自定义动作追加', 'Custom action append'), null,
                     current => `${current}${current.endsWith('\n') ? '\n' : '\n\n'}${result.trim()}\n`);
-                this.addToHistory(context.file.basename, context.file.path, action.name || '自定义动作', this.generateFileId(context.file));
+                this.addToHistory(context.file.basename, context.file.path, action.name || tr('自定义动作', 'Custom action'), this.generateFileId(context.file));
                 this.view.updateTask(taskId, {
                     type: 'success',
                     status: 'displaying',
-                    title: `${action.name || '自定义动作'} 已追加`,
-                    content: { message: '结果已追加到当前笔记，可用回滚恢复。', type: 'success', file: context.file }
+                    title: tr(`${action.name || '自定义动作'} 已追加`, `${action.name || 'Custom action'} appended`),
+                    content: { message: tr('结果已追加到当前笔记，可用回滚恢复。', 'The result was appended to the current note; undo restores it.'), type: 'success', file: context.file }
                 });
-                new Notice('自定义动作 结果已追加。', 4000);
+                new Notice(tr('自定义动作 结果已追加。', 'Custom action result appended.'), 4000);
                 return;
             }
 
@@ -5205,24 +5447,24 @@ ${content}`
                 this.view.updateTask(taskId, {
                     type: 'success',
                     status: 'displaying',
-                    title: `${action.name || '自定义动作'} 已创建新笔记`,
-                    content: { message: `已创建: ${newPath}`, type: 'success', file: newFile }
+                    title: tr(`${action.name || '自定义动作'} 已创建新笔记`, `${action.name || 'Custom action'} created a note`),
+                    content: { message: tr(`已创建: ${newPath}`, `Created: ${newPath}`), type: 'success', file: newFile }
                 });
-                new Notice(`已创建新笔记: ${newPath}`, 5000);
+                new Notice(tr(`已创建新笔记: ${newPath}`, `Created note: ${newPath}`), 5000);
                 return;
             }
 
             this.view.updateTask(taskId, {
                 type: 'custom-action',
                 status: 'displaying',
-                title: `${action.name || '自定义动作'} 结果`,
+                title: tr(`${action.name || '自定义动作'} 结果`, `${action.name || 'Custom action'} result`),
                 content: {
                     file: context.file,
                     result,
                     originalContent: (context.selection || context.content).substring(0, 500)
                 }
             });
-            this.addToHistory(context.file.basename, context.file.path, action.name || '自定义动作', this.generateFileId(context.file));
+            this.addToHistory(context.file.basename, context.file.path, action.name || tr('自定义动作', 'Custom action'), this.generateFileId(context.file));
         } catch (error) {
             progressNotice?.hide();
             if (this.isCancellationError(error)) {
@@ -5232,10 +5474,10 @@ ${content}`
             this.view?.updateTask(taskId, {
                 type: 'error',
                 status: 'displaying',
-                title: `${action.name || '自定义动作'} 失败`,
+                title: tr(`${action.name || '自定义动作'} 失败`, `${action.name || 'Custom action'} failed`),
                 content: { message: error.message, type: 'error' }
             });
-            new Notice(`自定义 Action 失败: ${error.message}`, 5000);
+            new Notice(tr(`自定义 Action 失败: ${error.message}`, `Custom action failed: ${error.message}`), 5000);
             console.error('Custom Action Error:', error);
         }
     }
@@ -5270,7 +5512,7 @@ ${content}`
     // 导出处理结果
     async exportProcessingResults() {
         if (!this.view || !this.view.history || this.view.history.length === 0) {
-            new Notice('没有可导出的处理结果');
+            new Notice(tr('没有可导出的处理结果', 'No results to export'));
             return;
         }
 
@@ -5289,9 +5531,9 @@ ${content}`
 
         try {
             await this.app.vault.create(fileName, exportContent);
-            new Notice(`处理结果已导出到 ${fileName}`);
+            new Notice(tr(`处理结果已导出到 ${fileName}`, `Results exported to ${fileName}`));
         } catch (error) {
-            new Notice(`导出失败: ${error.message}`);
+            new Notice(tr(`导出失败: ${error.message}`, `Export failed: ${error.message}`));
         }
     }
 
@@ -5312,7 +5554,7 @@ ${content}`
                 id: `performance-${Date.now()}`,
                 type: 'performance',
                 status: 'displaying',
-                title: '📊 性能监控',
+                title: tr('📊 性能监控', 'Performance'),
                 content: { stats }
             });
         }
@@ -5338,10 +5580,10 @@ class AiAssistantSettingTab extends PluginSettingTab {
 
     // Obsidian 1.13 起设置页由定义渲染：四个分页各是一个 SettingPage，内容沿用下面的渲染代码
     static PAGES = [
-        { name: '模型连接', desc: '服务商、密钥、模型和备用顺序', aliases: ['API', '密钥', '模型', '备用', 'DeepSeek', 'Gemini', 'OpenAI', 'Ollama'] },
-        { name: '处理偏好', desc: '标签、归档、元数据的参数和默认步骤', aliases: ['标签', '归档', '忽略文件夹', '翻译'] },
-        { name: '动作与提示词', desc: '自定义动作和内置提示词', aliases: ['自定义动作', '提示词'] },
-        { name: '备份与恢复', desc: '导出、导入和重置设置', aliases: ['导出', '导入', '重置'] }
+        { name: tr('模型连接', 'Connections'), desc: tr('服务商、密钥、模型和备用顺序', 'Provider, key, model and backup order'), aliases: ['API', tr('密钥', 'Key'), tr('模型', 'Model'), tr('备用', 'Backup'), 'DeepSeek', 'Gemini', 'OpenAI', 'Ollama'] },
+        { name: tr('处理偏好', 'Preferences'), desc: tr('标签、归档、元数据的参数和默认步骤', 'Tags, folders, properties and default steps'), aliases: [tr('标签', 'Tags'), tr('归档', 'Folder'), tr('忽略文件夹', 'Ignored folders'), tr('翻译', 'Translation')] },
+        { name: tr('动作与提示词', 'Actions and prompts'), desc: tr('自定义动作和内置提示词', 'Custom actions and built-in prompts'), aliases: [tr('自定义动作', 'Custom actions'), tr('提示词', 'Prompts')] },
+        { name: tr('备份与恢复', 'Backup and restore'), desc: tr('导出、导入和重置设置', 'Export, import and reset settings'), aliases: [tr('导出', 'Export'), tr('导入', 'Import'), tr('重置', 'Reset')] }
     ];
 
     getSettingDefinitions() {
@@ -5390,9 +5632,9 @@ class AiAssistantSettingTab extends PluginSettingTab {
     }
 
     renderSettingsBody(containerEl) {
-        this.addSectionHeading(containerEl, '连接你的模型');
+        this.addSectionHeading(containerEl, tr('连接你的模型', 'Connect your model'));
         containerEl.createEl('p', {
-            text: '每个服务独立保存。启用的配置按优先级依次尝试，连接失败时自动使用备用服务。',
+            text: tr('每个服务独立保存。启用的配置按优先级排在前面的先用；只有勾了“允许用作备用”的，才会在失败时接手。', 'Each service is saved separately. Enabled configurations are tried in priority order; backups are used only if you allow it.'),
             cls: 'ai-assistant-settings-note'
         });
 
@@ -5411,11 +5653,11 @@ class AiAssistantSettingTab extends PluginSettingTab {
         topContainer.addClass('ai-assistant-u-top-row');
         
         new Setting(topContainer)
-            .setName('编辑配置')
-            .setDesc('选择要查看/编辑的 API 配置（与备用顺序无关，顺序由列表位置决定）')
+            .setName(tr('编辑配置', 'Edit configuration'))
+            .setDesc(tr('选择要查看/编辑的 API 配置（与备用顺序无关，顺序由列表位置决定）', 'Choose the configuration to view or edit (unrelated to backup order, which follows list position)'))
             .addDropdown(dropdown => {
                 apiConfigs.forEach(config => {
-                    const label = config.enabled === false ? `[禁用] ${config.name}` : config.name;
+                    const label = config.enabled === false ? tr(`[禁用] ${config.name}`, `[off] ${config.name}`) : config.name;
                     dropdown.addOption(config.id, label);
                 });
                 dropdown.setValue(activeConfig?.id ?? '');
@@ -5427,17 +5669,18 @@ class AiAssistantSettingTab extends PluginSettingTab {
             });
 
         const actionsContainer = topContainer.createDiv();
-        const addButton = actionsContainer.createEl('button', { text: '新增配置' });
+        const addButton = actionsContainer.createEl('button', { text: tr('新增配置', 'Add configuration') });
         addButton.onclick = async () => {
             const newId = 'config_' + Date.now();
             this.plugin.settings.apiConfigs.push({
                 id: newId,
-                name: '模型连接 ' + (apiConfigs.length + 1),
-                apiProvider: 'openai',
+                name: providerName('deepseek'),
+                apiProvider: 'deepseek',
                 apiKey: '',
                 apiUrl: '',
-                modelName: '',
+                modelName: this.plugin.defaultModelFor('deepseek'),
                 auxiliaryModelName: '',
+                deepseekThinking: false,
                 enabled: true
             });
             this.plugin.settings.activeConfigId = newId;
@@ -5445,19 +5688,7 @@ class AiAssistantSettingTab extends PluginSettingTab {
             this.refresh();
         };
 
-        const deepseekButton = actionsContainer.createEl('button', { text: `添加 ${PROVIDER_NAMES.deepseek}` });
-        deepseekButton.onclick = async () => {
-            const config = { id: `deepseek_${Date.now()}`, name: 'DeepSeek', apiProvider: 'deepseek',
-                apiKey: '', apiUrl: DEEPSEEK_OFFICIAL_URL,
-                modelName: 'deepseek-flash', auxiliaryModelName: 'deepseek-flash',
-                deepseekThinking: false, enabled: true };
-            apiConfigs.push(config);
-            this.plugin.settings.activeConfigId = config.id;
-            await this.plugin.saveSettings();
-            this.refresh();
-        };
-
-        const delButton = actionsContainer.createEl('button', { text: '删除当前配置' });
+        const delButton = actionsContainer.createEl('button', { text: tr('删除当前配置', 'Delete this configuration') });
         delButton.addClass('ai-assistant-u-gap-left');
         if (apiConfigs.length <= 1) {
             delButton.disabled = true;
@@ -5472,7 +5703,7 @@ class AiAssistantSettingTab extends PluginSettingTab {
 
         // 优先级调整按钮
         const currentIdx = apiConfigs.indexOf(activeConfig);
-        const upBtn = actionsContainer.createEl('button', { text: '↑ 提高优先级' });
+        const upBtn = actionsContainer.createEl('button', { text: tr('↑ 提高优先级', '↑ Raise priority') });
         upBtn.addClass('ai-assistant-u-gap-left');
         upBtn.disabled = currentIdx <= 0;
         upBtn.onclick = async () => {
@@ -5484,7 +5715,7 @@ class AiAssistantSettingTab extends PluginSettingTab {
             this.refresh();
         };
 
-        const downBtn = actionsContainer.createEl('button', { text: '↓ 降低优先级' });
+        const downBtn = actionsContainer.createEl('button', { text: tr('↓ 降低优先级', '↓ Lower priority') });
         downBtn.addClass('ai-assistant-u-gap-left-small');
         downBtn.disabled = currentIdx >= apiConfigs.length - 1;
         downBtn.onclick = async () => {
@@ -5504,13 +5735,13 @@ class AiAssistantSettingTab extends PluginSettingTab {
         const priorityIdx = apiConfigs.indexOf(activeConfig);
         const enabledCount = apiConfigs.filter(c => c.enabled !== false).length;
         containerEl.createEl('p', {
-            text: `优先级 #${priorityIdx + 1}（共 ${apiConfigs.length} 个配置，其中 ${enabledCount} 个已启用）`,
+            text: tr(`优先级 #${priorityIdx + 1}（共 ${apiConfigs.length} 个配置，其中 ${enabledCount} 个已启用）`, `Priority #${priorityIdx + 1} (${apiConfigs.length} configurations, ${enabledCount} enabled)`),
             cls: 'ai-assistant-settings-accent-note'
         });
 
         new Setting(containerEl)
-            .setName('启用此配置')
-            .setDesc('禁用后此配置将在备用顺序中被跳过。')
+            .setName(tr('启用此配置', 'Enable this configuration'))
+            .setDesc(tr('禁用后此配置将在备用顺序中被跳过。', 'When off, it is skipped in the backup order.'))
             .addToggle(toggle => toggle
                 .setValue(activeConfig.enabled !== false)
                 .onChange(async (value) => {
@@ -5520,8 +5751,8 @@ class AiAssistantSettingTab extends PluginSettingTab {
                 }));
 
         new Setting(containerEl)
-            .setName('允许用作备用')
-            .setDesc('主服务失败时，可以改用这个配置。不勾就不会把笔记改发给它；没有任何备用时，失败就停下并说明原因。')
+            .setName(tr('允许用作备用', 'Allow as backup'))
+            .setDesc(tr('主服务失败时，可以改用这个配置。不勾就不会把笔记改发给它；没有任何备用时，失败就停下并说明原因。', 'If the main service fails, this configuration may be used. Untick it and notes are never sent to it; with no backups, a failure stops and explains why.'))
             .addToggle(toggle => toggle
                 .setValue(activeConfig.allowFallback === true)
                 .onChange(async (value) => {
@@ -5530,7 +5761,7 @@ class AiAssistantSettingTab extends PluginSettingTab {
                 }));
 
         new Setting(containerEl)
-            .setName('配置名称')
+            .setName(tr('配置名称', 'Configuration name'))
             .addText(text => text
                 .setValue(activeConfig.name)
                 .onChange(async (value) => {
@@ -5538,145 +5769,179 @@ class AiAssistantSettingTab extends PluginSettingTab {
                     await this.plugin.saveSettings();
                 }));
 
+        // 四项分开填：服务商 → 接口地址 → 模型 → 密钥，最后测试连接
+        const provider = activeConfig.apiProvider || 'openai';
+        const info = providerInfo(provider);
         new Setting(containerEl)
-            .setName('服务商')
-            .setDesc('选择您使用的 AI 服务提供商格式。')
-            .addDropdown(dropdown => dropdown
-                .addOption('openai', 'OpenAI (兼容格式)')
-                .addOption('gemini', 'Google Gemini (官方格式)')
-                .addOption('deepseek', `${PROVIDER_NAMES.deepseek} 官方`)
-                .addOption('local', `本地模型（${PROVIDER_NAMES.local}）`)
-                .setValue(activeConfig.apiProvider || 'openai')
-                .onChange(async (value) => {
+            .setName(tr('服务商', 'Provider'))
+            .setDesc(tr('预设服务商会自动带上官方地址和常用模型。', 'Presets fill in the official address and common models.'))
+            .addDropdown(dropdown => {
+                for (const id of Object.keys(PROVIDERS)) dropdown.addOption(id, providerName(id));
+                return dropdown.setValue(provider).onChange(async (value) => {
+                    // 只替换还是旧预设值的地址和模型；本人改过的照旧保留
+                    const before = providerInfo(activeConfig.apiProvider);
+                    if (!activeConfig.apiUrl || activeConfig.apiUrl === before.url) activeConfig.apiUrl = '';
+                    if (!activeConfig.modelName || before.models.some(([id]) => id === activeConfig.modelName)) {
+                        activeConfig.modelName = this.plugin.defaultModelFor(value);
+                    }
+                    if (!activeConfig.name || Object.keys(PROVIDERS).some(id => providerName(id) === activeConfig.name)) {
+                        activeConfig.name = providerName(value);
+                    }
                     activeConfig.apiProvider = value;
                     await this.plugin.saveSettings();
                     this.refresh();
-                }));
+                });
+            });
 
-        let apiKeyInput = null;
-        if (activeConfig.apiProvider === 'local') {
-            containerEl.createEl('p', { cls: 'atelier-provider-note', text: `笔记只发给你电脑上的模型，不经过任何云服务，也不需要密钥。Ollama 默认地址 ${LOCAL_MODEL_DEFAULT_URL}；LM Studio 一般是 http://localhost:1234/v1/chat/completions。主模型填本地模型名，例如 qwen3:8b。手机上的 Obsidian 访问不到电脑的 localhost。` });
-        }
-        if (activeConfig.apiProvider === 'deepseek') {
+        if (provider !== 'gemini') {
+            const urlDesc = provider === 'openai'
+                ? tr('填写完整的接口地址。', 'Enter the full chat completions address.')
+                : provider === 'local'
+                    ? tr(`留空用默认地址 ${LOCAL_MODEL_DEFAULT_URL}；另一种常见本地服务一般是 ${LM_STUDIO_URL}。笔记只发给你电脑上的模型，不经过云服务。手机访问不到电脑的 localhost。`,
+                        `Leave empty for ${LOCAL_MODEL_DEFAULT_URL}; the other common local server is usually ${LM_STUDIO_URL}. Notes go only to the model on your computer. A phone cannot reach your computer's localhost.`)
+                    : tr(`留空用官方地址 ${info.url}。用代理时填代理地址，基础地址也可以。`, `Leave empty for the official address ${info.url}. For a proxy, enter its address; a base URL works too.`);
             new Setting(containerEl)
-                .setName('模型预设')
-                .setDesc('日常整理用快速模型，复杂改写用专业模型。下方仍可手动填写模型名。')
-                .addDropdown(dropdown => {
-                    dropdown.addOption('', '选择模型…');
-                    for (const [id, label] of DEEPSEEK_MODELS) dropdown.addOption(id, label);
-                    return dropdown
-                    .setValue(DEEPSEEK_MODELS.some(([id]) => id === activeConfig.modelName) ? activeConfig.modelName : '')
+                .setName(tr('接口地址', 'API URL'))
+                .setDesc(urlDesc)
+                .addText(text => text
+                    .setPlaceholder(provider === 'openai' ? API_URL_EXAMPLE : info.url)
+                    .setValue(activeConfig.apiUrl || '')
+                    .onChange(async (value) => {
+                        activeConfig.apiUrl = value.trim();
+                        await this.plugin.saveSettings();
+                    }));
+        }
+
+        const modelSetting = new Setting(containerEl)
+            .setName(tr('主模型', 'Main model'))
+            .setDesc(info.models.length
+                ? tr('从预设里选，或在右边手动填写服务商给的模型名。', 'Pick a preset, or type the model name your provider gives.')
+                : tr(`填写模型名，例如 ${provider === 'local' ? LOCAL_MODEL_EXAMPLE : 'gpt-4o-mini'}。`, `Enter the model name, for example ${provider === 'local' ? LOCAL_MODEL_EXAMPLE : 'gpt-4o-mini'}.`));
+        if (info.models.length) {
+            modelSetting.addDropdown(dropdown => {
+                dropdown.addOption('', tr('手动填写', 'Custom'));
+                for (const [id, label] of info.models) dropdown.addOption(id, label);
+                return dropdown
+                    .setValue(info.models.some(([id]) => id === activeConfig.modelName) ? activeConfig.modelName : '')
                     .onChange(async value => {
                         if (!value) return;
                         activeConfig.modelName = value;
-                        await this.plugin.saveSettings(); this.refresh();
+                        await this.plugin.saveSettings();
+                        this.refresh();
                     });
-                });
-            new Setting(containerEl).setName('深度思考')
-                .setDesc('适合复杂内容；等待时间可能增加。默认关闭，方便快速整理笔记。')
+            });
+        }
+        modelSetting.addText(text => text
+            .setPlaceholder(this.plugin.defaultModelFor(provider) || (provider === 'local' ? LOCAL_MODEL_EXAMPLE : ''))
+            .setValue(activeConfig.modelName || '')
+            .onChange(async (value) => {
+                activeConfig.modelName = value.trim();
+                await this.plugin.saveSettings();
+            }));
+
+        new Setting(containerEl)
+            .setName(tr('辅助模型', 'Helper model'))
+            .setDesc(tr('翻译标签这类轻活用它，可以选更快更便宜的；留空就用主模型。', 'Used for light jobs such as translating tags; pick a faster, cheaper one, or leave empty to use the main model.'))
+            .addText(text => text
+                .setPlaceholder(info.models[info.models.length - 1]?.[0] || '')
+                .setValue(activeConfig.auxiliaryModelName || '')
+                .onChange(async (value) => {
+                    activeConfig.auxiliaryModelName = value.trim();
+                    await this.plugin.saveSettings();
+                }));
+
+        if (provider === 'deepseek') {
+            new Setting(containerEl).setName(tr('深度思考', 'Deep thinking'))
+                .setDesc(tr('适合复杂内容，等待时间会变长。默认关闭，整理笔记更快。', 'Better for complex content but slower. Off by default so tidying is quick.'))
                 .addToggle(toggle => toggle.setValue(!!activeConfig.deepseekThinking).onChange(async value => {
                     activeConfig.deepseekThinking = value; await this.plugin.saveSettings();
                 }));
-            containerEl.createEl('p', { cls: 'atelier-provider-note', text: `官方地址：${DEEPSEEK_OFFICIAL_URL}。留空使用官方地址；也支持填写基础地址。切换已有配置的服务商不会覆盖你保存的地址和模型。` });
         }
 
-        new Setting(containerEl)
-            .setName('API 密钥')
+        let apiKeyInput = null;
+        const keySetting = new Setting(containerEl)
+            .setName(tr('API 密钥', 'API key'))
             .setDesc(this.plugin.hasStoredApiKey(activeConfig)
-                ? '已保存 API Key。输入新值并点击保存可替换；不会在设置页显示明文。'
-                : activeConfig.apiProvider === 'local'
-                    ? '本地模型通常不需要密钥；只有你给本地服务设了密钥时才填。'
-                    : '在这里填入你的 AI 服务 API Key。保存后会以本地加密标记写入 data.json。')
+                ? tr('已保存。输入新值再点保存可以替换；设置页不显示明文。', 'Saved. Enter a new value and save to replace it; it is never shown here.')
+                : provider === 'local'
+                    ? tr('本地模型一般不需要密钥，只有你给本地服务设了密钥时才填。', 'Local models usually need no key; fill this only if you set one on the local server.')
+                    : tr('密钥加密后存在这个库的插件数据里，会跟着库同步到其他设备。', 'The key is stored encrypted in this vault\'s plugin data and syncs with the vault.'))
             .addText(text => {
                 text.inputEl.type = 'password';
-                text.setPlaceholder(this.plugin.hasStoredApiKey(activeConfig) ? '已保存，输入新值可替换' : 'Enter your API key');
+                text.setPlaceholder(this.plugin.hasStoredApiKey(activeConfig) ? tr('已保存，输入新值可替换', 'Saved; type to replace') : tr('粘贴密钥', 'Paste key'));
                 text.setValue('');
                 text.inputEl.autocomplete = 'off';
                 text.inputEl.spellcheck = false;
-                text.onChange(() => {});
                 apiKeyInput = text;
             })
             .addButton(button => button
-                .setButtonText('保存密钥')
+                .setButtonText(tr('保存', 'Save'))
+                .setCta()
                 .onClick(async () => {
                     const value = apiKeyInput?.getValue?.() || '';
                     if (!value.trim()) {
-                        new Notice('请输入新的 API 密钥。', 2500);
+                        new Notice(tr('请先粘贴密钥。', 'Paste a key first.'), 2500);
                         return;
                     }
                     await this.plugin.setApiKey(activeConfig, value.trim());
                     await this.plugin.saveSettings();
-                    new Notice('API 密钥 已保存。', 3000);
+                    new Notice(tr('密钥已保存。', 'Key saved.'), 3000);
                     this.refresh();
-                }))
-            .addButton(button => button
-                .setButtonText('清除密钥')
-                .setWarning()
+                }));
+        if (this.plugin.hasStoredApiKey(activeConfig)) {
+            keySetting.addButton(button => button
+                .setButtonText(tr('清除', 'Clear'))
+                .setDestructive()
                 .onClick(async () => {
                     activeConfig.apiKey = '';
                     await this.plugin.saveSettings();
-                    new Notice('API 密钥 已清除。', 3000);
+                    new Notice(tr('密钥已清除。', 'Key cleared.'), 3000);
                     this.refresh();
                 }));
-
-        new Setting(containerEl)
-            .setName('API URL')
-            .setDesc('在这里填入你的AI服务API URL，例如本地模型的地址。如果使用Gemini官方API，此项将被忽略。')
-            .addText(text => text
-                .setPlaceholder(API_URL_EXAMPLE)
-                .setValue(activeConfig.apiUrl || '')
-                .onChange(async (value) => {
-                    activeConfig.apiUrl = value;
-                    await this.plugin.saveSettings();
-                }));
-
-        new Setting(containerEl)
-            .setName('主模型')
-            .setDesc('指定用于内容生成、分析等核心任务的 AI 模型。')
-            .addText(text => text
-                .setPlaceholder(`例如 ${GEMINI_MODEL_EXAMPLES.main}`)
-                .setValue(activeConfig.modelName || '')
-                .onChange(async (value) => {
-                    activeConfig.modelName = value;
-                    await this.plugin.saveSettings();
-                }));
-
-        new Setting(containerEl)
-            .setName('辅助模型')
-            .setDesc('指定用于翻译等轻量级任务的 AI 模型，可以选一个更快的。')
-            .addText(text => text
-                .setPlaceholder(`例如 ${GEMINI_MODEL_EXAMPLES.auxiliary}`)
-                .setValue(activeConfig.auxiliaryModelName || '')
-                .onChange(async (value) => {
-                    activeConfig.auxiliaryModelName = value;
-                    await this.plugin.saveSettings();
-                }));
+        }
+        if (info.keyPage) {
+            keySetting.descEl.createEl('br');
+            keySetting.descEl.createEl('a', { text: tr('去服务商后台获取密钥', 'Get a key from the provider'), href: info.keyPage });
+        }
 
         let connectionStatus;
         new Setting(containerEl)
-            .setName('检查连接')
-            .setDesc('仅测试当前配置，发送一条简短测试消息，不读取笔记。')
-            .addButton(button => button.setButtonText('测试连接').onClick(async () => {
-                button.setButtonText('正在连接…').setDisabled(true);
-                connectionStatus.setText('正在检查当前服务与主模型…');
+            .setName(tr('测试连接', 'Test connection'))
+            .setDesc(provider === 'local'
+                ? tr('发一句很短的话给本地模型，看它能不能回答。不读笔记，不收费。', 'Sends one short line to the local model to see if it answers. No notes are read; free.')
+                : tr('发一句很短的话，只要求很短的回答，看能不能连通。不读笔记；按服务商价格计费，一般不到一分钱。', 'Sends one short line and asks for a very short answer to check the connection. No notes are read; billed at the provider\'s price, usually a tiny fraction of a cent.'))
+            .addButton(button => button.setButtonText(tr('测试', 'Test')).onClick(async () => {
+                button.setButtonText(tr('正在测试…', 'Testing…')).setDisabled(true);
+                connectionStatus.empty();
+                connectionStatus.setText(tr('正在连接…', 'Connecting…'));
                 try {
-                    const { valid, error } = await this.plugin.validateApiConfig(activeConfig);
-                    connectionStatus.setText(valid ? '连接成功，可以开始整理笔记。' : error || '连接失败，请检查地址、模型和密钥。');
-                } catch (error) {
-                    connectionStatus.setText(`连接失败：${error.message}`);
+                    const result = await this.plugin.validateApiConfig(activeConfig);
+                    connectionStatus.empty();
+                    connectionStatus.toggleClass('is-error', !result.valid);
+                    if (result.valid) {
+                        connectionStatus.setText(tr('连接成功，可以开始整理笔记。', 'Connected. You can start tidying notes.'));
+                    } else {
+                        connectionStatus.createEl('strong', { text: result.message });
+                        connectionStatus.createSpan({ text: ` ${result.next}` });
+                        if (result.keyPage) connectionStatus.createEl('a', { text: ` ${tr('打开服务商后台', 'Open provider console')}`, href: result.keyPage });
+                    }
                 } finally {
-                    button.setButtonText('测试连接').setDisabled(false);
+                    button.setButtonText(tr('测试', 'Test')).setDisabled(false);
                 }
+            }))
+            .addButton(button => button.setButtonText(tr('复制诊断信息', 'Copy diagnostics')).onClick(async () => {
+                await navigator.clipboard.writeText(this.plugin.buildDiagnostics());
+                new Notice(tr('诊断信息已复制，里面没有密钥和笔记内容。', 'Diagnostics copied. They contain no key and no note text.'));
             }));
         connectionStatus = containerEl.createEl('p', { cls: 'atelier-connection-status', attr: { role: 'status', 'aria-live': 'polite' } });
 
-        this.addSectionHeading(containerEl, '功能参数设置');
+        this.addSectionHeading(containerEl, tr('功能参数设置', 'Action settings'));
 
         // -- Mover --
-        new Setting(containerEl).setName('文件夹建议').setHeading();
+        new Setting(containerEl).setName(tr('文件夹建议', 'Folder suggestions')).setHeading();
         new Setting(containerEl)
-            .setName('建议数量')
-            .setDesc('归档建议移动的目标文件夹数量。')
+            .setName(tr('建议数量', 'Number of suggestions'))
+            .setDesc(tr('归档建议移动的目标文件夹数量。', 'How many target folders to suggest.'))
             .addText(text => text
                 .setPlaceholder('4')
                 .setValue(this.plugin.settings.moverSuggestionsCount)
@@ -5686,10 +5951,10 @@ class AiAssistantSettingTab extends PluginSettingTab {
                 }));
 
         new Setting(containerEl)
-            .setName('忽略的文件夹')
-            .setDesc('归档建议将忽略这些文件夹及其子文件夹。每行一个文件夹路径。')
+            .setName(tr('忽略的文件夹', 'Ignored folders'))
+            .setDesc(tr('归档建议将忽略这些文件夹及其子文件夹。每行一个文件夹路径。', 'Folder suggestions skip these folders and their subfolders. One path per line.'))
             .addTextArea(text => text
-                .setPlaceholder('例如：\n40 - Obsidian\ntemplates\nattachments')
+                .setPlaceholder(tr('例如：\n40 - Obsidian\ntemplates\nattachments', 'For example:\n40 - Obsidian\ntemplates\nattachments'))
                 .setValue(this.plugin.settings.ignoredFolders)
                 .onChange(async (value) => {
                     this.plugin.settings.ignoredFolders = value;
@@ -5697,10 +5962,10 @@ class AiAssistantSettingTab extends PluginSettingTab {
                 }));
 
         // -- Tagger --
-        new Setting(containerEl).setName('标签建议').setHeading();
+        new Setting(containerEl).setName(tr('标签建议', 'Tag suggestions')).setHeading();
         new Setting(containerEl)
-            .setName('建议数量')
-            .setDesc('标签功能建议的标签数量。')
+            .setName(tr('建议数量', 'Number of suggestions'))
+            .setDesc(tr('标签功能建议的标签数量。', 'How many tags to suggest.'))
             .addText(text => text
                 .setPlaceholder('12')
                 .setValue(this.plugin.settings.taggerSuggestionsCount)
@@ -5710,8 +5975,8 @@ class AiAssistantSettingTab extends PluginSettingTab {
                 }));
 
         new Setting(containerEl)
-            .setName('只用现有标签')
-            .setDesc('打开后只从库里已有的标签中挑选，结果会再按现有标签过滤一遍，不会冒出新标签。适合标签体系已经定好的库。')
+            .setName(tr('只用现有标签', 'Existing tags only'))
+            .setDesc(tr('打开后只从库里已有的标签中挑选，结果会再按现有标签过滤一遍，不会冒出新标签。适合标签体系已经定好的库。', 'Only pick from tags already in the vault; results are filtered again so no new tag appears. Good for vaults with a settled tag system.'))
             .addToggle(toggle => toggle
                 .setValue(!!this.plugin.settings.taggerExistingOnly)
                 .onChange(async (value) => {
@@ -5720,8 +5985,8 @@ class AiAssistantSettingTab extends PluginSettingTab {
                 }));
 
         new Setting(containerEl)
-            .setName('翻译长英文标签')
-            .setDesc('启用后，会自动将 AI 生成的过长的英文标签翻译成更简洁的目标语言标签。')
+            .setName(tr('翻译长英文标签', 'Translate long English tags'))
+            .setDesc(tr('启用后，会自动将 AI 生成的过长的英文标签翻译成更简洁的目标语言标签。', 'Translates over-long English tags from the AI into shorter tags in the target language.'))
             .addToggle(toggle => toggle
                 .setValue(this.plugin.settings.taggerEnableTranslation)
                 .onChange(async (value) => {
@@ -5732,8 +5997,8 @@ class AiAssistantSettingTab extends PluginSettingTab {
 
         if (this.plugin.settings.taggerEnableTranslation) {
             new Setting(containerEl)
-                .setName('触发翻译的最小长度')
-                .setDesc('当一个英文标签的长度达到此值时，会触发自动翻译。')
+                .setName(tr('触发翻译的最小长度', 'Minimum length to translate'))
+                .setDesc(tr('当一个英文标签的长度达到此值时，会触发自动翻译。', 'English tags at least this long are translated.'))
                 .addText(text => text
                     .setPlaceholder('16')
                     .setValue(this.plugin.settings.taggerTranslationMinLength)
@@ -5743,10 +6008,10 @@ class AiAssistantSettingTab extends PluginSettingTab {
                     }));
 
             new Setting(containerEl)
-                .setName('目标翻译语言')
-                .setDesc('指定长标签的目标翻译语言。')
+                .setName(tr('目标翻译语言', 'Target language'))
+                .setDesc(tr('指定长标签的目标翻译语言。', 'The language long tags are translated into.'))
                 .addText(text => text
-                    .setPlaceholder('中文')
+                    .setPlaceholder(tr('中文', 'Chinese'))
                     .setValue(this.plugin.settings.taggerTranslationTargetLanguage)
                     .onChange(async (value) => {
                         this.plugin.settings.taggerTranslationTargetLanguage = value;
@@ -5755,10 +6020,10 @@ class AiAssistantSettingTab extends PluginSettingTab {
         }
 
         // -- Meta --
-        new Setting(containerEl).setName('属性生成').setHeading();
+        new Setting(containerEl).setName(tr('属性生成', 'Properties')).setHeading();
         new Setting(containerEl)
-            .setName('文件名最大长度')
-            .setDesc('用生成的标题重命名文件时，文件名的最大长度。')
+            .setName(tr('文件名最大长度', 'Maximum file name length'))
+            .setDesc(tr('用生成的标题重命名文件时，文件名的最大长度。', 'Maximum file name length when renaming to the generated title.'))
             .addText(text => text
                 .setPlaceholder('100')
                 .setValue(this.plugin.settings.metaFileNameMaxLength)
@@ -5767,15 +6032,15 @@ class AiAssistantSettingTab extends PluginSettingTab {
                     await this.plugin.saveSettings();
                 }));
 
-        new Setting(containerEl).setName('紧凑侧栏').setDesc('缩短建议之间的距离，适合窄侧栏。').addToggle(t=>t.setValue(this.plugin.settings.sidebarCompact!==false).onChange(async value=>{this.plugin.settings.sidebarCompact=value;await this.plugin.saveSettings();this.plugin.refreshAssistantViews?.();}));
-        new Setting(containerEl).setName('确认后进入下一篇').setDesc('批量审阅时自动显示下一篇待确认笔记。').addToggle(t=>t.setValue(this.plugin.settings.sidebarAutoNext!==false).onChange(async value=>{this.plugin.settings.sidebarAutoNext=value;await this.plugin.saveSettings();}));
-        this.addSectionHeading(containerEl, '默认处理步骤');
+        new Setting(containerEl).setName(tr('紧凑侧栏', 'Compact sidebar')).setDesc(tr('缩短建议之间的距离，适合窄侧栏。', 'Less space between suggestions, for narrow sidebars.')).addToggle(t=>t.setValue(this.plugin.settings.sidebarCompact!==false).onChange(async value=>{this.plugin.settings.sidebarCompact=value;await this.plugin.saveSettings();this.plugin.refreshAssistantViews?.();}));
+        new Setting(containerEl).setName(tr('确认后进入下一篇', 'Next note after confirming')).setDesc(tr('批量审阅时自动显示下一篇待确认笔记。', 'Show the next note to confirm automatically during batch review.')).addToggle(t=>t.setValue(this.plugin.settings.sidebarAutoNext!==false).onChange(async value=>{this.plugin.settings.sidebarAutoNext=value;await this.plugin.saveSettings();}));
+        this.addSectionHeading(containerEl, tr('默认处理步骤', 'Default steps'));
         new Setting(containerEl)
-            .setDesc('选择默认生成哪些建议。按笔记集中确认，正文在主编辑区预览后采用。');
+            .setDesc(tr('选择默认生成哪些建议。按笔记集中确认，正文在主编辑区预览后采用。', 'Choose which suggestions are generated by default. Confirm per note; preview text in the editor before using it.'));
 
         new Setting(containerEl)
-            .setName('优化结构')
-            .setDesc('生成结构与表达的修改建议，逐项审阅后再应用。')
+            .setName(tr('优化结构', 'Tidy structure'))
+            .setDesc(tr('生成结构与表达的修改建议，逐项审阅后再应用。', 'Suggest structure and wording changes, reviewed one by one before applying.'))
             .addToggle(toggle => toggle
                 .setValue(this.plugin.settings.oneClickProcessActions.structurizer)
                 .onChange(async (value) => {
@@ -5784,8 +6049,8 @@ class AiAssistantSettingTab extends PluginSettingTab {
                 }));
 
         new Setting(containerEl)
-            .setName('假名标注')
-            .setDesc('为笔记中的日文添加假名注音，可与优化结构配合使用。')
+            .setName(tr('假名标注', 'Furigana'))
+            .setDesc(tr('为笔记中的日文添加假名注音，可与优化结构配合使用。', 'Add readings to Japanese in the note; works together with tidy structure.'))
             .addToggle(toggle => toggle
                 .setValue(this.plugin.settings.oneClickProcessActions.furigana)
                 .onChange(async (value) => {
@@ -5794,8 +6059,8 @@ class AiAssistantSettingTab extends PluginSettingTab {
                 }));
 
         new Setting(containerEl)
-            .setName('生成元数据')
-            .setDesc('在一个组合卡片中建议标题、摘要和一句话总结。')
+            .setName(tr('生成元数据', 'Generate properties'))
+            .setDesc(tr('在一个组合卡片中建议标题、摘要和一句话总结。', 'Suggest a title, summary and one-liner in one card.'))
             .addToggle(toggle => toggle
                 .setValue(this.plugin.settings.oneClickProcessActions.meta)
                 .onChange(async (value) => {
@@ -5804,8 +6069,8 @@ class AiAssistantSettingTab extends PluginSettingTab {
                 }));
 
         new Setting(containerEl)
-            .setName('智能标签')
-            .setDesc('在一个组合卡片中建议标签。')
+            .setName(tr('智能标签', 'Smart tags'))
+            .setDesc(tr('在一个组合卡片中建议标签。', 'Suggest tags in one card.'))
             .addToggle(toggle => toggle
                 .setValue(this.plugin.settings.oneClickProcessActions.tagger)
                 .onChange(async (value) => {
@@ -5814,8 +6079,8 @@ class AiAssistantSettingTab extends PluginSettingTab {
                 }));
 
         new Setting(containerEl)
-            .setName('移动笔记')
-            .setDesc('在一个组合卡片中建议新的存放位置。')
+            .setName(tr('移动笔记', 'Move note'))
+            .setDesc(tr('在一个组合卡片中建议新的存放位置。', 'Suggest a new location in one card.'))
             .addToggle(toggle => toggle
                 .setValue(this.plugin.settings.oneClickProcessActions.mover)
                 .onChange(async (value) => {
@@ -5824,19 +6089,19 @@ class AiAssistantSettingTab extends PluginSettingTab {
                 }));
 
 
-        this.addSectionHeading(containerEl, '自定义动作');
+        this.addSectionHeading(containerEl, tr('自定义动作', 'Custom actions'));
         containerEl.createEl('p', {
-            text: 'Prompt 支持 {{content}}、{{selection}}、{{file_name}}、{{file_path}}。新增动作会立即出现在侧边栏；若要作为 Obsidian 命令/热键使用，重载插件后会注册。',
+            text: tr('Prompt 支持 {{content}}、{{selection}}、{{file_name}}、{{file_path}}。新增动作会立即出现在侧边栏；若要作为 Obsidian 命令/热键使用，重载插件后会注册。', 'Prompts support {{content}}, {{selection}}, {{file_name}} and {{file_path}}. New actions appear in the sidebar at once; to use them as Obsidian commands or hotkeys, reload the plugin.'),
             cls: 'ai-assistant-settings-note'
         });
 
         const customActions = this.plugin.settings.customActions || [];
         customActions.forEach((action, index) => {
             const actionContainer = containerEl.createDiv({ cls: 'custom-action-settings-block' });
-            new Setting(actionContainer).setName(action.name || `自定义动作 ${index + 1}`).setHeading();
+            new Setting(actionContainer).setName(action.name || tr(`自定义动作 ${index + 1}`, `Custom action ${index + 1}`)).setHeading();
 
             new Setting(actionContainer)
-                .setName('启用')
+                .setName(tr('启用', 'Enabled'))
                 .addToggle(toggle => toggle
                     .setValue(action.enabled !== false)
                     .onChange(async (value) => {
@@ -5846,22 +6111,22 @@ class AiAssistantSettingTab extends PluginSettingTab {
                     }));
 
             new Setting(actionContainer)
-                .setName('名称')
+                .setName(tr('名称', 'Name'))
                 .addText(text => text
-                    .setPlaceholder('例如：提取行动项')
+                    .setPlaceholder(tr('例如：提取行动项', 'For example: extract action items'))
                     .setValue(action.name || '')
                     .onChange(async (value) => {
-                        action.name = value || '自定义动作';
+                        action.name = value || tr('自定义动作', 'Custom action');
                         await this.plugin.saveSettings();
                     }));
 
             new Setting(actionContainer)
-                .setName('输出模式')
+                .setName(tr('输出模式', 'Output'))
                 .addDropdown(dropdown => dropdown
-                    .addOption('sidebar', '侧边栏显示')
-                    .addOption('diff', '差异预览')
-                    .addOption('append', '追加到当前笔记')
-                    .addOption('new-note', '创建新笔记')
+                    .addOption('sidebar', tr('侧边栏显示', 'Sidebar'))
+                    .addOption('diff', tr('差异预览', 'Change preview'))
+                    .addOption('append', tr('追加到当前笔记', 'Append to current note'))
+                    .addOption('new-note', tr('创建新笔记', 'Create new note'))
                     .setValue(action.outputMode || 'sidebar')
                     .onChange(async (value) => {
                         action.outputMode = value;
@@ -5871,7 +6136,7 @@ class AiAssistantSettingTab extends PluginSettingTab {
             new Setting(actionContainer)
                 .setName('Prompt')
                 .addTextArea(text => {
-                    text.setPlaceholder('请基于以下内容执行任务：\n\n{{selection}}\n\n{{content}}')
+                    text.setPlaceholder(tr('请基于以下内容执行任务：\n\n{{selection}}\n\n{{content}}', 'Do the task using the following:\n\n{{selection}}\n\n{{content}}'))
                         .setValue(action.prompt || '')
                         .onChange(async (value) => {
                             action.prompt = value;
@@ -5881,10 +6146,10 @@ class AiAssistantSettingTab extends PluginSettingTab {
                 });
 
             new Setting(actionContainer)
-                .setName('删除')
-                .setDesc('删除此自定义动作。')
+                .setName(tr('删除', 'Delete'))
+                .setDesc(tr('删除此自定义动作。', 'Delete this custom action.'))
                 .addButton(button => button
-                    .setButtonText('删除')
+                    .setButtonText(tr('删除', 'Delete'))
                     .setWarning()
                     .onClick(async () => {
                         this.plugin.settings.customActions = customActions.filter(item => item.id !== action.id);
@@ -5894,15 +6159,15 @@ class AiAssistantSettingTab extends PluginSettingTab {
         });
 
         new Setting(containerEl)
-            .setName('添加自定义动作')
+            .setName(tr('添加自定义动作', 'Add custom action'))
             .addButton(button => button
-                .setButtonText('新增')
+                .setButtonText(tr('新增', 'Add'))
                 .setCta()
                 .onClick(async () => {
                     this.plugin.settings.customActions.push({
                         id: `custom_${Date.now()}`,
-                        name: `自定义动作 ${customActions.length + 1}`,
-                        prompt: '请基于以下内容执行任务：\n\n{{selection}}\n\n{{content}}',
+                        name: tr(`自定义动作 ${customActions.length + 1}`, `Custom action ${customActions.length + 1}`),
+                        prompt: tr('请基于以下内容执行任务：\n\n{{selection}}\n\n{{content}}', 'Do the task using the following:\n\n{{selection}}\n\n{{content}}'),
                         outputMode: 'sidebar',
                         enabled: true
                     });
@@ -5911,79 +6176,79 @@ class AiAssistantSettingTab extends PluginSettingTab {
                 }));
 
 
-        this.addSectionHeading(containerEl, '内置提示词');
-        containerEl.createEl('p', { text: '在这里自定义每个功能的系统提示词(Prompt)。请注意，占位符(例如 {{content}})是必需的，用于在运行时动态插入内容。' });
+        this.addSectionHeading(containerEl, tr('内置提示词', 'Built-in prompts'));
+        containerEl.createEl('p', { text: tr('在这里自定义每个功能的系统提示词(Prompt)。请注意，占位符(例如 {{content}})是必需的，用于在运行时动态插入内容。', 'Customise the prompt for each action. Placeholders such as {{content}} are required; they insert content at run time.') });
 
         new Setting(containerEl)
-            .setName('优化结构')
-            .setDesc('编辑用于优化笔记结构的提示词。')
+            .setName(tr('优化结构', 'Tidy structure'))
+            .setDesc(tr('编辑用于优化笔记结构的提示词。', 'Edit the prompt that tidies note structure.'))
             .addButton(button => {
-                button.setButtonText('编辑').onClick(() => {
-                    new PromptEditModal(this.app, this.plugin, 'structurizerPrompt', '编辑优化结构 Prompt').open();
+                button.setButtonText(tr('编辑', 'Edit')).onClick(() => {
+                    new PromptEditModal(this.app, this.plugin, 'structurizerPrompt', tr('编辑优化结构 Prompt', 'Edit tidy structure prompt')).open();
                 });
             });
 
         new Setting(containerEl)
-            .setName('移动笔记')
-            .setDesc('编辑用于建议存放文件夹的提示词。')
+            .setName(tr('移动笔记', 'Move note'))
+            .setDesc(tr('编辑用于建议存放文件夹的提示词。', 'Edit the prompt that suggests folders.'))
             .addButton(button => {
-                button.setButtonText('编辑').onClick(() => {
-                    new PromptEditModal(this.app, this.plugin, 'moverPrompt', '编辑移动笔记 Prompt').open();
+                button.setButtonText(tr('编辑', 'Edit')).onClick(() => {
+                    new PromptEditModal(this.app, this.plugin, 'moverPrompt', tr('编辑移动笔记 Prompt', 'Edit move note prompt')).open();
                 });
             });
 
         new Setting(containerEl)
-            .setName('智能标签')
-            .setDesc('编辑用于生成标签的提示词。')
+            .setName(tr('智能标签', 'Smart tags'))
+            .setDesc(tr('编辑用于生成标签的提示词。', 'Edit the prompt that generates tags.'))
             .addButton(button => {
-                button.setButtonText('编辑').onClick(() => {
-                    new PromptEditModal(this.app, this.plugin, 'taggerPrompt', '编辑智能标签 Prompt').open();
+                button.setButtonText(tr('编辑', 'Edit')).onClick(() => {
+                    new PromptEditModal(this.app, this.plugin, 'taggerPrompt', tr('编辑智能标签 Prompt', 'Edit smart tags prompt')).open();
                 });
             });
 
         new Setting(containerEl)
-            .setName('生成元数据')
-            .setDesc('编辑用于生成标题和摘要的提示词。')
+            .setName(tr('生成元数据', 'Generate properties'))
+            .setDesc(tr('编辑用于生成标题和摘要的提示词。', 'Edit the prompt that generates title and summary.'))
             .addButton(button => {
-                button.setButtonText('编辑').onClick(() => {
-                    new PromptEditModal(this.app, this.plugin, 'metaPrompt', '编辑生成元数据 Prompt').open();
+                button.setButtonText(tr('编辑', 'Edit')).onClick(() => {
+                    new PromptEditModal(this.app, this.plugin, 'metaPrompt', tr('编辑生成元数据 Prompt', 'Edit properties prompt')).open();
                 });
             });
 
         new Setting(containerEl)
-            .setName('翻译标签')
-            .setDesc('编辑用于翻译长标签的提示词。')
+            .setName(tr('翻译标签', 'Translate tags'))
+            .setDesc(tr('编辑用于翻译长标签的提示词。', 'Edit the prompt that translates long tags.'))
             .addButton(button => {
-                button.setButtonText('编辑').onClick(() => {
-                    new PromptEditModal(this.app, this.plugin, 'translationPrompt', '编辑翻译 Prompt').open();
+                button.setButtonText(tr('编辑', 'Edit')).onClick(() => {
+                    new PromptEditModal(this.app, this.plugin, 'translationPrompt', tr('编辑翻译 Prompt', 'Edit translation prompt')).open();
                 });
             });
 
-        this.addSectionHeading(containerEl, '配置管理');
+        this.addSectionHeading(containerEl, tr('配置管理', 'Manage settings'));
 
         new Setting(containerEl)
-            .setName('导出设置')
-            .setDesc('导出配置与提示词，密钥会被移除。导入后需要另行填写密钥。')
+            .setName(tr('导出设置', 'Export settings'))
+            .setDesc(tr('导出配置与提示词，密钥会被移除。导入后需要另行填写密钥。', 'Export configurations and prompts. Keys are removed; enter them again after importing.'))
             .addButton(button => {
-                button.setButtonText('导出设置').onClick(() => {
+                button.setButtonText(tr('导出设置', 'Export settings')).onClick(() => {
                     this.exportSettings();
                 });
             });
 
         new Setting(containerEl)
-            .setName('导入设置')
-            .setDesc('从JSON文件导入设置配置。')
+            .setName(tr('导入设置', 'Import settings'))
+            .setDesc(tr('从JSON文件导入设置配置。', 'Import settings from a JSON file.'))
             .addButton(button => {
-                button.setButtonText('导入设置').onClick(() => {
+                button.setButtonText(tr('导入设置', 'Import settings')).onClick(() => {
                     this.importSettings();
                 });
             });
 
         new Setting(containerEl)
-            .setName('重置设置')
-            .setDesc('将所有设置重置为默认值。')
+            .setName(tr('重置设置', 'Reset settings'))
+            .setDesc(tr('将所有设置重置为默认值。', 'Reset every setting to its default.'))
             .addButton(button => {
-                button.setButtonText('重置设置')
+                button.setButtonText(tr('重置设置', 'Reset settings'))
                     .setWarning()
                     .onClick(() => {
                         this.resetSettings();
@@ -6005,7 +6270,7 @@ class AiAssistantSettingTab extends PluginSettingTab {
         document.body.removeChild(a);
         URL.revokeObjectURL(url);
 
-        new Notice('设置已导出！', 3000);
+        new Notice(tr('设置已导出！', 'Settings exported.'), 3000);
     }
 
     // 导入设置
@@ -6023,7 +6288,7 @@ class AiAssistantSettingTab extends PluginSettingTab {
 
                 // 验证导入的设置
                 if (typeof importedSettings !== 'object') {
-                    throw new Error('无效的设置文件格式');
+                    throw new Error(tr('无效的设置文件格式', 'Invalid settings file'));
                 }
 
                 // 合并设置（保留默认值），且不让 [REDACTED] 覆盖已保存密钥
@@ -6035,9 +6300,9 @@ class AiAssistantSettingTab extends PluginSettingTab {
                 // 刷新设置界面
                 this.refresh();
 
-                new Notice('设置导入成功！', 3000);
+                new Notice(tr('设置导入成功！', 'Settings imported.'), 3000);
             } catch (error) {
-                new Notice(`导入失败: ${error.message}`, 5000);
+                new Notice(tr(`导入失败: ${error.message}`, `Import failed: ${error.message}`), 5000);
             }
         };
         input.click();
@@ -6045,12 +6310,12 @@ class AiAssistantSettingTab extends PluginSettingTab {
 
     // 重置设置
     async resetSettings() {
-        const confirmed = await confirmAction(this.app, '确定要重置所有设置为默认值吗？此操作不可撤销。', '重置');
+        const confirmed = await confirmAction(this.app, tr('确定要重置所有设置为默认值吗？此操作不可撤销。', 'Reset every setting to its default? This cannot be undone.'), tr('重置', 'Reset'));
         if (confirmed) {
             this.plugin.settings = JSON.parse(JSON.stringify(DEFAULT_SETTINGS));
             await this.plugin.saveSettings();
             this.refresh();
-            new Notice('设置已重置为默认值！', 3000);
+            new Notice(tr('设置已重置为默认值！', 'Settings reset to defaults.'), 3000);
         }
     }
 }
@@ -6066,14 +6331,14 @@ class BatchProcessingModal extends GlassModal {
         const { contentEl } = this;
         contentEl.empty();
 
-        contentEl.createEl("h2", { text: "选择批量处理方式" });
+        contentEl.createEl("h2", { text: tr("选择批量处理方式", 'Choose how to batch') });
 
         // 选择文件
         const filesOption = contentEl.createDiv({ cls: "batch-option" });
         filesOption.createDiv({ cls: "batch-option-icon", text: "📄" });
         const filesOptionContent = filesOption.createDiv({ cls: "batch-option-content" });
-        filesOptionContent.createEl("h3", { text: "选择多个文件" });
-        filesOptionContent.createEl("p", { text: "手动选择要处理的文件" });
+        filesOptionContent.createEl("h3", { text: tr("选择多个文件", 'Choose several files') });
+        filesOptionContent.createEl("p", { text: tr("手动选择要处理的文件", 'Pick the files to process by hand') });
         filesOption.addEventListener('click', () => {
             this.close();
             this.showFileSelector();
@@ -6083,15 +6348,15 @@ class BatchProcessingModal extends GlassModal {
         const folderOption = contentEl.createDiv({ cls: "batch-option" });
         folderOption.createDiv({ cls: "batch-option-icon", text: "📁" });
         const folderOptionContent = folderOption.createDiv({ cls: "batch-option-content" });
-        folderOptionContent.createEl("h3", { text: "选择文件夹" });
-        folderOptionContent.createEl("p", { text: "处理整个文件夹中的所有文件" });
+        folderOptionContent.createEl("h3", { text: tr("选择文件夹", 'Choose a folder') });
+        folderOptionContent.createEl("p", { text: tr("处理整个文件夹中的所有文件", 'Process every file in a folder') });
         folderOption.addEventListener('click', () => {
             this.close();
             this.showFolderSelector();
         });
 
         // 取消按钮
-        const cancelBtn = contentEl.createEl("button", { text: "取消", cls: "mod-cancel" });
+        const cancelBtn = contentEl.createEl("button", { text: tr("取消", 'Cancel'), cls: "mod-cancel" });
         cancelBtn.addEventListener('click', () => this.close());
     }
 
@@ -6155,7 +6420,7 @@ class AdvancedFileSelectionModal extends GlassModal {
 
         // 移除固定尺寸，让Obsidian自适应
 
-        contentEl.createEl("h2", { text: "高级文件选择器" });
+        contentEl.createEl("h2", { text: tr("高级文件选择器", 'Advanced file picker') });
 
         // 创建主容器
         const mainContainer = contentEl.createDiv({ cls: "ai-assistant-advanced-file-selector-compact" });
@@ -6176,14 +6441,14 @@ class AdvancedFileSelectionModal extends GlassModal {
         // 筛选类型选择器
         const filterTypeSelect = container.createEl("select", { cls: "ai-assistant-filter-type-select" });
         [
-            ["", "选择筛选类型"],
-            ["folder", "文件夹路径"],
-            ["tags", "标签"],
-            ["properties", "属性"],
-            ["missing-properties", "缺少属性"],
-            ["query", "查询语法"],
-            ["date", "修改日期"],
-            ["size", "文件大小"]
+            ["", tr("选择筛选类型", 'Filter type')],
+            ["folder", tr("文件夹路径", 'Folder path')],
+            ["tags", tr("标签", 'Tag')],
+            ["properties", tr("属性", 'Property')],
+            ["missing-properties", tr("缺少属性", 'Missing property')],
+            ["query", tr("查询语法", 'Query')],
+            ["date", tr("修改日期", 'Modified date')],
+            ["size", tr("文件大小", 'File size')]
         ].forEach(([value, text]) => filterTypeSelect.createEl("option", { value, text }));
 
         // 筛选值容器
@@ -6192,7 +6457,7 @@ class AdvancedFileSelectionModal extends GlassModal {
         // 筛选值输入框
         const filterInput = filterValueContainer.createEl("input", {
             type: "text",
-            placeholder: "输入筛选条件...",
+            placeholder: tr("输入筛选条件...", 'Enter a filter…'),
             cls: "ai-assistant-filter-value-input"
         });
 
@@ -6223,7 +6488,7 @@ class AdvancedFileSelectionModal extends GlassModal {
 
         // 清除按钮
         const clearButton = container.createEl("button", {
-            text: "清除",
+            text: tr("清除", 'Clear'),
             cls: "ai-assistant-clear-filter-btn"
         });
         clearButton.addEventListener('click', () => {
@@ -6237,11 +6502,11 @@ class AdvancedFileSelectionModal extends GlassModal {
         // 快速筛选按钮组
         const quickFilters = container.createDiv({ cls: "ai-assistant-quick-filters" });
         [
-            ["folder", "", "所有文件"],
-            ["folder", "current", "当前文件夹"],
+            ["folder", "", tr("所有文件", 'All files')],
+            ["folder", "current", tr("当前文件夹", 'Current folder')],
             ["properties", "status: ❌", "status: ❌"],
-            ["missing-properties", "status", "缺少 status 属性"],
-            ["missing-properties", "tags", "缺少 tags 属性"]
+            ["missing-properties", "status", tr("缺少 status 属性", 'Missing status property')],
+            ["missing-properties", "tags", tr("缺少 tags 属性", 'Missing tags property')]
         ].forEach(([type, value, text]) => quickFilters.createEl("button", {
             cls: "ai-assistant-quick-filter-btn",
             text,
@@ -6276,15 +6541,15 @@ class AdvancedFileSelectionModal extends GlassModal {
 
     getFilterPlaceholder(type) {
         const placeholders = {
-            'folder': '输入文件夹路径，支持通配符 * 和 ?',
-            'tags': '输入标签，多个标签用逗号分隔',
-            'properties': '格式: 属性名=值 或 属性名:值',
-            'missing-properties': '输入属性名，多个属性用逗号分隔',
-            'query': '使用查询语法，如: path:folder/ tag:#important',
-            'date': '格式: 2024-01-01 或 2024-01-01,2024-12-31',
-            'size': '格式: 10 或 10,100 (KB)'
+            'folder': tr('输入文件夹路径，支持通配符 * 和 ?', 'Folder path; wildcards * and ? work'),
+            'tags': tr('输入标签，多个标签用逗号分隔', 'Tags, separated by commas'),
+            'properties': tr('格式: 属性名=值 或 属性名:值', 'Format: name=value or name:value'),
+            'missing-properties': tr('输入属性名，多个属性用逗号分隔', 'Property names, separated by commas'),
+            'query': tr('使用查询语法，如: path:folder/ tag:#important', 'Query, for example: path:folder/ tag:#important'),
+            'date': tr('格式: 2024-01-01 或 2024-01-01,2024-12-31', 'Format: 2024-01-01 or 2024-01-01,2024-12-31'),
+            'size': tr('格式: 10 或 10,100 (KB)', 'Format: 10 or 10,100 (KB)')
         };
-        return placeholders[type] || '输入筛选条件...';
+        return placeholders[type] || tr('输入筛选条件...', 'Enter a filter…');
     }
 
     updateFilterDropdown(container, type, inputElement) {
@@ -6322,7 +6587,7 @@ class AdvancedFileSelectionModal extends GlassModal {
         // 创建可搜索的下拉选择器
         const dropdown = container.createEl("select", { cls: "ai-assistant-filter-dropdown" });
         dropdown.size = Math.min(options.length + 1, 15); // 显示最多15个选项
-        dropdown.createEl("option", { value: "", text: "选择现有值..." });
+        dropdown.createEl("option", { value: "", text: tr("选择现有值...", 'Choose an existing value…') });
 
         options.forEach(option => {
             dropdown.createEl("option", {
@@ -6515,13 +6780,13 @@ class AdvancedFileSelectionModal extends GlassModal {
         // 文件统计信息
         const statsContainer = container.createDiv({ cls: "ai-assistant-file-stats" });
         this.statsText = statsContainer.createEl("span", {
-            text: `显示 ${this.filteredFiles.length} / ${this.allFiles.length} 个文件`
+            text: tr(`显示 ${this.filteredFiles.length} / ${this.allFiles.length} 个文件`, `Showing ${this.filteredFiles.length} of ${this.allFiles.length} files`)
         });
 
         // 全选/取消全选按钮
         const selectAllContainer = container.createDiv({ cls: "ai-assistant-select-all-container" });
-        const selectAllBtn = selectAllContainer.createEl("button", { text: "全选当前结果" });
-        const deselectAllBtn = selectAllContainer.createEl("button", { text: "取消全选" });
+        const selectAllBtn = selectAllContainer.createEl("button", { text: tr("全选当前结果", 'Select all results') });
+        const deselectAllBtn = selectAllContainer.createEl("button", { text: tr("取消全选", 'Select none') });
 
         selectAllBtn.addEventListener('click', () => {
             this.filteredFiles.forEach(file => this.selectedFiles.add(file));
@@ -6546,7 +6811,7 @@ class AdvancedFileSelectionModal extends GlassModal {
 
         if (this.filteredFiles.length === 0) {
             this.fileListContainer.createEl("div", {
-                text: "没有找到匹配的文件",
+                text: tr("没有找到匹配的文件", 'No matching files'),
                 cls: "ai-assistant-no-files-message"
             });
             return;
@@ -6573,7 +6838,7 @@ class AdvancedFileSelectionModal extends GlassModal {
             // 文件夹标题
             const folderHeader = folderSection.createDiv({ cls: "ai-assistant-folder-header" });
             folderHeader.createSpan({ cls: "ai-assistant-folder-name", text: `📁 ${folderPath}` });
-            folderHeader.createSpan({ cls: "ai-assistant-folder-count", text: `${files.length} 个文件` });
+            folderHeader.createSpan({ cls: "ai-assistant-folder-count", text: tr(`${files.length} 个文件`, `${files.length} files`) });
 
             // 文件夹全选复选框
             const folderSelectAll = folderHeader.createEl("input", {
@@ -6698,7 +6963,7 @@ class AdvancedFileSelectionModal extends GlassModal {
                         });
                     });
                 } catch (e) {
-                    console.error('标签筛选错误:', e);
+                    console.error(tr('标签筛选错误:', 'Tag filter error:'), e);
                     return false;
                 }
             });
@@ -6813,7 +7078,7 @@ class AdvancedFileSelectionModal extends GlassModal {
                     });
                 });
             } catch (e) {
-                console.error('查询语法解析错误:', e);
+                console.error(tr('查询语法解析错误:', 'Query parse error:'), e);
             }
         }
 
@@ -6844,24 +7109,24 @@ class AdvancedFileSelectionModal extends GlassModal {
         const actionsContainer = container.createDiv({ cls: "ai-assistant-bottom-actions" });
 
         const selectedCount = actionsContainer.createEl("span", {
-            text: `已选择 ${this.selectedFiles.size} 个文件`,
+            text: tr(`已选择 ${this.selectedFiles.size} 个文件`, `${this.selectedFiles.size} files selected`),
             cls: "ai-assistant-selected-count"
         });
         this.bottomSelectedCount = selectedCount;
 
         const confirmBtn = actionsContainer.createEl("button", {
-            text: "确认选择",
+            text: tr("确认选择", 'Confirm'),
             cls: "mod-cta"
         });
 
         const cancelBtn = actionsContainer.createEl("button", {
-            text: "取消",
+            text: tr("取消", 'Cancel'),
             cls: "mod-cancel"
         });
 
         confirmBtn.addEventListener('click', () => {
             if (this.selectedFiles.size === 0) {
-                new Notice("请至少选择一个文件", 2000);
+                new Notice(tr("请至少选择一个文件", 'Select at least one file'), 2000);
                 return;
             }
             this.onChoose(Array.from(this.selectedFiles));
@@ -6876,10 +7141,10 @@ class AdvancedFileSelectionModal extends GlassModal {
      */
     updateSelectionDisplays() {
         if (this.statsText) {
-            this.statsText.textContent = `显示 ${this.filteredFiles.length} / ${this.allFiles.length} 个文件，已选择 ${this.selectedFiles.size} 个`;
+            this.statsText.textContent = tr(`显示 ${this.filteredFiles.length} / ${this.allFiles.length} 个文件，已选择 ${this.selectedFiles.size} 个`, `Showing ${this.filteredFiles.length} of ${this.allFiles.length} files, ${this.selectedFiles.size} selected`);
         }
         if (this.bottomSelectedCount) {
-            this.bottomSelectedCount.textContent = `已选择 ${this.selectedFiles.size} 个文件`;
+            this.bottomSelectedCount.textContent = tr(`已选择 ${this.selectedFiles.size} 个文件`, `${this.selectedFiles.size} files selected`);
         }
     }
 

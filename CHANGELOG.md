@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.6.0 — 2026-10-30
+
+- **Providers:** provider, API URL, model and key are separate fields. Presets for DeepSeek (now the default for new installs), Qwen (Alibaba Cloud Model Studio), SiliconFlow, Kimi and Zhipu GLM fill in the official address and common models; leave the address empty to use it. Older "OpenAI-compatible" configurations that point at one of these hosts are recognised as that preset, with address, model and key unchanged.
+- **Test connection:** tells apart a missing key, a rejected key (401/403), no balance or quota, rate limiting, an unknown model name, a wrong address, a timeout or network failure and a provider error, each with one next step and a link to the provider's key page where it helps. The setting says beforehand that one short line is sent and may cost a tiny amount.
+- **Diagnostics:** *Copy diagnostics* gives versions, provider, host, model, whether a key is set and the last test result, without the key, the full address or note text. Provider error messages are scrubbed of anything that looks like a key, and raw AI answers are no longer printed to the console.
+- **First run:** with no AI connected, the sidebar offers **Load example**: a note marked as a demo with pre-written suggestions that can be ticked, applied and undone without any network. Also available as a command; the demo note can be deleted from its banner.
+- **Empty states:** not connected, no note open, working, nothing suggested and failed each say what happened and offer one next step. A failed run shows the kind of failure (for example out of quota) instead of the raw response.
+- **Progress and cancel:** one-click runs show "Step n of m" in the notice and the sidebar banner and can be cancelled; after cancelling, the note is untouched and *Generate again* is offered.
+- **Shrink warning:** when tidied text is much shorter than the original, the review card and the checklist say how much shorter and ask you to read it through before applying.
+- **English interface:** every part of the interface, including errors, notices and empty states, follows Obsidian's language (Chinese, or English for every other language). Prompts sent to the model are unchanged. New installs in English do not translate long tags into Chinese.
+- **README:** English and Chinese versions with new screenshots, a data-flow table (what is sent, to whom, where the key is stored, other devices) and plugin and model costs listed separately.
+
 ## 1.5.0 — 2026-10-29
 
 - **Local models:** new provider *Local model (Ollama, LM Studio)*. No API key needed; notes never leave the computer. Defaults to Ollama's address.

@@ -2829,3 +2829,12 @@
   .ap { --ap-label-3: var(--ap-label-2); }
   .ap.mist-sidebar :is(textarea, input)::placeholder { color: var(--ap-label-2); }
 }
+
+/* Empty states, demo banner and warnings (1.6). Colours come from the theme. */
+.ap.mist-sidebar .mist-empty .mist-primary { margin-top: var(--ap-s3); }
+.ap.mist-sidebar .mist-empty.mist-setup,
+.ap.mist-sidebar .mist-empty.mist-demo { margin-bottom: var(--ap-s3); background: color-mix(in srgb, var(--ap-accent) 8%, var(--ap-page)); }
+.ap.mist-sidebar .mist-empty.mist-demo strong::before { content: ""; display: inline-block; width: 8px; height: 8px; margin-right: 6px; border-radius: 50%; background: var(--ap-warn); vertical-align: middle; }
+.assistant-shrink-warning { margin: 8px 0; padding: 8px 10px; border-radius: var(--radius-s); background: color-mix(in srgb, var(--color-orange) 12%, transparent); color: color-mix(in srgb, var(--color-orange) 60%, var(--text-normal)); font-size: var(--font-ui-small); }
+.assistant-settings-morning .atelier-connection-status.is-error { color: color-mix(in srgb, var(--color-red) 70%, var(--text-normal)); }
+.assistant-settings-morning .atelier-connection-status a { margin-left: 6px; }

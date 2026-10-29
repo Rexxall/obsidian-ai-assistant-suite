@@ -5,7 +5,7 @@ class El {
 }
 function fixture(file={basename:'Example',path:'Example.md',extension:'md',parent:{path:'/'}}){
  const module={exports:{}};vm.runInNewContext(fs.readFileSync(__dirname+'/main.js','utf8')+'\nmodule.exports=AssistantView;',{module,console,require:()=>Object.fromEntries(['Plugin','Notice','PluginSettingTab','Setting','FuzzySuggestModal','Modal','ItemView','TFile'].map(k=>[k,class{}]))});
- let runArgs,resolve;const v=Object.create(module.exports.prototype);v.tasks=[];v.containerEl={children:[new El(),new El()]};v.plugin={settings:{oneClickProcessActions:{tagger:true},customActions:[]},app:{workspace:{getActiveFile:()=>file}},getRecentHistory:()=>[],runOneClickSmartProcess:(...a)=>{runArgs=a;return new Promise(r=>resolve=r);}};
+ let runArgs,resolve;const v=Object.create(module.exports.prototype);v.tasks=[];v.containerEl={children:[new El(),new El()]};v.plugin={settings:{oneClickProcessActions:{tagger:true},customActions:[]},app:{workspace:{getActiveFile:()=>file}},getRecentHistory:()=>[],hasUsableConfig:()=>true,runOneClickSmartProcess:(...a)=>{runArgs=a;return new Promise(r=>resolve=r);}};
  v.renderTask=(el,t)=>el.createEl('article',{text:t.id});v.render();
  const all=(e=v.containerEl.children[1])=>[e,...e.children.flatMap(all)];
  return {v,all,button:text=>all().find(e=>e.tag==='button'&&e.options.text===text),get args(){return runArgs;},finish:()=>resolve()};

@@ -28,7 +28,7 @@ test('a 1.3.6 multi-configuration file keeps every configuration, the active one
  assert.equal(f.p.settings.dailyProcessedCounts['2026-01-01'],3);assert.equal(f.p.settings.actionUsageCounts.标签,2);
  assert.equal(f.p.settings.apiConfigs[1].allowFallback,undefined);
 });
-test('a fresh install gets neutral defaults',async()=>{
+test('a fresh install starts with a DeepSeek configuration and no key',async()=>{
  const f=load({});await f.p.loadSettings();
- assert.equal(f.p.settings.apiConfigs.length,1);assert.match(f.p.settings.apiConfigs[0].apiUrl,/^https:\/\/api\.openai\.com\//);assert.equal(f.p.settings.ignoredFolders,'');
+ assert.equal(f.p.settings.apiConfigs.length,1);assert.equal(f.p.settings.apiConfigs[0].apiProvider,'deepseek');assert.equal(f.p.settings.apiConfigs[0].modelName,'deepseek-flash');assert.equal(f.p.settings.ignoredFolders,'');
 });
