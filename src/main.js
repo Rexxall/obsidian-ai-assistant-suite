@@ -5668,7 +5668,7 @@ class AiAssistantSettingTab extends PluginSettingTab {
                 });
             });
 
-        const actionsContainer = topContainer.createDiv();
+        const actionsContainer = new Setting(topContainer).setClass('ai-assistant-config-actions').controlEl;
         const addButton = actionsContainer.createEl('button', { text: tr('新增配置', 'Add configuration') });
         addButton.onclick = async () => {
             const newId = 'config_' + Date.now();
@@ -5689,7 +5689,6 @@ class AiAssistantSettingTab extends PluginSettingTab {
         };
 
         const delButton = actionsContainer.createEl('button', { text: tr('删除当前配置', 'Delete this configuration') });
-        delButton.addClass('ai-assistant-u-gap-left');
         if (apiConfigs.length <= 1) {
             delButton.disabled = true;
         } else {
@@ -5704,7 +5703,6 @@ class AiAssistantSettingTab extends PluginSettingTab {
         // 优先级调整按钮
         const currentIdx = apiConfigs.indexOf(activeConfig);
         const upBtn = actionsContainer.createEl('button', { text: tr('↑ 提高优先级', '↑ Raise priority') });
-        upBtn.addClass('ai-assistant-u-gap-left');
         upBtn.disabled = currentIdx <= 0;
         upBtn.onclick = async () => {
             if (currentIdx <= 0) return;
@@ -5716,7 +5714,6 @@ class AiAssistantSettingTab extends PluginSettingTab {
         };
 
         const downBtn = actionsContainer.createEl('button', { text: tr('↓ 降低优先级', '↓ Lower priority') });
-        downBtn.addClass('ai-assistant-u-gap-left-small');
         downBtn.disabled = currentIdx >= apiConfigs.length - 1;
         downBtn.onclick = async () => {
             if (currentIdx >= apiConfigs.length - 1) return;
@@ -5728,8 +5725,6 @@ class AiAssistantSettingTab extends PluginSettingTab {
         };
         
         if (!activeConfig) return;
-
-        containerEl.createEl('hr', { cls: 'atelier-settings-divider' });
 
         // 显示当前配置的优先级
         const priorityIdx = apiConfigs.indexOf(activeConfig);
@@ -6177,7 +6172,7 @@ class AiAssistantSettingTab extends PluginSettingTab {
 
 
         this.addSectionHeading(containerEl, tr('内置提示词', 'Built-in prompts'));
-        containerEl.createEl('p', { text: tr('在这里自定义每个功能的系统提示词(Prompt)。请注意，占位符(例如 {{content}})是必需的，用于在运行时动态插入内容。', 'Customise the prompt for each action. Placeholders such as {{content}} are required; they insert content at run time.') });
+        containerEl.createEl('p', { cls: 'ai-assistant-settings-note', text: tr('在这里自定义每个功能的系统提示词(Prompt)。请注意，占位符(例如 {{content}})是必需的，用于在运行时动态插入内容。', 'Customise the prompt for each action. Placeholders such as {{content}} are required; they insert content at run time.') });
 
         new Setting(containerEl)
             .setName(tr('优化结构', 'Tidy structure'))

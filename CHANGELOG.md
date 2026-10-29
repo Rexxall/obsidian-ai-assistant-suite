@@ -10,6 +10,7 @@
 - **Progress and cancel:** one-click runs show "Step n of m" in the notice and the sidebar banner and can be cancelled; after cancelling, the note is untouched and *Generate again* is offered.
 - **Shrink warning:** when tidied text is much shorter than the original, the review card and the checklist say how much shorter and ask you to read it through before applying.
 - **English interface:** every part of the interface, including errors, notices and empty states, follows Obsidian's language (Chinese, or English for every other language). Prompts sent to the model are unchanged. New installs in English do not translate long tags into Chinese.
+- **Settings alignment:** headings, notes, row text and buttons share one left edge, and controls one right edge. The configuration picker and its four buttons are one card, without the extra divider; a custom action's rows no longer sit inside a second padding.
 - **README:** English and Chinese versions with new screenshots, a data-flow table (what is sent, to whom, where the key is stored, other devices) and plugin and model costs listed separately.
 
 ## 1.5.0 — 2026-10-29
