@@ -1,7 +1,7 @@
 {
   "id": "ai-assistant-suite",
   "name": "AI Assistant Suite",
-  "version": "1.6.1",
+  "version": "1.6.2",
   "minAppVersion": "1.13.0",
   "description": "Ask an AI to suggest a title, tags, a folder and tidier text for a note, then review and apply only what you accept. Works with cloud APIs or a local model.",
   "author": "Rexxall",

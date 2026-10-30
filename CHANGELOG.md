@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.6.2 — 2026-10-30
+
+- **Directory review:** no duplicate CSS properties left; the look is unchanged.
+
 ## 1.6.1 — 2026-10-30
 
 - **Directory review:** no CSS warnings left in the community directory scorecard. The stylesheet no longer uses `!important`, `all` or `:has`, and `column-gap` became `gap`. Settings rows mark the last row of each group with a class instead of `:has`, and the sidebar marks its pane instead of `:has`; reduced motion still switches every animation off. Buttons, fields and settings look the same, checked by comparing the computed style of every control and screenshots in light and dark.
