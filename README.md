@@ -1,14 +1,12 @@
 # AI Assistant Suite
 
-**An AI that proposes; a person who decides.**
-
 [中文说明](README_zh.md)
 
 Ask an AI to suggest a title, summary, tags, a folder and tidier text for the note you are on. Every suggestion lands in a review list; nothing is written until you tick it and apply, and every change can be undone.
 
 ![A tidied preview of a meeting note on the left and the assistant's suggestions on the right](docs/screenshots/hero.png)
 
-*Left: the whole note as it would look after tidying (not written yet). Right: the suggested title, summary and tags, each of which can be edited or removed.*
+*Left: the tidied note, not written yet. Right: suggestions you can edit or remove.*
 
 ## Start here
 
@@ -27,11 +25,7 @@ Ask an AI to suggest a title, summary, tags, a folder and tidier text for the no
 
 ![Review checklist with tags, properties, a folder move and the body text, each with its own tick box](docs/screenshots/review-checklist.png)
 
-*Before applying, each change gets its own row; untick anything you do not want.*
-
 ![Connection settings: provider, API URL, model and key filled in separately, with a successful test](docs/screenshots/connection.png)
-
-*Provider, address, model and key are separate fields, and the test says exactly what went wrong when it fails.*
 
 ## Where your data goes
 
@@ -60,12 +54,10 @@ The encryption protects against casual reading of the file, not against someone 
 
 Leave the address empty to use the official one; a base URL such as `https://api.deepseek.com` or a proxy also works. The model list is a shortcut; you can type any model name.
 
-**Test connection** tells these apart, each with one next step: no key, key rejected (401/403), out of balance or quota (402, or 429 with a quota message), rate limited, model name not recognised, wrong address (404), timeout or network failure, provider error (5xx).
-
 ## How it works
 
-1. Choose what you want for the open note: title and summary, tags, folder, tidy text, furigana for Japanese, or a custom action. Long runs show which step they are on and can be cancelled.
-2. The suggestions appear under *This note*. The tidied text opens as a whole-note preview; if it is much shorter than the original, a warning asks you to read it through first.
+1. Choose what you want for the open note: title and summary, tags, folder, tidy text, furigana for Japanese, or a custom action.
+2. The suggestions appear under *This note*. The tidied text opens as a whole-note preview.
 3. **Review and apply** opens the checklist. Only ticked rows are written; if the note changed while you were reviewing, nothing is written and you are asked to generate again.
 4. Every applied note can be undone. For a folder, run a batch and review the results one note at a time.
 
@@ -73,7 +65,7 @@ Leave the address empty to use the official one; a base URL such as `https://api
 
 Every part of the interface, including errors and empty states, follows Obsidian's language: Chinese, or English for every other language. The prompts sent to the model are editable in settings.
 
-Colours come from your theme's variables and the styles apply only inside the plugin's views. Checked in light and dark mode with Default, Minimal, Blue Topaz and AnuPpuccin.
+Colours come from your theme's variables and the styles apply only inside the plugin's views.
 
 ## Limits
 
@@ -81,17 +73,6 @@ Colours come from your theme's variables and the styles apply only inside the pl
 - Batch runs send one request per note; large folders cost accordingly.
 - Answers do not stream: requests use Obsidian's `requestUrl`, which works on mobile and is not blocked by CORS but returns the whole answer at once. In testing, tidying a 10,000-character note with DeepSeek Flash took about 48 seconds.
 - A local model on your computer cannot be reached from a phone.
-
-## Development
-
-```bash
-npm ci
-npm run build          # src/main.js -> main.js (the file attached to each release)
-npm test               # builds, then runs the tests
-npm run release:check  # official Obsidian lint, tests, release zip and a byte check against main.js
-```
-
-The tests load the built `main.js` in a sandbox with stub classes and cover guarded writes, partial acceptance, previews, per-note review, provider presets, connection test classification, diagnostics without secrets, timeouts, opt-in backups, upgrading older data and the batch send summary. Versions are in [CHANGELOG.md](CHANGELOG.md).
 
 ## License
 

@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.6.3 — 2026-10-30
+
+- **Settings:** shorter. Descriptions that only repeated a setting's name are gone; the ones left say what you cannot see, such as cost, syncing, defaults and which setting wins. Compact sidebar and next-note now sit under their own *Sidebar* heading.
+- **README:** shorter, with the development notes moved to CONTRIBUTING.md.
+
 ## 1.6.2 — 2026-10-30
 
 - **Directory review:** no duplicate CSS properties left; the look is unchanged.

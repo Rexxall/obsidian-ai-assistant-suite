@@ -1110,7 +1110,6 @@ class AssistantView extends ItemView {
     openAtelierSettings() {
         const modal=new GlassModal(this.plugin.app);modal.modalEl.addClass('assistant-atelier-modal');
         modal.contentEl.createEl('h2',{text:tr('处理偏好', 'Preferences')});
-        modal.contentEl.createEl('p',{text:tr('调整默认步骤。模型、提示词和全部高级选项可在完整设置中管理。', 'Change the default steps. Models, prompts and every advanced option are in the full settings.')});
         const chosen={...(this.plugin.settings.oneClickProcessActions||{})};
         for(const [key,label] of [['structurizer',tr('整理结构', 'Tidy structure')],['furigana',tr('日文注音', 'Japanese readings')],['meta',tr('补全属性', 'Fill properties')],['tagger',tr('补充标签', 'Add tags')],['mover',tr('建议位置', 'Suggest folder')]]){
             const row=modal.contentEl.createEl('label',{cls:'at-settings-row'});
@@ -5595,17 +5594,16 @@ class AiAssistantSettingTab extends PluginSettingTab {
 
     // Obsidian 1.13 起设置页由定义渲染：四个分页各是一个 SettingPage，内容沿用下面的渲染代码
     static PAGES = [
-        { name: tr('模型连接', 'Connections'), desc: tr('服务商、密钥、模型和备用顺序', 'Provider, key, model and backup order'), aliases: ['API', tr('密钥', 'Key'), tr('模型', 'Model'), tr('备用', 'Backup'), 'DeepSeek', 'Gemini', 'OpenAI', 'Ollama'] },
-        { name: tr('处理偏好', 'Preferences'), desc: tr('标签、归档、元数据的参数和默认步骤', 'Tags, folders, properties and default steps'), aliases: [tr('标签', 'Tags'), tr('归档', 'Folder'), tr('忽略文件夹', 'Ignored folders'), tr('翻译', 'Translation')] },
-        { name: tr('动作与提示词', 'Actions and prompts'), desc: tr('自定义动作和内置提示词', 'Custom actions and built-in prompts'), aliases: [tr('自定义动作', 'Custom actions'), tr('提示词', 'Prompts')] },
-        { name: tr('备份与恢复', 'Backup and restore'), desc: tr('导出、导入和重置设置', 'Export, import and reset settings'), aliases: [tr('导出', 'Export'), tr('导入', 'Import'), tr('重置', 'Reset')] }
+        { name: tr('模型连接', 'Connections'), aliases: ['API', tr('密钥', 'Key'), tr('模型', 'Model'), tr('备用', 'Backup'), 'DeepSeek', 'Gemini', 'OpenAI', 'Ollama'] },
+        { name: tr('处理偏好', 'Preferences'), aliases: [tr('标签', 'Tags'), tr('归档', 'Folder'), tr('忽略文件夹', 'Ignored folders'), tr('翻译', 'Translation')] },
+        { name: tr('动作与提示词', 'Actions and prompts'), aliases: [tr('自定义动作', 'Custom actions'), tr('提示词', 'Prompts')] },
+        { name: tr('备份与恢复', 'Backup and restore'), aliases: [tr('导出', 'Export'), tr('导入', 'Import'), tr('重置', 'Reset')] }
     ];
 
     getSettingDefinitions() {
         return AiAssistantSettingTab.PAGES.map((page, index) => ({
             type: 'page',
             name: page.name,
-            desc: page.desc,
             aliases: page.aliases,
             page: () => this.createPage(index, page.name)
         }));
@@ -5650,16 +5648,16 @@ class AiAssistantSettingTab extends PluginSettingTab {
             }
             if (page !== index) el.remove();
         }
+        // 分页标题后面紧跟另一个标题时，它没有自己的内容，去掉
+        for (const el of Array.from(containerEl.children)) {
+            if (isSection(el) && el.nextElementSibling?.classList.contains('setting-item-heading')) el.remove();
+        }
         this.groupEndObserver?.disconnect();
         this.groupEndObserver = watchSettingGroupEnds(containerEl);
     }
 
     renderSettingsBody(containerEl) {
         this.addSectionHeading(containerEl, tr('连接你的模型', 'Connect your model'));
-        containerEl.createEl('p', {
-            text: tr('每个服务独立保存。启用的配置按优先级排在前面的先用；只有勾了“允许用作备用”的，才会在失败时接手。', 'Each service is saved separately. Enabled configurations are tried in priority order; backups are used only if you allow it.'),
-            cls: 'ai-assistant-settings-note'
-        });
 
         const activeConfigId = this.plugin.settings.activeConfigId;
         const apiConfigs = this.plugin.settings.apiConfigs;
@@ -5677,7 +5675,6 @@ class AiAssistantSettingTab extends PluginSettingTab {
         
         new Setting(topContainer)
             .setName(tr('编辑配置', 'Edit configuration'))
-            .setDesc(tr('选择要查看/编辑的 API 配置（与备用顺序无关，顺序由列表位置决定）', 'Choose the configuration to view or edit (unrelated to backup order, which follows list position)'))
             .addDropdown(dropdown => {
                 apiConfigs.forEach(config => {
                     const label = config.enabled === false ? tr(`[禁用] ${config.name}`, `[off] ${config.name}`) : config.name;
@@ -5759,7 +5756,6 @@ class AiAssistantSettingTab extends PluginSettingTab {
 
         new Setting(containerEl)
             .setName(tr('启用此配置', 'Enable this configuration'))
-            .setDesc(tr('禁用后此配置将在备用顺序中被跳过。', 'When off, it is skipped in the backup order.'))
             .addToggle(toggle => toggle
                 .setValue(activeConfig.enabled !== false)
                 .onChange(async (value) => {
@@ -5770,7 +5766,7 @@ class AiAssistantSettingTab extends PluginSettingTab {
 
         new Setting(containerEl)
             .setName(tr('允许用作备用', 'Allow as backup'))
-            .setDesc(tr('主服务失败时，可以改用这个配置。不勾就不会把笔记改发给它；没有任何备用时，失败就停下并说明原因。', 'If the main service fails, this configuration may be used. Untick it and notes are never sent to it; with no backups, a failure stops and explains why.'))
+            .setDesc(tr('主服务失败时可以改用它。不勾就不会把笔记发给它；没有备用时，失败就停下。', 'Used if the main service fails. Untick it and notes are never sent to it; with no backups, a failure stops.'))
             .addToggle(toggle => toggle
                 .setValue(activeConfig.allowFallback === true)
                 .onChange(async (value) => {
@@ -5792,7 +5788,6 @@ class AiAssistantSettingTab extends PluginSettingTab {
         const info = providerInfo(provider);
         new Setting(containerEl)
             .setName(tr('服务商', 'Provider'))
-            .setDesc(tr('预设服务商会自动带上官方地址和常用模型。', 'Presets fill in the official address and common models.'))
             .addDropdown(dropdown => {
                 for (const id of Object.keys(PROVIDERS)) dropdown.addOption(id, providerName(id));
                 return dropdown.setValue(provider).onChange(async (value) => {
@@ -5833,7 +5828,7 @@ class AiAssistantSettingTab extends PluginSettingTab {
         const modelSetting = new Setting(containerEl)
             .setName(tr('主模型', 'Main model'))
             .setDesc(info.models.length
-                ? tr('从预设里选，或在右边手动填写服务商给的模型名。', 'Pick a preset, or type the model name your provider gives.')
+                ? ''
                 : tr(`填写模型名，例如 ${provider === 'local' ? LOCAL_MODEL_EXAMPLE : 'gpt-4o-mini'}。`, `Enter the model name, for example ${provider === 'local' ? LOCAL_MODEL_EXAMPLE : 'gpt-4o-mini'}.`));
         if (info.models.length) {
             modelSetting.addDropdown(dropdown => {
@@ -5859,7 +5854,7 @@ class AiAssistantSettingTab extends PluginSettingTab {
 
         new Setting(containerEl)
             .setName(tr('辅助模型', 'Helper model'))
-            .setDesc(tr('翻译标签这类轻活用它，可以选更快更便宜的；留空就用主模型。', 'Used for light jobs such as translating tags; pick a faster, cheaper one, or leave empty to use the main model.'))
+            .setDesc(tr('翻译标签这类轻活用它；留空就用主模型。', 'Used for light jobs such as translating tags. Leave empty to use the main model.'))
             .addText(text => text
                 .setPlaceholder(info.models[info.models.length - 1]?.[0] || '')
                 .setValue(activeConfig.auxiliaryModelName || '')
@@ -5870,7 +5865,7 @@ class AiAssistantSettingTab extends PluginSettingTab {
 
         if (provider === 'deepseek') {
             new Setting(containerEl).setName(tr('深度思考', 'Deep thinking'))
-                .setDesc(tr('适合复杂内容，等待时间会变长。默认关闭，整理笔记更快。', 'Better for complex content but slower. Off by default so tidying is quick.'))
+                .setDesc(tr('复杂内容效果更好，但要等更久。', 'Better for complex content, but slower.'))
                 .addToggle(toggle => toggle.setValue(!!activeConfig.deepseekThinking).onChange(async value => {
                     activeConfig.deepseekThinking = value; await this.plugin.saveSettings();
                 }));
@@ -5880,7 +5875,7 @@ class AiAssistantSettingTab extends PluginSettingTab {
         const keySetting = new Setting(containerEl)
             .setName(tr('API 密钥', 'API key'))
             .setDesc(this.plugin.hasStoredApiKey(activeConfig)
-                ? tr('已保存。输入新值再点保存可以替换；设置页不显示明文。', 'Saved. Enter a new value and save to replace it; it is never shown here.')
+                ? ''
                 : provider === 'local'
                     ? tr('本地模型一般不需要密钥，只有你给本地服务设了密钥时才填。', 'Local models usually need no key; fill this only if you set one on the local server.')
                     : tr('密钥加密后存在这个库的插件数据里，会跟着库同步到其他设备。', 'The key is stored encrypted in this vault\'s plugin data and syncs with the vault.'))
@@ -5959,7 +5954,6 @@ class AiAssistantSettingTab extends PluginSettingTab {
         new Setting(containerEl).setName(tr('文件夹建议', 'Folder suggestions')).setHeading();
         new Setting(containerEl)
             .setName(tr('建议数量', 'Number of suggestions'))
-            .setDesc(tr('归档建议移动的目标文件夹数量。', 'How many target folders to suggest.'))
             .addText(text => text
                 .setPlaceholder('4')
                 .setValue(this.plugin.settings.moverSuggestionsCount)
@@ -5970,7 +5964,7 @@ class AiAssistantSettingTab extends PluginSettingTab {
 
         new Setting(containerEl)
             .setName(tr('忽略的文件夹', 'Ignored folders'))
-            .setDesc(tr('归档建议将忽略这些文件夹及其子文件夹。每行一个文件夹路径。', 'Folder suggestions skip these folders and their subfolders. One path per line.'))
+            .setDesc(tr('包括子文件夹。每行一个路径。', 'Subfolders included. One path per line.'))
             .addTextArea(text => text
                 .setPlaceholder(tr('例如：\n40 - Obsidian\ntemplates\nattachments', 'For example:\n40 - Obsidian\ntemplates\nattachments'))
                 .setValue(this.plugin.settings.ignoredFolders)
@@ -5983,7 +5977,6 @@ class AiAssistantSettingTab extends PluginSettingTab {
         new Setting(containerEl).setName(tr('标签建议', 'Tag suggestions')).setHeading();
         new Setting(containerEl)
             .setName(tr('建议数量', 'Number of suggestions'))
-            .setDesc(tr('标签功能建议的标签数量。', 'How many tags to suggest.'))
             .addText(text => text
                 .setPlaceholder('12')
                 .setValue(this.plugin.settings.taggerSuggestionsCount)
@@ -5994,7 +5987,7 @@ class AiAssistantSettingTab extends PluginSettingTab {
 
         new Setting(containerEl)
             .setName(tr('只用现有标签', 'Existing tags only'))
-            .setDesc(tr('打开后只从库里已有的标签中挑选，结果会再按现有标签过滤一遍，不会冒出新标签。适合标签体系已经定好的库。', 'Only pick from tags already in the vault; results are filtered again so no new tag appears. Good for vaults with a settled tag system.'))
+            .setDesc(tr('结果会再按现有标签过滤一遍，不会出现新标签。', 'Results are filtered again, so no new tag appears.'))
             .addToggle(toggle => toggle
                 .setValue(!!this.plugin.settings.taggerExistingOnly)
                 .onChange(async (value) => {
@@ -6004,7 +5997,6 @@ class AiAssistantSettingTab extends PluginSettingTab {
 
         new Setting(containerEl)
             .setName(tr('翻译长英文标签', 'Translate long English tags'))
-            .setDesc(tr('启用后，会自动将 AI 生成的过长的英文标签翻译成更简洁的目标语言标签。', 'Translates over-long English tags from the AI into shorter tags in the target language.'))
             .addToggle(toggle => toggle
                 .setValue(this.plugin.settings.taggerEnableTranslation)
                 .onChange(async (value) => {
@@ -6016,7 +6008,6 @@ class AiAssistantSettingTab extends PluginSettingTab {
         if (this.plugin.settings.taggerEnableTranslation) {
             new Setting(containerEl)
                 .setName(tr('触发翻译的最小长度', 'Minimum length to translate'))
-                .setDesc(tr('当一个英文标签的长度达到此值时，会触发自动翻译。', 'English tags at least this long are translated.'))
                 .addText(text => text
                     .setPlaceholder('16')
                     .setValue(this.plugin.settings.taggerTranslationMinLength)
@@ -6027,7 +6018,6 @@ class AiAssistantSettingTab extends PluginSettingTab {
 
             new Setting(containerEl)
                 .setName(tr('目标翻译语言', 'Target language'))
-                .setDesc(tr('指定长标签的目标翻译语言。', 'The language long tags are translated into.'))
                 .addText(text => text
                     .setPlaceholder(tr('中文', 'Chinese'))
                     .setValue(this.plugin.settings.taggerTranslationTargetLanguage)
@@ -6041,7 +6031,7 @@ class AiAssistantSettingTab extends PluginSettingTab {
         new Setting(containerEl).setName(tr('属性生成', 'Properties')).setHeading();
         new Setting(containerEl)
             .setName(tr('文件名最大长度', 'Maximum file name length'))
-            .setDesc(tr('用生成的标题重命名文件时，文件名的最大长度。', 'Maximum file name length when renaming to the generated title.'))
+            .setDesc(tr('按生成的标题重命名时使用。', 'Used when renaming to the generated title.'))
             .addText(text => text
                 .setPlaceholder('100')
                 .setValue(this.plugin.settings.metaFileNameMaxLength)
@@ -6050,15 +6040,13 @@ class AiAssistantSettingTab extends PluginSettingTab {
                     await this.plugin.saveSettings();
                 }));
 
-        new Setting(containerEl).setName(tr('紧凑侧栏', 'Compact sidebar')).setDesc(tr('缩短建议之间的距离，适合窄侧栏。', 'Less space between suggestions, for narrow sidebars.')).addToggle(t=>t.setValue(this.plugin.settings.sidebarCompact!==false).onChange(async value=>{this.plugin.settings.sidebarCompact=value;await this.plugin.saveSettings();this.plugin.refreshAssistantViews?.();}));
-        new Setting(containerEl).setName(tr('确认后进入下一篇', 'Next note after confirming')).setDesc(tr('批量审阅时自动显示下一篇待确认笔记。', 'Show the next note to confirm automatically during batch review.')).addToggle(t=>t.setValue(this.plugin.settings.sidebarAutoNext!==false).onChange(async value=>{this.plugin.settings.sidebarAutoNext=value;await this.plugin.saveSettings();}));
+        new Setting(containerEl).setName(tr('侧栏', 'Sidebar')).setHeading();
+        new Setting(containerEl).setName(tr('紧凑侧栏', 'Compact sidebar')).addToggle(t=>t.setValue(this.plugin.settings.sidebarCompact!==false).onChange(async value=>{this.plugin.settings.sidebarCompact=value;await this.plugin.saveSettings();this.plugin.refreshAssistantViews?.();}));
+        new Setting(containerEl).setName(tr('确认后进入下一篇', 'Next note after confirming')).setDesc(tr('只在批量审阅时生效。', 'Batch review only.')).addToggle(t=>t.setValue(this.plugin.settings.sidebarAutoNext!==false).onChange(async value=>{this.plugin.settings.sidebarAutoNext=value;await this.plugin.saveSettings();}));
         this.addSectionHeading(containerEl, tr('默认处理步骤', 'Default steps'));
-        new Setting(containerEl)
-            .setDesc(tr('选择默认生成哪些建议。按笔记集中确认，正文在主编辑区预览后采用。', 'Choose which suggestions are generated by default. Confirm per note; preview text in the editor before using it.'));
 
         new Setting(containerEl)
             .setName(tr('优化结构', 'Tidy structure'))
-            .setDesc(tr('生成结构与表达的修改建议，逐项审阅后再应用。', 'Suggest structure and wording changes, reviewed one by one before applying.'))
             .addToggle(toggle => toggle
                 .setValue(this.plugin.settings.oneClickProcessActions.structurizer)
                 .onChange(async (value) => {
@@ -6068,7 +6056,6 @@ class AiAssistantSettingTab extends PluginSettingTab {
 
         new Setting(containerEl)
             .setName(tr('假名标注', 'Furigana'))
-            .setDesc(tr('为笔记中的日文添加假名注音，可与优化结构配合使用。', 'Add readings to Japanese in the note; works together with tidy structure.'))
             .addToggle(toggle => toggle
                 .setValue(this.plugin.settings.oneClickProcessActions.furigana)
                 .onChange(async (value) => {
@@ -6078,7 +6065,7 @@ class AiAssistantSettingTab extends PluginSettingTab {
 
         new Setting(containerEl)
             .setName(tr('生成元数据', 'Generate properties'))
-            .setDesc(tr('在一个组合卡片中建议标题、摘要和一句话总结。', 'Suggest a title, summary and one-liner in one card.'))
+            .setDesc(tr('标题、摘要和一句话总结。', 'Title, summary and one-liner.'))
             .addToggle(toggle => toggle
                 .setValue(this.plugin.settings.oneClickProcessActions.meta)
                 .onChange(async (value) => {
@@ -6088,7 +6075,6 @@ class AiAssistantSettingTab extends PluginSettingTab {
 
         new Setting(containerEl)
             .setName(tr('智能标签', 'Smart tags'))
-            .setDesc(tr('在一个组合卡片中建议标签。', 'Suggest tags in one card.'))
             .addToggle(toggle => toggle
                 .setValue(this.plugin.settings.oneClickProcessActions.tagger)
                 .onChange(async (value) => {
@@ -6098,7 +6084,6 @@ class AiAssistantSettingTab extends PluginSettingTab {
 
         new Setting(containerEl)
             .setName(tr('移动笔记', 'Move note'))
-            .setDesc(tr('在一个组合卡片中建议新的存放位置。', 'Suggest a new location in one card.'))
             .addToggle(toggle => toggle
                 .setValue(this.plugin.settings.oneClickProcessActions.mover)
                 .onChange(async (value) => {
@@ -6165,7 +6150,6 @@ class AiAssistantSettingTab extends PluginSettingTab {
 
             new Setting(actionContainer)
                 .setName(tr('删除', 'Delete'))
-                .setDesc(tr('删除此自定义动作。', 'Delete this custom action.'))
                 .addButton(button => button
                     .setButtonText(tr('删除', 'Delete'))
                     .setWarning()
@@ -6195,11 +6179,10 @@ class AiAssistantSettingTab extends PluginSettingTab {
 
 
         this.addSectionHeading(containerEl, tr('内置提示词', 'Built-in prompts'));
-        containerEl.createEl('p', { cls: 'ai-assistant-settings-note', text: tr('在这里自定义每个功能的系统提示词(Prompt)。请注意，占位符(例如 {{content}})是必需的，用于在运行时动态插入内容。', 'Customise the prompt for each action. Placeholders such as {{content}} are required; they insert content at run time.') });
+        containerEl.createEl('p', { cls: 'ai-assistant-settings-note', text: tr('占位符（例如 {{content}}）要保留，运行时会换成笔记内容。', 'Keep placeholders such as {{content}}; they are filled in when the action runs.') });
 
         new Setting(containerEl)
             .setName(tr('优化结构', 'Tidy structure'))
-            .setDesc(tr('编辑用于优化笔记结构的提示词。', 'Edit the prompt that tidies note structure.'))
             .addButton(button => {
                 button.setButtonText(tr('编辑', 'Edit')).onClick(() => {
                     new PromptEditModal(this.app, this.plugin, 'structurizerPrompt', tr('编辑优化结构 Prompt', 'Edit tidy structure prompt')).open();
@@ -6208,7 +6191,6 @@ class AiAssistantSettingTab extends PluginSettingTab {
 
         new Setting(containerEl)
             .setName(tr('移动笔记', 'Move note'))
-            .setDesc(tr('编辑用于建议存放文件夹的提示词。', 'Edit the prompt that suggests folders.'))
             .addButton(button => {
                 button.setButtonText(tr('编辑', 'Edit')).onClick(() => {
                     new PromptEditModal(this.app, this.plugin, 'moverPrompt', tr('编辑移动笔记 Prompt', 'Edit move note prompt')).open();
@@ -6217,7 +6199,6 @@ class AiAssistantSettingTab extends PluginSettingTab {
 
         new Setting(containerEl)
             .setName(tr('智能标签', 'Smart tags'))
-            .setDesc(tr('编辑用于生成标签的提示词。', 'Edit the prompt that generates tags.'))
             .addButton(button => {
                 button.setButtonText(tr('编辑', 'Edit')).onClick(() => {
                     new PromptEditModal(this.app, this.plugin, 'taggerPrompt', tr('编辑智能标签 Prompt', 'Edit smart tags prompt')).open();
@@ -6226,7 +6207,6 @@ class AiAssistantSettingTab extends PluginSettingTab {
 
         new Setting(containerEl)
             .setName(tr('生成元数据', 'Generate properties'))
-            .setDesc(tr('编辑用于生成标题和摘要的提示词。', 'Edit the prompt that generates title and summary.'))
             .addButton(button => {
                 button.setButtonText(tr('编辑', 'Edit')).onClick(() => {
                     new PromptEditModal(this.app, this.plugin, 'metaPrompt', tr('编辑生成元数据 Prompt', 'Edit properties prompt')).open();
@@ -6235,7 +6215,6 @@ class AiAssistantSettingTab extends PluginSettingTab {
 
         new Setting(containerEl)
             .setName(tr('翻译标签', 'Translate tags'))
-            .setDesc(tr('编辑用于翻译长标签的提示词。', 'Edit the prompt that translates long tags.'))
             .addButton(button => {
                 button.setButtonText(tr('编辑', 'Edit')).onClick(() => {
                     new PromptEditModal(this.app, this.plugin, 'translationPrompt', tr('编辑翻译 Prompt', 'Edit translation prompt')).open();
@@ -6255,7 +6234,7 @@ class AiAssistantSettingTab extends PluginSettingTab {
 
         new Setting(containerEl)
             .setName(tr('导入设置', 'Import settings'))
-            .setDesc(tr('从JSON文件导入设置配置。', 'Import settings from a JSON file.'))
+            .setDesc(tr('合并进当前设置，已保存的密钥不会被覆盖。', 'Merged into the current settings; saved keys are kept.'))
             .addButton(button => {
                 button.setButtonText(tr('导入设置', 'Import settings')).onClick(() => {
                     this.importSettings();
@@ -6264,7 +6243,6 @@ class AiAssistantSettingTab extends PluginSettingTab {
 
         new Setting(containerEl)
             .setName(tr('重置设置', 'Reset settings'))
-            .setDesc(tr('将所有设置重置为默认值。', 'Reset every setting to its default.'))
             .addButton(button => {
                 button.setButtonText(tr('重置设置', 'Reset settings'))
                     .setWarning()
