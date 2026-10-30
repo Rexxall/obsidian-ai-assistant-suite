@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.6.1 — 2026-10-30
+
+- **Directory review:** no CSS warnings left in the community directory scorecard. The stylesheet no longer uses `!important`, `all` or `:has`, and `column-gap` became `gap`. Settings rows mark the last row of each group with a class instead of `:has`, and the sidebar marks its pane instead of `:has`; reduced motion still switches every animation off. Buttons, fields and settings look the same, checked by comparing the computed style of every control and screenshots in light and dark.
+- **Lint:** `npm run lint` now also runs Stylelint with the directory's CSS checks, so a release with one of these warnings fails before it ships.
+
 ## 1.6.0 — 2026-10-30
 
 - **Providers:** provider, API URL, model and key are separate fields. Presets for DeepSeek (now the default for new installs), Qwen (Alibaba Cloud Model Studio), SiliconFlow, Kimi and Zhipu GLM fill in the official address and common models; leave the address empty to use it. Older "OpenAI-compatible" configurations that point at one of these hosts are recognised as that preset, with address, model and key unchanged.

@@ -657,6 +657,7 @@ class AssistantView extends ItemView {
     render() {
         const container = this.containerEl.children[1];
         container.empty();
+        container.addClass('mist-sidebar-host');
         const root = container.createDiv({ cls: 'ap ap-view mist-sidebar' });
         if (this.plugin.settings.sidebarCompact !== false) root.addClass('mist-compact');
         const page = this.workbenchPage || 'prepare';
@@ -5563,6 +5564,20 @@ ${content}`
 
 }
 
+// 给每组最后一行加 .ap-group-end，让它圆角收尾；CSS 不用 :has 就看不到“下一行是标题或说明”。分页局部重画时也跟着更新。
+function watchSettingGroupEnds(rootEl) {
+    const mark = () => {
+        for (const item of Array.from(rootEl.querySelectorAll('.setting-item:not(.setting-item-heading)'))) {
+            const next = item.nextElementSibling;
+            item.toggleClass('ap-group-end', !next || next.classList.contains('setting-item-heading') || !next.classList.contains('setting-item'));
+        }
+    };
+    mark();
+    const observer = new MutationObserver(mark);
+    observer.observe(rootEl, { childList: true, subtree: true });
+    return observer;
+}
+
 class AiAssistantSettingTab extends PluginSettingTab {
     plugin;
 
@@ -5616,6 +5631,12 @@ class AiAssistantSettingTab extends PluginSettingTab {
         this.currentPage?.display();
     }
 
+    hide() {
+        this.groupEndObserver?.disconnect();
+        this.groupEndObserver = null;
+        super.hide();
+    }
+
     renderPage(containerEl, index) {
         containerEl.empty();
         containerEl.addClass('ap', 'ap-settings', 'plugin-settings-workspace', 'assistant-settings-morning');
@@ -5629,6 +5650,8 @@ class AiAssistantSettingTab extends PluginSettingTab {
             }
             if (page !== index) el.remove();
         }
+        this.groupEndObserver?.disconnect();
+        this.groupEndObserver = watchSettingGroupEnds(containerEl);
     }
 
     renderSettingsBody(containerEl) {
