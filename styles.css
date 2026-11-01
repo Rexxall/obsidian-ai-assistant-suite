@@ -2848,3 +2848,10 @@
 .assistant-shrink-warning { margin: 8px 0; padding: 8px 10px; border-radius: var(--radius-s); background: color-mix(in srgb, var(--color-orange) 12%, transparent); color: color-mix(in srgb, var(--color-orange) 60%, var(--text-normal)); font-size: var(--font-ui-small); }
 .assistant-settings-morning .atelier-connection-status.is-error { color: color-mix(in srgb, var(--color-red) 70%, var(--text-normal)); }
 .assistant-settings-morning .atelier-connection-status a { margin-left: 6px; }
+.assistant-settings-morning .ai-assistant-connection-checks { display: flex; flex-wrap: wrap; gap: var(--ap-s1) var(--ap-s3); margin-bottom: var(--ap-s1); color: var(--ap-label-2); }
+.assistant-settings-morning .ai-assistant-connection-check { display: inline-flex; align-items: center; gap: 4px; }
+.assistant-settings-morning .ai-assistant-connection-check-icon { display: inline-flex; }
+.assistant-settings-morning .ai-assistant-connection-check-icon svg { width: 14px; height: 14px; }
+.assistant-settings-morning .ai-assistant-connection-check.is-ok .ai-assistant-connection-check-icon { color: var(--ap-good); }
+.assistant-settings-morning .ai-assistant-connection-check.is-fail { color: var(--ap-bad); }
+.assistant-settings-morning .ai-assistant-connection-check.is-skip { color: var(--ap-label-3); }

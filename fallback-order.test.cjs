@@ -45,3 +45,18 @@ test('the batch note only promises "stays on this computer" when every destinati
  assert.doesNotMatch(mixed,/不离开这台电脑/);assert.match(mixed,/主服务失败时，笔记可能发给 「Cloud」/);
  assert.doesNotMatch(lines([cloud]),/不离开/);
 });
+test('data from before backup permission is asked once and keeps the chosen behaviour',async()=>{
+ const p=fixture();p.saveSettings=async()=>{};
+ p.settings.apiConfigs.forEach(c=>delete c.allowFallback);
+ assert.equal(p.needsBackupReview(),true);
+ assert.equal(p.fallbackChain().map(c=>c.id).join(),'a');
+ await p.applyBackupChoice(true);
+ assert.equal(p.needsBackupReview(),false);
+ assert.equal(p.fallbackChain().map(c=>c.id).join(),'a,b');
+});
+test('no question when a backup was ever chosen, or for a single configuration',()=>{
+ const p=fixture();
+ assert.equal(p.needsBackupReview(),false);
+ p.settings.apiConfigs=[{id:'a',name:'A',apiKey:'k1',enabled:true}];
+ assert.equal(p.needsBackupReview(),false);
+});

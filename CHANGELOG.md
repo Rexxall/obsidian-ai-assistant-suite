@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- **Backups after upgrading:** settings from before backup permission existed get one question on first load: keep sending to the other configurations when the main one fails, or only use the main one. New configurations are never backups until you tick them.
+- **Test connection:** the result shows address, key and account, model and parameters as separate checks, so you can see which one failed. A rejected request parameter (HTTP 400) is now its own case, and a key inside an address is masked in error details.
+
 ## 1.6.3 — 2026-10-30
 
 - **Settings:** shorter. Descriptions that only repeated a setting's name are gone; the ones left say what you cannot see, such as cost, syncing, defaults and which setting wins. Compact sidebar and next-note now sit under their own *Sidebar* heading.

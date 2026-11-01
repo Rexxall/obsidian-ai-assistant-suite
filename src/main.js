@@ -179,7 +179,8 @@ function redactSecrets(text, headers = {}) {
     return out
         .replace(/Bearer\s+[^\s"',]+/gi, 'Bearer [key]')
         .replace(/\bsk-[A-Za-z0-9_-]{6,}/g, 'sk-[key]')
-        .replace(/\bAIza[0-9A-Za-z_-]{10,}/g, '[key]');
+        .replace(/\bAIza[0-9A-Za-z_-]{10,}/g, '[key]')
+        .replace(/([?&](?:key|api_key|apikey|access_token)=)[^&\s"']+/gi, '$1[key]');
 }
 
 // 把一次失败归到用户能处理的那一类
@@ -192,6 +193,7 @@ function classifyApiError(error) {
     if (status === 429) return /quota|balance|insufficient|billing|arrear|余额|欠费|额度/i.test(text) ? 'quota' : 'rate';
     if (status === 404) return /model/i.test(text) ? 'model' : 'url';
     if ((status === 400 || status === 422) && /model[^.]*(not|exist|found|invalid)|supported (api )?model|you passed|invalid model|model_not_found|模型不存在|模型.*不支持/i.test(text)) return 'model';
+    if (status === 400 || status === 422) return 'params';
     if (status >= 500) return 'server';
     if (!status && /net::|ERR_|ENOTFOUND|ECONNREFUSED|ECONNRESET|getaddrinfo|Failed to fetch|network|CORS|certificate/i.test(text)) return 'network';
     return 'other';
@@ -214,12 +216,30 @@ function describeApiProblem(kind, config = null, error = null) {
         'url': [tr('接口地址找不到（HTTP 404）。', 'The API URL was not found (HTTP 404).'), tr('检查接口地址；预设服务商可以把地址留空，用官方地址。', 'Check the API URL; for a preset provider you can leave it empty to use the official one.')],
         'timeout': [tr('等了太久没有回答。', 'No answer in time.'), tr('检查网络和代理；本地模型请确认本地服务已经启动。', 'Check your network and proxy; for a local model make sure the local server is running.')],
         'network': [tr('连不上服务器。', 'Could not reach the server.'), tr('检查网络、代理和地址拼写；本地模型请确认本地服务已启动，手机上访问不到电脑的 localhost。', 'Check the network, proxy and address; for a local model make sure the server is running. A phone cannot reach your computer\'s localhost.')],
+        'params': [tr(`服务商不接受请求里的参数（HTTP ${error?.status || 400}）。`, `The provider rejected a request parameter (HTTP ${error?.status || 400}).`), tr('关掉“深度思考”再测；自定义服务请确认它兼容 OpenAI 格式。', 'Turn off Deep thinking and test again; for a custom service, check that it is OpenAI-compatible.')],
         'server': [tr(`服务商那边出错（HTTP ${error?.status || 500}）。`, `The provider had an error (HTTP ${error?.status || 500}).`), tr('稍后再试；一直失败可以加一条备用配置。', 'Try again later; if it keeps failing, add a backup configuration.')],
         'empty': [tr('服务商有回答，但没有内容。', 'The provider answered with no content.'), tr('换一个模型再试。', 'Try another model.')],
         'other': [tr(`连接失败。${detail}`, `Connection failed.${detail}`), tr('复制诊断信息，对照服务商文档检查。', 'Copy the diagnostics and compare them with the provider\'s docs.')],
     };
     const [message, next] = table[kind] || table.other;
     return { kind, message, next, keyPage: kind === 'no-key' || kind === 'auth' || kind === 'quota' ? keyPage : '' };
+}
+
+// 测试连接按地址、密钥和账户、模型、参数四项给结果：出错那一项之前的算通过，之后的没检查到
+const CONNECTION_CHECKS = [
+    ['url', ['地址', 'Address'], ['url', 'no-url', 'network', 'timeout']],
+    ['auth', ['密钥和账户', 'Key and account'], ['auth', 'no-key', 'quota', 'no-config']],
+    ['model', ['模型', 'Model'], ['model', 'no-model']],
+    ['params', ['参数', 'Parameters'], ['params']],
+];
+function connectionChecks(kind, status = null, sent = true) {
+    const failed = CONNECTION_CHECKS.findIndex(([, , kinds]) => kinds.includes(kind));
+    // 归不到某一项的失败（限流、服务商出错、没有内容）：有 HTTP 回答就说明地址通了，其余没检查到。请求没发出去时一项都没检查
+    const reached = !sent ? 0 : kind === 'ok' ? CONNECTION_CHECKS.length : failed >= 0 ? failed : (status ? 1 : 0);
+    return CONNECTION_CHECKS.map(([id, [zh, en]], index) => ({
+        id, label: tr(zh, en),
+        state: index < reached ? 'ok' : index === failed ? 'fail' : 'skip',
+    }));
 }
 
 const API_URL_EXAMPLE = 'https://api.example.com/v1/chat/completions';
@@ -496,7 +516,8 @@ const DEFAULT_SETTINGS = {
             modelName: 'deepseek-flash',
             auxiliaryModelName: '',
             deepseekThinking: false,
-            enabled: true
+            enabled: true,
+            allowFallback: false
         }
     ],
 
@@ -2718,7 +2739,7 @@ class AiAssistantSuite extends Plugin {
         const hasLegacy = legacyKeys.some(key => this.settings[key] !== undefined);
         if (!hasLegacy) return false;
         if (!Array.isArray(this.settings.apiConfigs) || !this.settings.apiConfigs.some(c => c.apiKey || c.apiUrl)) {
-            const config = { id: 'default', name: tr('默认配置', 'Default'), enabled: true };
+            const config = { id: 'default', name: tr('默认配置', 'Default'), enabled: true, allowFallback: false };
             for (const key of legacyKeys) if (this.settings[key] !== undefined) config[key] = this.settings[key];
             this.settings.apiConfigs = [config];
             this.settings.activeConfigId = config.id;
@@ -2770,6 +2791,34 @@ class AiAssistantSuite extends Plugin {
         if (!usable.length) return [];
         const [primary, ...rest] = usable;
         return this.orderConfigsForFallback([primary, ...rest.filter(c => c.allowFallback === true)]);
+    }
+
+    // 1.6 以前，主服务失败会自动改发给其他配置；之后要本人允许。旧数据里谁都没选过，第一次加载时问一次
+    needsBackupReview() {
+        const configs = this.settings.apiConfigs || [];
+        const usable = configs.filter(c => c.enabled !== false && this.isConfigUsable(c));
+        return !this.settings.backupReviewed && usable.length > 1 && configs.every(c => c.allowFallback === undefined);
+    }
+
+    async applyBackupChoice(keepOldBehaviour) {
+        for (const config of this.settings.apiConfigs || []) config.allowFallback = keepOldBehaviour;
+        this.settings.backupReviewed = true;
+        await this.saveSettings();
+    }
+
+    askAboutBackups() {
+        const usable = (this.settings.apiConfigs || []).filter(c => c.enabled !== false && this.isConfigUsable(c));
+        const [primary, ...others] = usable;
+        const modal = new GlassModal(this.app);
+        modal.contentEl.createEl('h2', { text: tr('出错时要改发给别家吗？', 'Send to another service when one fails?') });
+        modal.contentEl.createEl('p', { text: tr(
+            `以前「${primary.name}」失败时，会自动改发给 ${others.map(c => `「${c.name}」`).join('、')}。现在要你允许才会改发。`,
+            `Before, when "${primary.name}" failed, notes were sent to ${others.map(c => `"${c.name}"`).join(', ')} instead. Now that needs your permission.`) });
+        const buttons = modal.contentEl.createDiv({ cls: 'modal-button-container' });
+        const choose = async keep => { await this.applyBackupChoice(keep); modal.close(); };
+        buttons.createEl('button', { text: tr('照旧改发', 'Keep sending to them') }).addEventListener('click', () => void choose(true));
+        buttons.createEl('button', { cls: 'mod-cta', text: tr(`只用「${primary.name}」`, `Only use "${primary.name}"`) }).addEventListener('click', () => void choose(false));
+        modal.open();
     }
 
     orderConfigsForFallback(candidates) {
@@ -2974,6 +3023,7 @@ class AiAssistantSuite extends Plugin {
 
     async onload() {
         await this.loadSettings();
+        this.app.workspace.onLayoutReady(() => { if (this.needsBackupReview()) this.askAboutBackups(); });
 
         this.registerView(
             ASSISTANT_VIEW_TYPE,
@@ -3209,20 +3259,20 @@ class AiAssistantSuite extends Plugin {
     // 测试连接：只发一句很短的话，按回答把失败分成几类，每类给一个下一步（不读笔记，不把密钥写进结果）
     async validateApiConfig(configToTest = null) {
         const config = configToTest || this.getActiveApiConfig();
-        if (!config) return { valid: false, ...describeApiProblem('no-config') };
-        if (!this.isConfigUsable(config)) return { valid: false, ...describeApiProblem('no-key', config) };
-        if (config.apiProvider === 'openai' && !config.apiUrl) return { valid: false, ...describeApiProblem('no-url', config) };
+        if (!config) return { valid: false, ...describeApiProblem('no-config'), checks: connectionChecks('no-config', null, false) };
+        if (!this.isConfigUsable(config)) return { valid: false, ...describeApiProblem('no-key', config), checks: connectionChecks('no-key', null, false) };
+        if (config.apiProvider === 'openai' && !config.apiUrl) return { valid: false, ...describeApiProblem('no-url', config), checks: connectionChecks('no-url', null, false) };
         if (config.apiProvider !== 'local' && !config.modelName && !providerInfo(config.apiProvider).models.length) {
-            return { valid: false, ...describeApiProblem('no-model', config) };
+            return { valid: false, ...describeApiProblem('no-model', config), checks: connectionChecks('no-model', null, false) };
         }
         try {
             await this._callSingleConfig('Reply with OK.', null, false, config, { probe: true, timeout: 20000 });
             this.lastApiProblem = null;
-            return { valid: true, kind: 'ok' };
+            return { valid: true, kind: 'ok', checks: connectionChecks('ok') };
         } catch (error) {
             const kind = classifyApiError(error);
             this.lastApiProblem = { kind, status: error?.status || null, at: Date.now(), provider: config.apiProvider };
-            return { valid: false, ...describeApiProblem(kind, config, error) };
+            return { valid: false, ...describeApiProblem(kind, config, error), checks: connectionChecks(kind, error?.status) };
         }
     }
 
@@ -5701,7 +5751,8 @@ class AiAssistantSettingTab extends PluginSettingTab {
                 modelName: this.plugin.defaultModelFor('deepseek'),
                 auxiliaryModelName: '',
                 deepseekThinking: false,
-                enabled: true
+                enabled: true,
+                allowFallback: false
             });
             this.plugin.settings.activeConfigId = newId;
             await this.plugin.saveSettings();
@@ -5931,12 +5982,20 @@ class AiAssistantSettingTab extends PluginSettingTab {
                     const result = await this.plugin.validateApiConfig(activeConfig);
                     connectionStatus.empty();
                     connectionStatus.toggleClass('is-error', !result.valid);
+                    const checks = connectionStatus.createDiv({ cls: 'ai-assistant-connection-checks' });
+                    for (const check of result.checks || []) {
+                        const row = checks.createSpan({ cls: `ai-assistant-connection-check is-${check.state}` });
+                        setIcon(row.createSpan({ cls: 'ai-assistant-connection-check-icon' }), check.state === 'ok' ? 'check' : check.state === 'fail' ? 'x' : 'minus');
+                        row.createSpan({ text: check.label });
+                        row.setAttr('aria-label', `${check.label}: ${check.state === 'ok' ? tr('通过', 'passed') : check.state === 'fail' ? tr('出错', 'failed') : tr('未检查', 'not checked')}`);
+                    }
+                    const line = connectionStatus.createDiv();
                     if (result.valid) {
-                        connectionStatus.setText(tr('连接成功，可以开始整理笔记。', 'Connected. You can start tidying notes.'));
+                        line.setText(tr('连接成功，可以开始整理笔记。', 'Connected. You can start tidying notes.'));
                     } else {
-                        connectionStatus.createEl('strong', { text: result.message });
-                        connectionStatus.createSpan({ text: ` ${result.next}` });
-                        if (result.keyPage) connectionStatus.createEl('a', { text: ` ${tr('打开服务商后台', 'Open provider console')}`, href: result.keyPage });
+                        line.createEl('strong', { text: result.message });
+                        line.createSpan({ text: ` ${result.next}` });
+                        if (result.keyPage) line.createEl('a', { text: ` ${tr('打开服务商后台', 'Open provider console')}`, href: result.keyPage });
                     }
                 } finally {
                     button.setButtonText(tr('测试', 'Test')).setDisabled(false);
@@ -5946,7 +6005,7 @@ class AiAssistantSettingTab extends PluginSettingTab {
                 await navigator.clipboard.writeText(this.plugin.buildDiagnostics());
                 new Notice(tr('诊断信息已复制，里面没有密钥和笔记内容。', 'Diagnostics copied. They contain no key and no note text.'));
             }));
-        connectionStatus = containerEl.createEl('p', { cls: 'atelier-connection-status', attr: { role: 'status', 'aria-live': 'polite' } });
+        connectionStatus = containerEl.createEl('div', { cls: 'atelier-connection-status', attr: { role: 'status', 'aria-live': 'polite' } });
 
         this.addSectionHeading(containerEl, tr('功能参数设置', 'Action settings'));
 

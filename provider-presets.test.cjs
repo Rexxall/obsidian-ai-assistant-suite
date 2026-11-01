@@ -50,3 +50,18 @@ test('a suggestion much shorter than the note carries a warning before it is app
  assert.equal(p.shrinkWarning({content:{originalContent:long,proposedContent:long.slice(0,400)}}),'');
  assert.equal(p.shrinkWarning({content:{originalContent:'短',proposedContent:''}}),'');
 });
+test('test connection reports address, key, model and parameters separately',async()=>{
+ const states=async(status,text)=>{const p=fixture(async()=>({status,text}));const r=await p.validateApiConfig({apiProvider:'deepseek',apiKey:'enc',modelName:'deepseek-flash'});return [r.kind,r.checks.map(c=>c.state).join(' ')].join(': ');};
+ assert.equal(await states(200,'{"choices":[{"message":{"content":"OK"}}]}'),'ok: ok ok ok ok');
+ assert.equal(await states(404,'404 page not found'),'url: fail skip skip skip');
+ assert.equal(await states(401,'bad key'),'auth: ok fail skip skip');
+ assert.equal(await states(400,'{"error":{"message":"Model Not Exist"}}'),'model: ok ok fail skip');
+ assert.equal(await states(400,'{"error":{"message":"Unrecognized request argument: thinking"}}'),'params: ok ok ok fail');
+ assert.equal(await states(503,'busy'),'server: ok skip skip skip');
+ const p=fixture();assert.equal((await p.validateApiConfig({apiProvider:'deepseek'})).checks.map(c=>c.state).join(' '),'skip fail skip skip');
+});
+test('a key in the address is masked in error details',async()=>{
+ const p=fixture(async()=>({status:418,text:'GET https://x.test/v1?key=AQ.secretvalue123&alt=json failed'}));
+ const r=await p.validateApiConfig({apiProvider:'deepseek',apiKey:'enc',modelName:'deepseek-flash'});
+ assert.doesNotMatch(r.message,/secretvalue123/);assert.match(r.message,/key=\[key\]/);
+});
