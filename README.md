@@ -15,6 +15,8 @@ Ask an AI to suggest a title, summary, tags, a folder and tidier text for the no
 3. To use your own notes, open *Settings → AI Assistant Suite → Connections*: choose a provider (DeepSeek is preselected), paste a key, keep the suggested model, and press **Test**.
 4. Open a note, pick what you want done and choose **Generate suggestions**.
 
+From 1.7.1 on, the release files carry a GitHub build attestation; check one with `gh attestation verify main.js -R Rexxall/obsidian-ai-assistant-suite`.
+
 ## What it needs and what it costs
 
 - **Needs:** Obsidian 1.13 or later, desktop or mobile, and either an API key from a model provider or a local model (Ollama, LM Studio) on your computer.

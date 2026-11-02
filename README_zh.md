@@ -15,6 +15,8 @@
 3. 要处理自己的笔记，打开“设置 → AI Assistant Suite → 模型连接”：选服务商（默认 DeepSeek），粘贴密钥，模型用推荐的就行，点“测试”。
 4. 打开一篇笔记，选好要做的事，点“生成建议”。
 
+从 1.7.1 起，Release 附件带 GitHub 构建认证，可用 `gh attestation verify main.js -R Rexxall/obsidian-ai-assistant-suite` 核验。
+
 ## 需要什么，花多少钱
 
 - **需要：** Obsidian 1.13 或更新，电脑和手机都能用；再准备一个模型服务商的 API 密钥，或者电脑上的本地模型（Ollama、LM Studio）。
