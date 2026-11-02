@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.7.0 — 2026-11-02
 
 - **Backups after upgrading:** settings from before backup permission existed get one question on first load: keep sending to the other configurations when the main one fails, or only use the main one. New configurations are never backups until you tick them.
 - **Test connection:** the result shows address, key and account, model and parameters as separate checks, so you can see which one failed. A rejected request parameter (HTTP 400) is now its own case, and a key inside an address is masked in error details.
