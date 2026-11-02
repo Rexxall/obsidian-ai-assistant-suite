@@ -503,6 +503,179 @@ const FURIGANA_DEFAULT_PROMPT = `你是一位专业的日文假名标注专家�
 {{content}}
 ---`;
 
+// English versions of the default prompts. A prompt still equal to its Chinese default is sent in
+// English when the interface is English; a prompt the user edited is always sent as written.
+const STRUCTURIZER_DEFAULT_PROMPT_EN = `You are a precise editor who structures notes. Improve the structure and readability of the text below while following these rules strictly.
+
+**Rules:**
+
+1.  **Preserve wording**:
+    *   Do **not** rewrite or rephrase sentences. Your job is to reorder and format, not to rewrite.
+    *   Only fix obvious grammar mistakes. Keep the author's own words and vocabulary, in the language they wrote in.
+
+2.  **Handle embeds and links**:
+    *   Anything like \`![[...]]\`, \`![...](...)\` or \`[...](...)\` is an embed or a link.
+    *   Treat each of these as one unbreakable unit.
+    *   **Never** describe what a link points to (an image, a web page). Keep only the link itself.
+    *   Keep it exactly as it is, in the place that makes most sense in context.
+
+3.  **Restructure and format**:
+    *   You **may** reorder sentences or whole paragraphs to improve the flow.
+    *   Use Markdown headings (\`#\`, \`##\`) for an outline, lists (\`-\` or \`1.\`) for points and bold (\`**...**\`) for key terms.
+    *   **Layout:** when a note mixes kinds of content (for example a summary and quoted source text), keep like with like. Do not scatter long quotations through the analysis; place each quotation right after the point it supports, or gather many of them in one clearly labelled section, whichever presents this note most clearly.
+
+4.  **Delete nothing**: every sentence, fact and link in the original must appear in the output.
+
+5.  **Output only the result**: reply with the restructured Markdown and nothing else.
+
+**Example:**
+*Original:*
+\`\`\`
+Some text. [![Screenshot](https://example.com/img.png)](https://example.com/img.png) More text.
+\`\`\`
+*Correct output:*
+\`\`\`
+Some text.
+
+[![Screenshot](https://example.com/img.png)](https://example.com/img.png)
+
+More text.
+\`\`\`
+
+**The text to restructure:**
+
+---
+{{content}}
+---`;
+
+const MOVER_DEFAULT_PROMPT_EN = `You are a precise file organiser. Based on the note's content, choose or create the folder paths that suit it best, starting from the list of existing folders.
+
+**Task:**
+Give {{count}} path suggestions.
+
+**Steps:**
+1.  Read the note and work out its main topic. Base this on the **text itself** and ignore what Markdown links or embeds (such as \`![[...]]\` or \`[...](...)\`) point to.
+2.  **First** look for the best matches in the existing folders. If there are good ones, suggest them first (at least two).
+3.  **Then**, if no existing folder fits well or a better organisation is possible, **create one or more clear new paths** that follow the naming and depth of the existing folders.
+4.  Reply strictly in JSON: an object with a "suggestions" key whose value is an array of objects, each with "path" (string) and "is_new" (boolean).
+
+**Example output:**
+{
+  "suggestions": [
+    { "path": "10 - Projects/TOEFL-Prep/2_Skills/Speaking", "is_new": false },
+    { "path": "20 - Areas/Language-Learning/English/TOEFL-Speaking", "is_new": true },
+    { "path": "10 - Projects/Personal-Development/Public-Speaking", "is_new": false }
+  ]
+}
+
+**Existing folders (to choose from):**
+{{folder_list}}
+
+**The note to file:**
+\n\n{{content}}`;
+
+const TAGGER_DEFAULT_PROMPT_EN = `You are an Obsidian tagging expert who follows instructions exactly. Generate tags for the text below and keep strictly to the existing tag hierarchy.
+
+**Rule:**
+Every new tag you create **must** use the form \`category/topic/subtopic\`. Single-word tags are never allowed; every new tag sits under one or more levels.
+
+**Steps:**
+1.  **Read the text.** Base the tags on the **text itself** and ignore what Markdown links or embeds (such as \`![[...]]\` or \`[...](...)\`) point to.
+2.  Look at the existing tags below. They are the structure and style you must follow, including their language.
+3.  **Prefer** existing tags.
+4.  For a new tag, decide which category and topic it belongs to and build the full hierarchical tag.
+    *   **Wrong:** \`critical-thinking\` (an isolated tag)
+    *   **Right:** \`C/personal-growth/critical-thinking\` (a tag placed in the hierarchy)
+5.  Give about {{count}} tags in all, mixing existing tags and new hierarchical ones.
+6.  Reply with a comma-separated list of tags only, with no other text or Markdown.
+
+**Existing tags (your style guide):**
+{{existing_tags}}
+
+**The text to tag:**
+{{content}}`;
+
+const META_DEFAULT_PROMPT_EN = `You are an expert at analysing and summarising content. Based on the text below, do the following.
+
+**Important:**
+If the text contains Markdown links or embeds (such as \`![...]]\` or \`[...](...)\`), base your work on the **text itself** and ignore what they point to. Summarise the text; do not describe the links.
+
+**Tasks:**
+1.  **Write a very short title** (ideally under 8 words), crisp like a headline and true to the core of the text.
+2.  **Write a short summary** of 2–3 sentences with the main points and conclusion.
+3.  **Write a one-sentence summary** (under 25 words) that gives the core at a glance.
+
+Write all three in the same language as the text. Reply strictly in this JSON format, with no other text or code fences:
+{
+  "title": "the title",
+  "summary": "the summary",
+  "tldr": "the one-sentence summary"
+}
+
+The text:
+\n\n{{content}}`;
+
+const TRANSLATION_DEFAULT_PROMPT_EN = `Translate each of the following English phrases into a very short, on-topic {{target_language}} tag (ideally 1–3 words). Put each translation on its own line, in the same order as the phrases. Reply with the translations only:
+{{phrases_to_translate}}`;
+
+const FURIGANA_DEFAULT_PROMPT_EN = `You are an expert at adding furigana to Japanese. Add readings (furigana / ruby) to the kanji in the text below.
+
+**Rules:**
+
+1. **Find the kanji**: find every Japanese word that contains kanji, including words mixing kanji and kana.
+2. **Add readings**: give each such word its correct reading, judged from context.
+3. **Format (important)**:
+   - **Japanese outside code**: use HTML \`<ruby>\` tags:
+     \`<ruby>漢字<rt>かんじ</rt></ruby>\`
+     For words of several kanji: \`<ruby>日本語<rt>にほんご</rt></ruby>\`
+
+   - **Japanese inside code** (inline code and code blocks):
+     - Use brackets: \`漢字(かんじ)\` or \`漢字【かんじ】\`
+     - For words of several kanji: \`日本語(にほんご)\` or \`日本語【にほんご】\`
+     - Prefer round brackets: \`漢字(かんじ)\`
+     - Annotate only Japanese strings; leave English, symbols and spaces in names unchanged
+     - If you are not 100% sure of a reading, or whether something is Japanese, leave it as it is
+
+4. **Recognise code**:
+   - Text in single backticks (\`) is inline code
+   - Text in triple backticks (\`\`\`) is a code block
+   - Japanese inside code must use brackets, never HTML tags
+5. **Keep everything else**:
+   - Keep all non-Japanese content (Chinese, English, numbers and so on) unchanged
+   - Keep all Markdown syntax (links, images and so on) unchanged
+   - Keep all formatting and structure unchanged
+6. **Kanji only**: words written only in kana (such as "です", "ます") need no reading.
+7. **Output only the result**: reply with the whole text with readings added, and nothing else.
+
+**Example:**
+*Input:*
+\`\`\`
+私は\`コード内の日本語\`を勉強しています。
+\`\`\`
+*Output:*
+\`\`\`
+<ruby>私<rt>わたし</rt></ruby>は\`コード内(コードない)の日本語(にほんご)\`を<ruby>勉強<rt>べんきょう</rt></ruby>しています。
+\`\`\`
+
+Note:
+- "私" and "勉強" outside code use \`<ruby>\` tags
+- "コード内" and "日本語" inside code use brackets: \`コード内(コードない)\` and \`日本語(にほんご)\`
+
+**The text to annotate:**
+
+---
+{{content}}
+---`;
+
+const PROMPT_DEFAULTS = {
+    structurizerPrompt: [STRUCTURIZER_DEFAULT_PROMPT, STRUCTURIZER_DEFAULT_PROMPT_EN],
+    moverPrompt: [MOVER_DEFAULT_PROMPT, MOVER_DEFAULT_PROMPT_EN],
+    taggerPrompt: [TAGGER_DEFAULT_PROMPT, TAGGER_DEFAULT_PROMPT_EN],
+    metaPrompt: [META_DEFAULT_PROMPT, META_DEFAULT_PROMPT_EN],
+    translationPrompt: [TRANSLATION_DEFAULT_PROMPT, TRANSLATION_DEFAULT_PROMPT_EN],
+    furiganaPrompt: [FURIGANA_DEFAULT_PROMPT, FURIGANA_DEFAULT_PROMPT_EN],
+};
+
 const DEFAULT_SETTINGS = {
     // General API Settings
     activeConfigId: 'default',
@@ -2588,7 +2761,7 @@ class PromptEditModal extends GlassModal {
         const setting = new Setting(this.editContainer);
         setting.addTextArea(text => {
             this.textArea = text;
-            text.setValue(this.plugin.settings[this.settingName])
+            text.setValue(this.plugin.promptSetting(this.settingName))
                 .onChange(value => {
                     this.plugin.settings[this.settingName] = value;
                     this.saved = true;
@@ -2615,7 +2788,7 @@ class PromptEditModal extends GlassModal {
     showPreview() {
         this.editContainer.hide();
         this.previewContainer.show();
-        this.updatePreview(this.plugin.settings[this.settingName]);
+        this.updatePreview(this.plugin.promptSetting(this.settingName));
     }
 
     showEdit() {
@@ -4781,7 +4954,7 @@ class AiAssistantSuite extends Plugin {
 
     userInstructionBlock() {
         if (!this.currentUserInstruction) return '';
-        return `\n\n**用户的补充要求（在不编造内容的前提下优先遵守）:**\n${this.currentUserInstruction}`;
+        return tr(`\n\n**用户的补充要求（在不编造内容的前提下优先遵守）:**\n${this.currentUserInstruction}`, `\n\n**The user's extra request (follow it first, without making anything up):**\n${this.currentUserInstruction}`);
     }
 
     async runOneClickSmartProcessSteps(targetFile = null, selectedActions = null, shouldStop = () => false) {
@@ -4865,7 +5038,7 @@ class AiAssistantSuite extends Plugin {
             if (oneClickProcessActions.tagger) {
                 const allTagsFromCache = this.app.metadataCache.getTags();
                 const existingTags = Object.keys(allTagsFromCache).map(tag => tag.substring(1));
-                contextForPrompt += `\n\n**现有标签列表 (你的风格指南):**\n${existingTags.join(', ')}`;
+                contextForPrompt += tr(`\n\n**现有标签列表 (你的风格指南):**\n${existingTags.join(', ')}`, `\n\n**Existing tags (your style guide):**\n${existingTags.join(', ')}`);
                 jsonStructure.tags = ["tag1/subtag", "tag2"];
             }
             if (oneClickProcessActions.mover) {
@@ -4874,7 +5047,7 @@ class AiAssistantSuite extends Plugin {
                     .filter(file => file.children)
                     .map(folder => folder.path)
                     .filter(path => path !== '/' && !ignoredFoldersList.some(ignored => path.startsWith(ignored)));
-                contextForPrompt += `\n\n**现有文件夹列表 (供你参考和选择):**\n${JSON.stringify(folderPaths, null, 2)}`;
+                contextForPrompt += tr(`\n\n**现有文件夹列表 (供你参考和选择):**\n${JSON.stringify(folderPaths, null, 2)}`, `\n\n**Existing folders (to choose from):**\n${JSON.stringify(folderPaths, null, 2)}`);
                 jsonStructure.mover_suggestions = [{ path: "path/to/folder", is_new: false }];
             }
             if (oneClickProcessActions.meta) {
@@ -4885,7 +5058,7 @@ class AiAssistantSuite extends Plugin {
                 jsonStructure.meta = metaFields;
             }
 
-            let prompt = `你是一个强大的多任务AI助手。请基于以下提供的文本，执行所有请求的任务。
+            let prompt = tr(`你是一个强大的多任务AI助手。请基于以下提供的文本，执行所有请求的任务。
 
 **核心规则**:
 1. 在分析时，请**专注于文本内容本身**，忽略任何Markdown链接或嵌入文件（如 \`![...]]\` 或 \`[...](...)\`）所指向的视觉或外部信息。
@@ -4900,7 +5073,22 @@ ${JSON.stringify(jsonStructure, null, 2)}
 ${contextForPrompt}${this.userInstructionBlock()}
 
 **需要处理的文本如下：**
-\n\n${contentToProcess}`;
+\n\n${contentToProcess}`, `You are a capable multi-task AI assistant. Based on the text below, carry out every requested task.
+
+**Rules**:
+1. Base your work on the **text itself** and ignore what Markdown links or embeds (such as \`![...]]\` or \`[...](...)\`) point to.
+2. Reply with one JSON object that follows the structure below exactly. Write titles and summaries in the same language as the text.
+
+**Tasks:**
+${oneClickProcessActions.meta ? this.getMetaTaskDescription(hasExistingSummary, hasExistingTldr) : ''}${oneClickProcessActions.tagger ? (this.settings.taggerExistingOnly ? `- **Tags**: give at most ${this.settings.taggerSuggestionsCount} tags, chosen only from the existing tags; do not create new ones.\n` : `- **Tags**: give about ${this.settings.taggerSuggestionsCount} tags. Prefer the existing tags; new tags must be hierarchical (such as a/b/c).\n`) : ''}${oneClickProcessActions.mover ? `- **Folder**: give ${this.settings.moverSuggestionsCount} suggested paths, chosen from the existing folders or new.\n` : ''}
+**JSON output format:**
+\`\`\`json
+${JSON.stringify(jsonStructure, null, 2)}
+\`\`\`
+${contextForPrompt}${this.userInstructionBlock()}
+
+**The text to process:**
+\n\n${contentToProcess}`);
 
             if (shouldStop()) { progressNotice.hide(); this.lastCancelled = currentFile.path; return; }
 
@@ -5040,22 +5228,29 @@ ${contextForPrompt}${this.userInstructionBlock()}
     }
 
     getMetaPrompt(content, hasExistingSummary = false, hasExistingTldr = false) {
-        let prompt = this.settings.metaPrompt;
+        let prompt = this.promptSetting('metaPrompt');
 
         // 如果已有某些字段，修改提示词
         if (hasExistingSummary || hasExistingTldr) {
             let skipInstructions = [];
-            if (hasExistingSummary) skipInstructions.push("摘要");
-            if (hasExistingTldr) skipInstructions.push("一句话总结");
+            if (hasExistingSummary) skipInstructions.push(tr("摘要", "summary"));
+            if (hasExistingTldr) skipInstructions.push(tr("一句话总结", "one-sentence summary"));
 
-            prompt += `\n\n**注意**: 文件已有${skipInstructions.join("和")}字段，请跳过生成这些字段，只返回需要生成的字段。`;
+            prompt += tr(`\n\n**注意**: 文件已有${skipInstructions.join("和")}字段，请跳过生成这些字段，只返回需要生成的字段。`, `\n\n**Note**: the note already has ${skipInstructions.join(" and ")}; skip ${skipInstructions.length > 1 ? "those fields" : "that field"} and return only the fields still needed.`);
         }
 
         return prompt.replace('{{content}}', content);
     }
 
+    // 提示词跟界面语言走：没改过的默认提示词，英文界面发英文版；本人改过的照原样发
+    promptSetting(key) {
+        const value = this.settings[key];
+        const [zh, en] = PROMPT_DEFAULTS[key] || [];
+        return !isChineseInterface() && value === zh ? en : value;
+    }
+
     getTitleOnlyPrompt(content) {
-        return `请为以下文本内容生成一个简洁有力的标题：
+        return tr(`请为以下文本内容生成一个简洁有力的标题：
 
 ${content}
 
@@ -5070,39 +5265,55 @@ ${content}
   "title": "你生成的标题"
 }
 
-确保返回的是有效的JSON格式。`;
+确保返回的是有效的JSON格式。`, `Write a short, strong title for the text below:
+
+${content}
+
+Requirements:
+1. The title reflects the main content of the text
+2. At most 50 characters
+3. No special symbols or punctuation
+4. Usable as a file name
+5. In the same language as the text
+
+Reply in JSON:
+{
+  "title": "your title"
+}
+
+Make sure the JSON is valid.`);
     }
 
     getMetaTaskDescription(hasExistingSummary, hasExistingTldr) {
-        let tasks = ["生成一个极其简洁的标题（14个字以内）"];
+        let tasks = [tr("生成一个极其简洁的标题（14个字以内）", "a very short title (under 8 words)")];
 
         if (!hasExistingSummary) {
-            tasks.push("一段简短摘要（3-4句话）");
+            tasks.push(tr("一段简短摘要（3-4句话）", "a short summary (3–4 sentences)"));
         }
 
         if (!hasExistingTldr) {
-            tasks.push("一个一句话总结（25个字以内）");
+            tasks.push(tr("一个一句话总结（25个字以内）", "a one-sentence summary (under 25 words)"));
         }
 
-        let description = `- **生成元数据**: ${tasks.join("、")}。`;
+        let description = tr(`- **生成元数据**: ${tasks.join("、")}。`, `- **Properties**: ${tasks.join("; ")}.`);
 
         if (hasExistingSummary || hasExistingTldr) {
             let skipFields = [];
-            if (hasExistingSummary) skipFields.push("摘要");
-            if (hasExistingTldr) skipFields.push("一句话总结");
-            description += ` 注意：文件已有${skipFields.join("和")}字段，请跳过生成这些字段。`;
+            if (hasExistingSummary) skipFields.push(tr("摘要", "summary"));
+            if (hasExistingTldr) skipFields.push(tr("一句话总结", "one-sentence summary"));
+            description += tr(` 注意：文件已有${skipFields.join("和")}字段，请跳过生成这些字段。`, ` Note: the note already has ${skipFields.join(" and ")}; skip ${skipFields.length > 1 ? "those fields" : "that field"}.`);
         }
 
         return description + "\n";
     }
 
     getTaggerPrompt(existingTags, content) {
-        const prompt = this.settings.taggerPrompt
+        const prompt = this.promptSetting('taggerPrompt')
             .replace('{{existing_tags}}', existingTags.join('， '))
             .replace('{{content}}', content)
             .replace('{{count}}', this.settings.taggerSuggestionsCount);
         if (!this.settings.taggerExistingOnly) return prompt;
-        return `${prompt}\n\n**额外规则：** 只能从“现有标签列表”里挑选，不要创造任何新标签；没有合适的就少给几个。`;
+        return tr(`${prompt}\n\n**额外规则：** 只能从“现有标签列表”里挑选，不要创造任何新标签；没有合适的就少给几个。`, `${prompt}\n\n**Extra rule:** choose only from the existing tags and create no new ones; if few fit, give fewer.`);
     }
 
     // “只用现有标签”：不信任模型是否守规矩，结果再按库里的标签过滤一遍，拼写以库里为准
@@ -5118,24 +5329,24 @@ ${content}
     }
 
     getMoverPrompt(folderPaths, content) {
-        return this.settings.moverPrompt
+        return this.promptSetting('moverPrompt')
             .replace('{{folder_list}}', JSON.stringify(folderPaths, null, 2))
             .replace('{{content}}', content)
             .replace('{{count}}', this.settings.moverSuggestionsCount);
     }
 
     getTranslationPrompt(phrases) {
-        return this.settings.translationPrompt
+        return this.promptSetting('translationPrompt')
             .replace('{{target_language}}', this.settings.taggerTranslationTargetLanguage)
             .replace('{{phrases_to_translate}}', phrases.join('\n'));
     }
 
     getStructurizerPrompt(contentToProcess) {
-        return this.settings.structurizerPrompt.replace('{{content}}', contentToProcess) + this.userInstructionBlock();
+        return this.promptSetting('structurizerPrompt').replace('{{content}}', contentToProcess) + this.userInstructionBlock();
     }
 
     getFuriganaPrompt(contentToProcess) {
-        return this.settings.furiganaPrompt.replace('{{content}}', contentToProcess);
+        return this.promptSetting('furiganaPrompt').replace('{{content}}', contentToProcess);
     }
 
     // 将 inline code (`...`) 里的 <ruby>...<rt>...</rt></ruby> 转成 括号假名：漢字(かな)
@@ -5299,24 +5510,32 @@ ${content}
     // 获取智能操作的提示词
     getSmartActionPrompt(action, content) {
         const prompts = {
-            'summarize': `请对以下内容进行智能总结。根据内容类型和长度，自动调整总结的详细程度和结构：
+            'summarize': tr(`请对以下内容进行智能总结。根据内容类型和长度，自动调整总结的详细程度和结构：
 
-${content}`,
+${content}`, `Summarise the content below. Adjust the detail and structure of the summary to the kind and length of the content:
 
-            'optimize': `请优化以下内容的表达方式，使其更加清晰、准确和易读。保持原意不变，提升表达质量：
+${content}`),
 
-${content}`,
+            'optimize': tr(`请优化以下内容的表达方式，使其更加清晰、准确和易读。保持原意不变，提升表达质量：
 
-            'explain': `请详细解释以下内容，包括背景、含义、相关概念和实际应用。根据内容复杂度调整解释深度：
+${content}`, `Improve how the content below is written so it is clearer, more precise and easier to read. Keep the meaning unchanged:
 
-${content}`,
+${content}`),
 
-            'analyze': `请对以下内容进行综合分析，包括主要观点、逻辑结构、优缺点和改进建议：
+            'explain': tr(`请详细解释以下内容，包括背景、含义、相关概念和实际应用。根据内容复杂度调整解释深度：
 
-${content}`
+${content}`, `Explain the content below in detail: background, meaning, related concepts and practical use. Adjust the depth to how complex it is:
+
+${content}`),
+
+            'analyze': tr(`请对以下内容进行综合分析，包括主要观点、逻辑结构、优缺点和改进建议：
+
+${content}`, `Analyse the content below as a whole: main points, logical structure, strengths and weaknesses, and suggestions for improvement:
+
+${content}`)
         };
 
-        return prompts[action] || `请处理以下内容：\n\n${content}`;
+        return prompts[action] || tr(`请处理以下内容：\n\n${content}`, `Process the content below:\n\n${content}`);
     }
 
     registerCustomActionCommands() {
@@ -5381,7 +5600,7 @@ ${content}`
             file_name: context.file?.basename || '',
             file_path: context.file?.path || ''
         };
-        return String(template || '请处理以下内容：\n\n{{content}}')
+        return String(template || tr('请处理以下内容：\n\n{{content}}', 'Process the content below:\n\n{{content}}'))
             .replace(/\{\{content\}\}/g, replacements.content)
             .replace(/\{\{selection\}\}/g, replacements.selection)
             .replace(/\{\{file_name\}\}/g, replacements.file_name)

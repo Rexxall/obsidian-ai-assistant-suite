@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- **English prompts:** with an English interface, the built-in prompts sent to the model are in English, and titles and summaries come back in the note's own language. A prompt you edited is sent as written, and tag translation still uses the target language set in settings.
 - **Releases:** built and published by a GitHub workflow when a version tag is pushed, with a build attestation for `main.js`, `manifest.json` and `styles.css` that `gh attestation verify` can check. CI runs lint, tests and a build on every push and pull request.
 
 ## 1.7.0 — 2026-11-02
