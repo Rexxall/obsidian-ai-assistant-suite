@@ -4,7 +4,7 @@ const fs=require('node:fs'),vm=require('node:vm');
 function fixture(){
  const module={exports:{}};
  vm.runInNewContext(fs.readFileSync(__dirname+'/main.js','utf8'),{window:{setTimeout,clearTimeout,setInterval,clearInterval,crypto:globalThis.crypto},module,console,require:()=>Object.fromEntries(['Plugin','Notice','PluginSettingTab','Setting','FuzzySuggestModal','Modal','ItemView','TFile'].map(k=>[k,class{}]))});
- const p=new module.exports();p.getApiKey=async()=> 'test-key';return p;
+ const p=new module.exports();p.getApiKey=()=> 'test-key';return p;
 }
 test('DeepSeek accepts official base, versioned base, full endpoint and custom proxy',()=>{
  const p=fixture();for(const [input,expected] of [[undefined,'https://api.deepseek.com/chat/completions'],['https://api.deepseek.com/','https://api.deepseek.com/chat/completions'],['https://api.deepseek.com/v1','https://api.deepseek.com/v1/chat/completions'],['https://proxy.test/chat/completions/','https://proxy.test/chat/completions']])assert.equal(p.resolveDeepSeekUrl(input),expected);

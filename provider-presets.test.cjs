@@ -6,7 +6,7 @@ function fixture(requestUrl=async()=>({status:200,text:'{"choices":[{"message":{
  const obsidian=Object.fromEntries(['Plugin','Notice','PluginSettingTab','SettingPage','Setting','FuzzySuggestModal','Modal','ItemView','TFile'].map(k=>[k,class{}]));
  obsidian.requestUrl=requestUrl;obsidian.getLanguage=()=>'en';obsidian.apiVersion='1.14.5';obsidian.Platform={isMobile:false,isMacOS:true};
  vm.runInNewContext(fs.readFileSync(__dirname+'/main.js','utf8'),{window:{setTimeout,clearTimeout,setInterval,clearInterval,crypto:globalThis.crypto},navigator:{platform:'test'},AbortController,module,console,require:()=>obsidian});
- const p=new module.exports();p.manifest={version:'x'};p.settings={apiConfigs:[]};p.getApiKey=async c=>c.apiKey?'sk-secretvalue123456':'';p.hasStoredApiKey=c=>!!c.apiKey;return p;
+ const p=new module.exports();p.manifest={version:'x'};p.settings={apiConfigs:[]};p.getApiKey=c=>c.apiKey?'sk-secretvalue123456':'';p.hasStoredApiKey=c=>!!c.apiKey;return p;
 }
 test('preset providers use the official address when empty and accept a base URL',()=>{
  const p=fixture();

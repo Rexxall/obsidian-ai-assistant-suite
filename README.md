@@ -12,7 +12,7 @@ Ask an AI to suggest a title, summary, tags, a folder and tidier text for the no
 
 1. Install **AI Assistant Suite** from *Settings → Community plugins → Browse* and enable it.
 2. Open the assistant (anchor icon in the ribbon). Not connected yet? Click **Load example** (also a command): a demo note with pre-written suggestions, no network and no cost, so you can try ticking, applying and undoing.
-3. To use your own notes, open *Settings → AI Assistant Suite → Connections*: choose a provider (DeepSeek is preselected), paste a key, keep the suggested model, and press **Test**.
+3. To use your own notes, open *Settings → AI Assistant Suite → Connections*: choose a provider (DeepSeek is preselected), choose or create a key, keep the suggested model, and press **Test**.
 4. Open a note, pick what you want done and choose **Generate suggestions**.
 
 From 1.7.1 on, the release files carry a GitHub build attestation; check one with `gh attestation verify main.js -R Rexxall/obsidian-ai-assistant-suite`.
@@ -35,11 +35,9 @@ From 1.7.1 on, the release files carry a GitHub build attestation; check one wit
 |---|---|
 | **What is sent** | The text of the note (or selection) you start an action on, plus the instructions for that action. For tag and folder suggestions, the names of your existing tags and folders are sent too. Nothing is sent until you start an action. |
 | **Who gets it** | Only the first enabled configuration. If it fails, only configurations you ticked as *Allow as backup* (off by default); with none ticked, the action stops and says why. Before a batch, the plugin shows how many notes and how much text go to which services. A local model keeps everything on your computer as long as no cloud configuration is ticked as a backup. |
-| **Where the key is stored** | Encrypted in this vault's plugin data (`.obsidian/plugins/ai-assistant-suite/data.json`). It is sent only to the provider it belongs to and never shown again in settings. *Copy diagnostics* contains no key, no full address and no note text. |
-| **Other devices** | The key travels with the vault: if you sync the vault (Obsidian Sync, iCloud, Git), the other device can use it without re-entering it. If you do not want that, keep `data.json` out of the sync and enter the key on each device. Do not commit `data.json` to a public repository. |
+| **Where the key is stored** | In Obsidian's Keychain on this device (*Settings → Keychain*). The plugin's settings file keeps only the key's name, such as `deepseek-api-key`, so other plugins that use the same name can pick the same key. A key is sent only to the provider it belongs to. *Copy diagnostics* contains no key, no full address and no note text. |
+| **Other devices** | Keys do not sync with the vault. On another device, open the connection and choose or create the key again. |
 | **Anything else** | Suggestions, undo snapshots and history stay in plugin data. No telemetry. |
-
-The encryption protects against casual reading of the file, not against someone who has the file and the plugin.
 
 ## Providers
 

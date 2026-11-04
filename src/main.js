@@ -1,4 +1,4 @@
-import { apiVersion, Platform, Plugin, Notice, PluginSettingTab, SettingPage, Setting, FuzzySuggestModal, Modal, ItemView, MarkdownRenderer, Menu, setIcon, parseYaml, stringifyYaml, getLanguage, requestUrl } from 'obsidian';
+import { apiVersion, Platform, Plugin, Notice, PluginSettingTab, SettingPage, Setting, FuzzySuggestModal, Modal, ItemView, MarkdownRenderer, SecretComponent, Menu, setIcon, parseYaml, stringifyYaml, getLanguage, requestUrl } from 'obsidian';
 
 // 界面主体是中文；命令名跟随 Obsidian 语言，非中文时用英文
 const isChineseInterface = () => {
@@ -248,97 +248,40 @@ const LOCAL_MODEL_EXAMPLE = 'qwen3:8b';
 const LOCAL_MODEL_DEFAULT_URL = PROVIDERS.local.url;
 
 
-class FallbackEncryptedSettings {
-    constructor(options = {}) {
-        this.namespace = options.namespace || 'default';
-        this.passphrase = options.passphrase || 'obsidian-default-passphrase-change-me';
-        this.encoder = new TextEncoder();
-        this.decoder = new TextDecoder();
-    }
+// 1.7 以前的密钥格式：__ENC__:命名空间:密文，口令写死在插件里。只为迁移读一次，不再写
+async function readLegacyKey(value) {
+    if (!value.startsWith('__ENC__:')) return value;
+    const payload = value.split(':').slice(2).join(':');
+    const bytesOf = base64 => Uint8Array.from(atob(base64), c => c.charCodeAt(0));
+    if (payload.startsWith('plain:')) return new TextDecoder().decode(bytesOf(payload.slice(6)));
+    const subtle = window.crypto?.subtle;
+    if (!subtle) throw new Error('Web Crypto is not available');
+    const bytes = bytesOf(payload);
+    const encoder = new TextEncoder();
+    const material = await subtle.importKey('raw', encoder.encode('obsidian-default-passphrase-change-me'), 'PBKDF2', false, ['deriveKey']);
+    const key = await subtle.deriveKey(
+        { name: 'PBKDF2', salt: encoder.encode('obsidian-utils-encrypted-settings-v1:ai-assistant-suite'), iterations: 100000, hash: 'SHA-256' },
+        material, { name: 'AES-GCM', length: 256 }, false, ['decrypt']);
+    const plain = await subtle.decrypt({ name: 'AES-GCM', iv: bytes.slice(0, 12) }, key, bytes.slice(12));
+    return new TextDecoder().decode(plain);
+}
 
-    isEncryptedValue(value) {
-        return typeof value === 'string' && value.startsWith('__ENC__:');
-    }
+// 已知服务商的密钥用各插件共用的名字（如 deepseek-api-key），在别的插件里填过就能直接选；
+// 自定义地址和本地服务用本插件自己的名字
+const SHARED_KEY_PROVIDERS = ['deepseek', 'qwen', 'siliconflow', 'kimi', 'zhipu', 'gemini'];
+function secretNamesFor(config) {
+    const id = String(config.id || 'default').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'default';
+    const own = `ai-assistant-suite-${id}-api-key`;
+    return SHARED_KEY_PROVIDERS.includes(config.apiProvider) ? [`${config.apiProvider}-api-key`, own] : [own];
+}
 
-    async encryptValue(plaintext) {
-        if (!plaintext) return plaintext;
-        if (!window.crypto?.subtle) {
-            return `__ENC__:${this.namespace}:plain:${btoa(unescape(encodeURIComponent(plaintext)))}`;
-        }
-        const key = await this.deriveKey();
-        const iv = window.crypto.getRandomValues(new Uint8Array(12));
-        const encrypted = await window.crypto.subtle.encrypt(
-            { name: 'AES-GCM', iv },
-            key,
-            this.encoder.encode(plaintext)
-        );
-        const combined = new Uint8Array(iv.byteLength + encrypted.byteLength);
-        combined.set(iv, 0);
-        combined.set(new Uint8Array(encrypted), iv.byteLength);
-        return `__ENC__:${this.namespace}:${this.arrayBufferToBase64(combined.buffer)}`;
-    }
-
-    async decryptValue(value) {
-        if (!this.isEncryptedValue(value)) return value || '';
-        const parts = value.split(':');
-        const payload = parts.slice(2).join(':');
-        if (payload.startsWith('plain:')) {
-            return decodeURIComponent(escape(atob(payload.slice(6))));
-        }
-        if (!window.crypto?.subtle) {
-            throw new Error(tr('当前环境不支持 Web Crypto，无法解密 API Key。', 'Web Crypto is not available here, so the API key cannot be decrypted.'));
-        }
-        const combined = this.base64ToArrayBuffer(payload);
-        const iv = combined.slice(0, 12);
-        const encrypted = combined.slice(12);
-        const key = await this.deriveKey();
-        const decrypted = await window.crypto.subtle.decrypt(
-            { name: 'AES-GCM', iv: new Uint8Array(iv) },
-            key,
-            new Uint8Array(encrypted)
-        );
-        return this.decoder.decode(decrypted);
-    }
-
-    async deriveKey() {
-        const keyMaterial = await window.crypto.subtle.importKey(
-            'raw',
-            this.encoder.encode(this.passphrase),
-            'PBKDF2',
-            false,
-            ['deriveKey']
-        );
-        return window.crypto.subtle.deriveKey(
-            {
-                name: 'PBKDF2',
-                salt: this.encoder.encode(`obsidian-utils-encrypted-settings-v1:${this.namespace}`),
-                iterations: 100000,
-                hash: 'SHA-256',
-            },
-            keyMaterial,
-            { name: 'AES-GCM', length: 256 },
-            false,
-            ['encrypt', 'decrypt']
-        );
-    }
-
-    arrayBufferToBase64(buffer) {
-        const bytes = new Uint8Array(buffer);
-        let binary = '';
-        for (let i = 0; i < bytes.byteLength; i++) {
-            binary += String.fromCharCode(bytes[i]);
-        }
-        return btoa(binary);
-    }
-
-    base64ToArrayBuffer(base64) {
-        const binary = atob(base64);
-        const bytes = new Uint8Array(binary.length);
-        for (let i = 0; i < binary.length; i++) {
-            bytes[i] = binary.charCodeAt(i);
-        }
-        return bytes;
-    }
+// 存到第一个空着或已是同一个值的名字下，不覆盖别的插件存的密钥
+function storeSecret(storage, names, value) {
+    const last = names[names.length - 1];
+    const candidates = [...names, ...Array.from({ length: 98 }, (_, i) => `${last}-${i + 2}`)];
+    const name = candidates.find(n => { const existing = storage.getSecret(n); return !existing || existing === value; });
+    storage.setSecret(name, value);
+    return name;
 }
 
 const STRUCTURIZER_DEFAULT_PROMPT = `你是一位非常精准的笔记结构化编辑。你的任务是优化给定文本的结构和可读性，同时严格遵守以下规则。
@@ -684,7 +627,6 @@ const DEFAULT_SETTINGS = {
             id: 'default',
             name: 'DeepSeek',
             apiProvider: 'deepseek',
-            apiKey: '',
             apiUrl: '',
             modelName: 'deepseek-flash',
             auxiliaryModelName: '',
@@ -2479,7 +2421,7 @@ class AssistantView extends ItemView {
             }
         }
 
-        // 笔记改名或删除后，把修正过的历史存回插件设置（旧版本存在 localStorage，已迁移）
+        // 笔记改名或删除后，把修正过的历史存回插件设置
         if (updatedHistory.length !== history.length ||
             updatedHistory.some((item, index) =>
                 item.filePath !== history[index]?.filePath)) {
@@ -2551,9 +2493,6 @@ class AssistantView extends ItemView {
                 // 清理插件设置中的历史记录
                 this.plugin.settings.processingHistory = [];
                 this.plugin.saveSettings();
-
-                // 同时清理可能存在的localStorage数据
-                window.localStorage.removeItem('ai-assistant-history');
 
                 this.render();
                 // 在助手面板中显示成功信息
@@ -2900,12 +2839,6 @@ class AiAssistantSuite extends Plugin {
 
     debounceTimers = new Map(); // 添加防抖定时器
 
-    initializeSharedServices() {
-        this.encryptedSettings = new FallbackEncryptedSettings({
-            namespace: 'ai-assistant-suite'
-        });
-    }
-
     // 1.3 之前只有一套服务，字段直接放在顶层；升级时转成一条配置，不丢密钥和模型
     migrateLegacySettings() {
         const legacyKeys = ['apiProvider', 'apiKey', 'apiUrl', 'modelName', 'auxiliaryModelName'];
@@ -3000,8 +2933,14 @@ class AiAssistantSuite extends Plugin {
         return [candidates[index], ...candidates.slice(0, index), ...candidates.slice(index + 1)];
     }
 
+    // 密钥存在 Obsidian 的钥匙串里（本机，不随库同步）；每套配置只记密钥的名字 apiKeySecret
+    getApiKey(config) {
+        const name = config?.apiKeySecret;
+        return (name && this.app?.secretStorage?.getSecret(name)) || '';
+    }
+
     hasStoredApiKey(config) {
-        return !!(config?.apiKey && config.apiKey !== REDACTED_API_KEY);
+        return !!this.getApiKey(config);
     }
 
     // 本地模型（Ollama、LM Studio）不需要密钥；其余服务商必须有密钥
@@ -3010,49 +2949,34 @@ class AiAssistantSuite extends Plugin {
         return this.hasStoredApiKey(config);
     }
 
-    async setApiKey(config, value) {
-        if (!config) return;
-        if (!value) {
-            config.apiKey = '';
-            return;
-        }
-        config.apiKey = await this.encryptedSettings.encryptValue(value);
-    }
-
-    async getApiKey(config) {
-        if (!config?.apiKey || config.apiKey === REDACTED_API_KEY) {
-            return '';
-        }
-        if (this.encryptedSettings?.isEncryptedValue?.(config.apiKey)) {
-            return await this.encryptedSettings.decryptValue(config.apiKey);
-        }
-        return config.apiKey;
-    }
-
-    async migrateApiKeys() {
-        let migrated = false;
+    // 1.7 以前密钥存在插件数据里（固定口令加密，等于明文）。启动时搬进钥匙串，搬完从数据里删掉；
+    // 读不出的旧值原样留着，不丢
+    async moveKeysToSecretStorage() {
+        const storage = this.app?.secretStorage;
+        if (!storage) return false;
+        let moved = false;
         for (const config of this.settings.apiConfigs || []) {
-            if (config.apiKey &&
-                config.apiKey !== REDACTED_API_KEY &&
-                !this.encryptedSettings.isEncryptedValue(config.apiKey)) {
-                config.apiKey = await this.encryptedSettings.encryptValue(config.apiKey);
-                migrated = true;
+            if (!('apiKey' in config)) continue;
+            let key = '';
+            if (config.apiKey && config.apiKey !== REDACTED_API_KEY) {
+                try {
+                    key = await readLegacyKey(config.apiKey);
+                } catch (error) {
+                    console.error('AI Assistant Suite: could not read a saved key; it is left in the settings.', error);
+                    continue;
+                }
             }
+            if (key && !config.apiKeySecret) config.apiKeySecret = storeSecret(storage, secretNamesFor(config), key);
+            delete config.apiKey;
+            moved = true;
         }
-        return migrated;
+        return moved;
     }
 
     redactSettingsForExport(settings) {
         const clone = JSON.parse(JSON.stringify(settings || {}));
-        if (Array.isArray(clone.apiConfigs)) {
-            clone.apiConfigs = clone.apiConfigs.map(config => ({
-                ...config,
-                apiKey: config.apiKey ? REDACTED_API_KEY : ''
-            }));
-        }
-        if (clone.apiKey) {
-            clone.apiKey = REDACTED_API_KEY;
-        }
+        for (const config of clone.apiConfigs || []) delete config.apiKey;
+        delete clone.apiKey;
         if (Array.isArray(clone.rollbackHistory)) {
             clone.rollbackHistory = [];
         }
@@ -3068,8 +2992,8 @@ class AiAssistantSuite extends Plugin {
         if (Array.isArray(importedSettings.apiConfigs)) {
             merged.apiConfigs = importedSettings.apiConfigs.map(config => {
                 const existing = existingConfigs.get(config.id);
-                if (config.apiKey === REDACTED_API_KEY && existing?.apiKey) {
-                    return { ...config, apiKey: existing.apiKey };
+                if (!config.apiKeySecret && existing?.apiKeySecret) {
+                    return { ...config, apiKeySecret: existing.apiKeySecret };
                 }
                 return config;
             });
@@ -3532,24 +3456,10 @@ class AiAssistantSuite extends Plugin {
     }
 
     getRecentHistory() {
-        try {
-            if (this.settings.processingHistory) {
-                this.initializeUsageStatsFromHistory?.(this.settings.processingHistory);
-                return this.settings.processingHistory;
-            }
-            const history = window.localStorage.getItem('ai-assistant-history');
-            if (history) {
-                const parsedHistory = JSON.parse(history);
-                this.settings.processingHistory = parsedHistory;
-                this.saveSettings();
-                this.initializeUsageStatsFromHistory?.(parsedHistory);
-                window.localStorage.removeItem('ai-assistant-history');
-                return parsedHistory;
-            }
-            return [];
-        } catch {
-            return [];
-        }
+        const history = this.settings.processingHistory;
+        if (!history) return [];
+        this.initializeUsageStatsFromHistory?.(history);
+        return history;
     }
 
     addToHistory(fileName, filePath, action, fileId = null) {
@@ -3747,7 +3657,7 @@ class AiAssistantSuite extends Plugin {
     async _callSingleConfig(prompt, modelNameOverride, expectJson, activeConfig, options = {}) {
         const model = modelNameOverride || activeConfig.modelName || this.defaultModelFor(activeConfig.apiProvider);
         const provider = activeConfig.apiProvider || 'openai';
-        const apiKey = await this.getApiKey(activeConfig);
+        const apiKey = this.getApiKey(activeConfig);
 
         if (!apiKey && provider !== 'local') {
             throw Object.assign(new Error(tr('还没有填写 API 密钥，请在设置里填写。', 'No API key yet. Add one in settings.')), { kind: 'no-key' });
@@ -5758,13 +5668,12 @@ ${content}`)
 
 
     async loadSettings() {
-        this.initializeSharedServices();
         const stored = await this.loadData() || {};
         this.settings = Object.assign({}, JSON.parse(JSON.stringify(DEFAULT_SETTINGS)), stored);
         if (!Array.isArray(stored.apiConfigs)) delete this.settings.apiConfigs;
         const upgraded = this.migrateLegacySettings();
         this.normalizeSettings();
-        const migrated = await this.migrateApiKeys();
+        const migrated = await this.moveKeysToSecretStorage();
         if (migrated || upgraded) {
             await this.saveSettings();
         }
@@ -5965,7 +5874,6 @@ class AiAssistantSettingTab extends PluginSettingTab {
                 id: newId,
                 name: providerName('deepseek'),
                 apiProvider: 'deepseek',
-                apiKey: '',
                 apiUrl: '',
                 modelName: this.plugin.defaultModelFor('deepseek'),
                 auxiliaryModelName: '',
@@ -6141,47 +6049,21 @@ class AiAssistantSettingTab extends PluginSettingTab {
                 }));
         }
 
-        let apiKeyInput = null;
+        const secretName = activeConfig.apiKeySecret || '';
         const keySetting = new Setting(containerEl)
             .setName(tr('API 密钥', 'API key'))
-            .setDesc(this.plugin.hasStoredApiKey(activeConfig)
-                ? ''
-                : provider === 'local'
-                    ? tr('本地模型一般不需要密钥，只有你给本地服务设了密钥时才填。', 'Local models usually need no key; fill this only if you set one on the local server.')
-                    : tr('密钥加密后存在这个库的插件数据里，会跟着库同步到其他设备。', 'The key is stored encrypted in this vault\'s plugin data and syncs with the vault.'))
-            .addText(text => {
-                text.inputEl.type = 'password';
-                text.setPlaceholder(this.plugin.hasStoredApiKey(activeConfig) ? tr('已保存，输入新值可替换', 'Saved; type to replace') : tr('粘贴密钥', 'Paste key'));
-                text.setValue('');
-                text.inputEl.autocomplete = 'off';
-                text.inputEl.spellcheck = false;
-                apiKeyInput = text;
-            })
-            .addButton(button => button
-                .setButtonText(tr('保存', 'Save'))
-                .setCta()
-                .onClick(async () => {
-                    const value = apiKeyInput?.getValue?.() || '';
-                    if (!value.trim()) {
-                        new Notice(tr('请先粘贴密钥。', 'Paste a key first.'), 2500);
-                        return;
-                    }
-                    await this.plugin.setApiKey(activeConfig, value.trim());
+            .setDesc(provider === 'local'
+                ? tr('本地模型一般不需要密钥，只有你给本地服务设了密钥时才选。', 'Local models usually need no key; choose one only if you set one on the local server.')
+                : secretName && !this.plugin.hasStoredApiKey(activeConfig)
+                    ? tr(`这台设备的钥匙串里没有「${secretName}」，请重新选择或新建。`, `"${secretName}" is not in this device's Keychain. Choose or create a key.`)
+                    : tr('密钥存在本机 Obsidian 的钥匙串里，不随库同步；换设备后在这里重新选一次。', 'Keys live in Obsidian\'s Keychain on this device and do not sync with the vault. On another device, choose the key here again.'))
+            .addComponent(el => new SecretComponent(this.app, el)
+                .setValue(secretName)
+                .onChange(async (value) => {
+                    activeConfig.apiKeySecret = value || '';
                     await this.plugin.saveSettings();
-                    new Notice(tr('密钥已保存。', 'Key saved.'), 3000);
                     this.refresh();
                 }));
-        if (this.plugin.hasStoredApiKey(activeConfig)) {
-            keySetting.addButton(button => button
-                .setButtonText(tr('清除', 'Clear'))
-                .setDestructive()
-                .onClick(async () => {
-                    activeConfig.apiKey = '';
-                    await this.plugin.saveSettings();
-                    new Notice(tr('密钥已清除。', 'Key cleared.'), 3000);
-                    this.refresh();
-                }));
-        }
         if (info.keyPage) {
             keySetting.descEl.createEl('br');
             keySetting.descEl.createEl('a', { text: tr('去服务商后台获取密钥', 'Get a key from the provider'), href: info.keyPage });
@@ -6568,7 +6450,7 @@ class AiAssistantSettingTab extends PluginSettingTab {
                 // 合并设置（保留默认值），且不让 [REDACTED] 覆盖已保存密钥
                 this.plugin.settings = this.plugin.mergeImportedSettings(importedSettings);
                 this.plugin.normalizeSettings();
-                await this.plugin.migrateApiKeys();
+                await this.plugin.moveKeysToSecretStorage();
                 await this.plugin.saveSettings();
 
                 // 刷新设置界面

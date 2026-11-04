@@ -36,7 +36,7 @@ test('no request uses fetch, even one that asked to stream',async()=>{
   fetch:async()=>{throw new Error('fetch must not be used');},
   requestUrl:async(request)=>{plainBody=JSON.parse(request.body);return {status:200,text:'{"choices":[{"message":{"content":"whole answer"}}]}'};}
  });
- p.getApiKey=async()=>'key';
+ p.getApiKey=()=>'key';
  const streamed=[];
  const out=await p._callSingleConfig('hello',null,false,{apiProvider:'openai',apiUrl:'https://x.test/v1/chat/completions',modelName:'m'},{stream:true,onStream:(d)=>streamed.push(d)});
  assert.equal(out,'whole answer');assert.equal(plainBody.stream,undefined);assert.deepEqual(streamed,['whole answer']);

@@ -3,7 +3,7 @@ function fixture(requestUrl){
  const module={exports:{}};
  const obsidian={...Object.fromEntries(['Plugin','Notice','PluginSettingTab','Setting','FuzzySuggestModal','Modal','ItemView','TFile'].map(k=>[k,class{}])),requestUrl};
  vm.runInNewContext(fs.readFileSync(__dirname+'/main.js','utf8'),{window:{setTimeout,clearTimeout,setInterval,clearInterval},module,console,AbortController,TextEncoder,TextDecoder,require:()=>obsidian});
- return new module.exports();
+ const p=new module.exports();p.app={secretStorage:{getSecret:id=>'value-of-'+id}};return p;
 }
 test('only-existing mode keeps tags that exist, in the vault spelling, once each',()=>{
  const p=fixture();
@@ -20,7 +20,7 @@ test('the tagger prompt adds the only-existing rule only when the setting is on'
 test('a local model needs no key, uses the Ollama address by default and sends no Authorization header',async()=>{
  let seen;
  const p=fixture(async(request)=>{seen=request;return {status:200,text:'{"choices":[{"message":{"content":"ok"}}]}'};});
- p.getApiKey=async()=>'';
+ p.getApiKey=()=>'';
  const config={apiProvider:'local',modelName:'qwen3:8b'};
  assert.equal(p.isConfigUsable(config),true);
  assert.equal(await p._callSingleConfig('hi',null,true,config),'ok');
@@ -30,13 +30,13 @@ test('a local model needs no key, uses the Ollama address by default and sends n
 });
 test('cloud providers still refuse to run without a key',async()=>{
  const p=fixture(async()=>{throw new Error('should not be called');});
- p.getApiKey=async()=>'';
+ p.getApiKey=()=>'';
  assert.equal(p.isConfigUsable({apiProvider:'openai',apiUrl:'https://x.test'}),false);
  await assert.rejects(p._callSingleConfig('hi',null,false,{apiProvider:'openai',apiUrl:'https://x.test'}),/还没有填写 API 密钥/);
 });
 test('the batch summary counts notes and size and lists destinations in fallback order',()=>{
  const p=fixture();
- p.settings={apiConfigs:[{id:'a',name:'Cloud',apiProvider:'openai',apiKey:'k'},{id:'b',name:'Laptop',apiProvider:'local',allowFallback:true},{id:'c',name:'Off',apiProvider:'openai',apiKey:'k',enabled:false}]};
+ p.settings={apiConfigs:[{id:'a',name:'Cloud',apiProvider:'openai',apiKeySecret:'k'},{id:'b',name:'Laptop',apiProvider:'local',allowFallback:true},{id:'c',name:'Off',apiProvider:'openai',apiKeySecret:'k',enabled:false}]};
  p.lastWorkingConfigId='b';
  const out=p.describeBatchSend([{stat:{size:2048}},{stat:{size:1024}}]);
  assert.equal(out.notes,2);assert.equal(out.size,'3 KB');

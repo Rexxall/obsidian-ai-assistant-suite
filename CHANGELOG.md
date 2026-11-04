@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.8.0 — 2026-11-05
+
+- **Keys in secret storage:** API keys move out of the plugin's settings file into Obsidian's Keychain, its secret storage (Obsidian 1.11.4 and later; the plugin already needs 1.13). Each configuration now picks a key by name. Keys you saved before are moved on first start, under names other plugins can share, such as `deepseek-api-key`; if another plugin already keeps a different key under that name, this plugin uses its own name instead. Afterwards `data.json` holds no key. Keys no longer sync with the vault: on another device, choose the key again.
+- **Directory review:** the old code that moved history out of the browser's local storage is gone; history has lived in plugin data since 1.3.
 ## 1.7.1 — 2026-11-03
 
 - **English prompts:** with an English interface, the built-in prompts sent to the model are in English, and titles and summaries come back in the note's own language. A prompt you edited is sent as written, and tag translation still uses the target language set in settings.
