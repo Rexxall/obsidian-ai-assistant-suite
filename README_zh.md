@@ -1,35 +1,63 @@
-# AI Assistant Suite
+<p align="right"><a href="README.md">English</a></p>
 
-[English](README.md)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/readme/hero-zh-dark.svg">
+  <img src="assets/readme/hero-zh-light.svg" width="100%" alt="AI Assistant Suite：乱笔记进去，整齐笔记出来。写进什么，由你勾选。">
+</picture>
+
+<p align="center"><a href="https://community.obsidian.md/plugins/ai-assistant-suite"><b>在 Obsidian 里安装</b></a></p>
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/readme/demo-dark.gif">
+  <img src="assets/readme/demo-light.gif" width="100%" alt="一篇乱糟糟的会议笔记。助手用真实模型生成标题、标签、摘要和整理后的正文；在审核清单里取消“移动到文件夹”，其余应用，笔记变整齐，属性也填好了。">
+</picture>
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/readme/cards-zh-dark.svg">
+  <img src="assets/readme/cards-zh-light.svg" width="100%" alt="一键建议：标题、标签、文件夹、整理正文。逐项审核：只写入你勾选的那几项。用你的模型：云端密钥或本地模型，随时撤销。">
+</picture>
+
+## 三步上手
+
+1. 在“设置 → 第三方插件 → 浏览”里搜索 **AI Assistant Suite**，安装并启用。
+2. 点左侧功能区的锚形图标打开助手。还没连 AI？点“载入示例”（也有同名命令）：一篇演示笔记配上预先写好的建议，不联网、不花钱，可以照常试勾选、应用和撤销。
+3. 要处理自己的笔记，打开“设置 → AI Assistant Suite → 模型连接”：选服务商（默认 DeepSeek），选择或新建密钥，模型用推荐的就行，点“测试”。然后打开一篇笔记，选好要做的事，点“生成建议”。
+
+**需要** Obsidian 1.13 或更新（电脑、手机都行），再加一个 API 密钥或本地模型。**费用** 插件不要钱；模型按用量付给你选的服务商，本地模型免费。
+
+## 其余内容
+
+<details>
+<summary><b>怎么用</b></summary>
 
 让 AI 给当前这篇笔记建议标题、摘要、标签、该放的文件夹和整理后的正文。所有建议先进审阅清单，你勾选并点应用之前一个字都不改，改完也能撤销。
+
+1. 对打开的笔记选要做的事：标题与摘要、标签、归档、整理正文、日文假名，或自定义动作。
+2. 建议出现在“本篇建议”里。整理后的正文以整篇预览打开。
+3. “审核并应用”打开清单，只写入勾选的行；你审阅期间笔记被改过，就一个字都不写，请你重新生成。
+4. 每篇应用过的笔记都能撤销。批量处理一个文件夹时，结果按笔记一篇一篇确认。
 
 ![左边是会议笔记整理后的整篇预览，右边是助手给的建议](docs/screenshots/hero-zh.png)
 
 *左边：整理后的笔记，还没写入。右边：每条建议都能改或去掉。*
 
-## 从这里开始
+![审阅清单：标签、属性、移动文件夹和正文各占一行，各有勾选框](docs/screenshots/review-checklist-zh.png)
 
-1. 在“设置 → 第三方插件 → 浏览”里搜索 **AI Assistant Suite**，安装并启用。
-2. 点左侧功能区的锚形图标打开助手。还没连 AI？点“载入示例”（也有同名命令）：一篇演示笔记配上预先写好的建议，不联网、不花钱，可以照常试勾选、应用和撤销。
-3. 要处理自己的笔记，打开“设置 → AI Assistant Suite → 模型连接”：选服务商（默认 DeepSeek），选择或新建密钥，模型用推荐的就行，点“测试”。
-4. 打开一篇笔记，选好要做的事，点“生成建议”。
+![模型连接设置：服务商、接口地址、模型、密钥分开填，测试成功](docs/screenshots/connection-zh.png)
 
-从 1.7.1 起，Release 附件带 GitHub 构建认证，可用 `gh attestation verify main.js -R Rexxall/obsidian-ai-assistant-suite` 核验。
+</details>
 
-## 需要什么，花多少钱
+<details>
+<summary><b>需要什么，花多少钱</b></summary>
 
 - **需要：** Obsidian 1.13 或更新，电脑和手机都能用；再准备一个模型服务商的 API 密钥，或者电脑上的本地模型（Ollama、LM Studio）。
 - **插件费用：** 免费开源（MIT）。不用注册作者的账号，没有订阅，没有统计上报。
 - **模型费用：** 按用量付给你选的服务商。本地模型不花钱。有的服务商有免费额度或新用户赠送额度，以它们官网的价格页为准，价格经常变。“测试”只发一句很短的话、要一个很短的回答，一般不到一分钱。
 
-## 更多截图
+</details>
 
-![审阅清单：标签、属性、移动文件夹和正文各占一行，各有勾选框](docs/screenshots/review-checklist-zh.png)
-
-![模型连接设置：服务商、接口地址、模型、密钥分开填，测试成功](docs/screenshots/connection-zh.png)
-
-## 数据去哪里
+<details>
+<summary><b>数据去哪里</b></summary>
 
 | | |
 |---|---|
@@ -39,7 +67,10 @@
 | **换设备要不要重填** | 要。密钥不随库同步，换设备后打开这套配置，重新选择或新建密钥。 |
 | **其他** | 建议、撤销快照和处理记录存在插件数据里。没有统计上报。 |
 
-## 服务商
+</details>
+
+<details>
+<summary><b>服务商</b></summary>
 
 | 服务商 | 默认地址 | 预设模型 |
 |---|---|---|
@@ -54,26 +85,34 @@
 
 地址留空就用官方地址；也可以填基础地址（如 `https://api.deepseek.com`）或代理地址。预设模型只是快捷选项，任何模型名都能手动填。
 
-## 怎么用
+</details>
 
-1. 对打开的笔记选要做的事：标题与摘要、标签、归档、整理正文、日文假名，或自定义动作。
-2. 建议出现在“本篇建议”里。整理后的正文以整篇预览打开。
-3. “审核并应用”打开清单，只写入勾选的行；你审阅期间笔记被改过，就一个字都不写，请你重新生成。
-4. 每篇应用过的笔记都能撤销。批量处理一个文件夹时，结果按笔记一篇一篇确认。
-
-## 语言和主题
+<details>
+<summary><b>语言和主题</b></summary>
 
 整个界面（包括错误提示和空状态）跟随 Obsidian 的语言：中文，其他语言一律用英文。发给模型的提示词可以在设置里改。
 
 颜色取自主题变量，样式只作用在插件自己的视图里。
 
-## 限制
+</details>
+
+<details>
+<summary><b>限制</b></summary>
 
 - 建议的质量取决于模型，尤其是改写正文，应用前要看。
 - 批量处理每篇笔记发一次请求，文件夹大，费用就相应多。
 - 回答不是逐字显示的：请求走 Obsidian 的 `requestUrl`，手机能用、不受跨域限制，但回答要整段到齐才显示。测试中用 DeepSeek Flash 整理一篇 10000 字的笔记约 48 秒。
 - 手机访问不到电脑上的本地模型。
 
-## 许可
+</details>
 
-MIT
+<details>
+<summary><b>开发与核验发布</b></summary>
+
+检查项和报告问题见 [CONTRIBUTING.md](CONTRIBUTING.md)，版本记录见 [CHANGELOG.md](CHANGELOG.md)。
+
+从 1.7.1 起，Release 附件带 GitHub 构建认证，可用 `gh attestation verify main.js -R Rexxall/obsidian-ai-assistant-suite` 核验。
+
+</details>
+
+MIT 许可

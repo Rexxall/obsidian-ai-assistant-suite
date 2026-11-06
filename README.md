@@ -1,35 +1,63 @@
-# AI Assistant Suite
+<p align="right"><a href="README_zh.md">中文</a></p>
 
-[中文说明](README_zh.md)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/readme/hero-dark.svg">
+  <img src="assets/readme/hero-light.svg" width="100%" alt="AI Assistant Suite: messy note in, tidy note out. You tick what gets written.">
+</picture>
+
+<p align="center"><a href="https://community.obsidian.md/plugins/ai-assistant-suite"><b>Install from Obsidian</b></a></p>
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/readme/demo-dark.gif">
+  <img src="assets/readme/demo-light.gif" width="100%" alt="A messy meeting note. The assistant generates a title, tags, a summary and tidier text with a real model. In the review list the folder move is unticked, the rest is applied, and the note comes back tidy with its properties filled in.">
+</picture>
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/readme/cards-dark.svg">
+  <img src="assets/readme/cards-light.svg" width="100%" alt="Suggest: title, tags, folder, tidier text. Review: only ticked rows are written. Your model: cloud key or local, undo any time.">
+</picture>
+
+## Start in three steps
+
+1. Install **AI Assistant Suite** from *Settings → Community plugins → Browse* and enable it.
+2. Open the assistant (anchor icon in the ribbon). Not connected yet? Click **Load example** (also a command): a demo note with pre-written suggestions, no network and no cost, so you can try ticking, applying and undoing.
+3. To use your own notes, open *Settings → AI Assistant Suite → Connections*: choose a provider (DeepSeek is preselected), choose or create a key, keep the suggested model, and press **Test**. Then open a note, pick what you want done and choose **Generate suggestions**.
+
+**Needs** Obsidian 1.13+ on desktop or mobile, and an API key or a local model. **Costs** nothing for the plugin; the model is paid to your provider by usage, and a local model is free.
+
+## Everything else
+
+<details>
+<summary><b>How it works</b></summary>
 
 Ask an AI to suggest a title, summary, tags, a folder and tidier text for the note you are on. Every suggestion lands in a review list; nothing is written until you tick it and apply, and every change can be undone.
+
+1. Choose what you want for the open note: title and summary, tags, folder, tidy text, furigana for Japanese, or a custom action.
+2. The suggestions appear under *This note*. The tidied text opens as a whole-note preview.
+3. **Review and apply** opens the checklist. Only ticked rows are written; if the note changed while you were reviewing, nothing is written and you are asked to generate again.
+4. Every applied note can be undone. For a folder, run a batch and review the results one note at a time.
 
 ![A tidied preview of a meeting note on the left and the assistant's suggestions on the right](docs/screenshots/hero.png)
 
 *Left: the tidied note, not written yet. Right: suggestions you can edit or remove.*
 
-## Start here
+![Review checklist with tags, properties, a folder move and the body text, each with its own tick box](docs/screenshots/review-checklist.png)
 
-1. Install **AI Assistant Suite** from *Settings → Community plugins → Browse* and enable it.
-2. Open the assistant (anchor icon in the ribbon). Not connected yet? Click **Load example** (also a command): a demo note with pre-written suggestions, no network and no cost, so you can try ticking, applying and undoing.
-3. To use your own notes, open *Settings → AI Assistant Suite → Connections*: choose a provider (DeepSeek is preselected), choose or create a key, keep the suggested model, and press **Test**.
-4. Open a note, pick what you want done and choose **Generate suggestions**.
+![Connection settings: provider, API URL, model and key filled in separately, with a successful test](docs/screenshots/connection.png)
 
-From 1.7.1 on, the release files carry a GitHub build attestation; check one with `gh attestation verify main.js -R Rexxall/obsidian-ai-assistant-suite`.
+</details>
 
-## What it needs and what it costs
+<details>
+<summary><b>What it needs and what it costs</b></summary>
 
 - **Needs:** Obsidian 1.13 or later, desktop or mobile, and either an API key from a model provider or a local model (Ollama, LM Studio) on your computer.
 - **The plugin:** free and open source (MIT). No account with the author, no subscription, no telemetry.
 - **The model:** paid to the provider you choose, by usage. A local model costs nothing. Some providers have free tiers or new-user credit; check their own pricing pages, which change often. **Test** sends one short line and asks for a very short answer, usually a tiny fraction of a cent.
 
-## More pictures
+</details>
 
-![Review checklist with tags, properties, a folder move and the body text, each with its own tick box](docs/screenshots/review-checklist.png)
-
-![Connection settings: provider, API URL, model and key filled in separately, with a successful test](docs/screenshots/connection.png)
-
-## Where your data goes
+<details>
+<summary><b>Where your data goes</b></summary>
 
 | | |
 |---|---|
@@ -39,7 +67,10 @@ From 1.7.1 on, the release files carry a GitHub build attestation; check one wit
 | **Other devices** | Keys do not sync with the vault. On another device, open the connection and choose or create the key again. |
 | **Anything else** | Suggestions, undo snapshots and history stay in plugin data. No telemetry. |
 
-## Providers
+</details>
+
+<details>
+<summary><b>Providers</b></summary>
 
 | Provider | Default address | Models offered |
 |---|---|---|
@@ -54,26 +85,34 @@ From 1.7.1 on, the release files carry a GitHub build attestation; check one wit
 
 Leave the address empty to use the official one; a base URL such as `https://api.deepseek.com` or a proxy also works. The model list is a shortcut; you can type any model name.
 
-## How it works
+</details>
 
-1. Choose what you want for the open note: title and summary, tags, folder, tidy text, furigana for Japanese, or a custom action.
-2. The suggestions appear under *This note*. The tidied text opens as a whole-note preview.
-3. **Review and apply** opens the checklist. Only ticked rows are written; if the note changed while you were reviewing, nothing is written and you are asked to generate again.
-4. Every applied note can be undone. For a folder, run a batch and review the results one note at a time.
-
-## Language and themes
+<details>
+<summary><b>Language and themes</b></summary>
 
 Every part of the interface, including errors and empty states, follows Obsidian's language: Chinese, or English for every other language. The prompts sent to the model are editable in settings.
 
 Colours come from your theme's variables and the styles apply only inside the plugin's views.
 
-## Limits
+</details>
+
+<details>
+<summary><b>Limits</b></summary>
 
 - Suggestions are only as good as the model; review them, especially text rewrites.
 - Batch runs send one request per note; large folders cost accordingly.
 - Answers do not stream: requests use Obsidian's `requestUrl`, which works on mobile and is not blocked by CORS but returns the whole answer at once. In testing, tidying a 10,000-character note with DeepSeek Flash took about 48 seconds.
 - A local model on your computer cannot be reached from a phone.
 
-## License
+</details>
 
-MIT
+<details>
+<summary><b>Development and verifying a release</b></summary>
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for checks and reporting issues, and [CHANGELOG.md](CHANGELOG.md) for versions.
+
+From 1.7.1 on, the release files carry a GitHub build attestation; check one with `gh attestation verify main.js -R Rexxall/obsidian-ai-assistant-suite`.
+
+</details>
+
+MIT License

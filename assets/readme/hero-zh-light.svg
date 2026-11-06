@@ -1,0 +1,45 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="400" viewBox="0 0 1200 400" role="img" aria-labelledby="t d">
+  <title id="t">AI Assistant Suite</title>
+  <desc id="d">把一篇乱笔记整理整齐。AI 给出标题、标签、文件夹和更清楚的正文，你取消不要的那项，其余一键应用。图中“team sync notes.md”的审核清单里，标题、标签、整理正文已勾选，移动文件夹没勾，按钮是“应用 3 项”。</desc>
+  <rect width="1200" height="400" rx="28" fill="#F7F6FB"/>
+  <g id="title-block" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', sans-serif">
+    <text x="64" y="118" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="16" letter-spacing="2" fill="#7A5AF0">OBSIDIAN 插件 · 不点应用，一个字都不改</text>
+    <text x="62" y="194" font-size="58" font-weight="700" letter-spacing="-1.5" fill="#1D1B26">AI Assistant Suite</text>
+    <text x="64" y="250" font-size="29" fill="#1D1B26">乱笔记进去，整齐笔记出来。</text>
+    <text x="64" y="290" font-size="29" fill="#6B6780">写进什么，由你勾选。</text>
+    <text x="64" y="346" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="16" fill="#6B6780">免费 · 自己的密钥或本地模型 · 随时撤销</text>
+  </g>
+  <g id="project-proof" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', sans-serif">
+    <rect x="700" y="40" width="440" height="320" rx="20" fill="#FFFFFF" stroke="#E4E1EE"/>
+    <text x="724" y="80" font-size="20" font-weight="700" fill="#1D1B26">审核 AI 建议</text>
+    <text x="724" y="104" font-size="15" fill="#6B6780">team sync notes.md</text>
+    <circle cx="738" cy="139" r="11" fill="#7A5AF0"/>
+    <path d="M733 139 l3.5 3.5 l6.5 -7" fill="none" stroke="#FFFFFF" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+    <text x="762" y="135" font-size="17" font-weight="600" fill="#1D1B26">标题</text>
+    <text x="762" y="155" font-size="14" fill="#6B6780">团队周会：上线改到 28 号</text>
+    <rect x="1066" y="127" width="50" height="24" rx="12" fill="#EEE9FF"/>
+    <text x="1091.0" y="144" font-size="14" text-anchor="middle" fill="#7A5AF0">新增</text>
+    <path d="M724 162 H1116" stroke="#E4E1EE"/>
+    <circle cx="738" cy="187" r="11" fill="#7A5AF0"/>
+    <path d="M733 187 l3.5 3.5 l6.5 -7" fill="none" stroke="#FFFFFF" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+    <text x="762" y="183" font-size="17" font-weight="600" fill="#1D1B26">标签</text>
+    <text x="762" y="203" font-size="14" fill="#6B6780">#会议  #上线  #待办</text>
+    <rect x="1047.0" y="175" width="69.0" height="24" rx="12" fill="#EEE9FF"/>
+    <text x="1081.5" y="192" font-size="14" text-anchor="middle" fill="#7A5AF0">新增 3</text>
+    <path d="M724 210 H1116" stroke="#E4E1EE"/>
+    <circle cx="738" cy="235" r="11" fill="#7A5AF0"/>
+    <path d="M733 235 l3.5 3.5 l6.5 -7" fill="none" stroke="#FFFFFF" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+    <text x="762" y="231" font-size="17" font-weight="600" fill="#1D1B26">正文</text>
+    <text x="762" y="251" font-size="14" fill="#6B6780">决定、待办、下次周会</text>
+    <rect x="1066" y="223" width="50" height="24" rx="12" fill="#E5F4EC"/>
+    <text x="1091.0" y="240" font-size="14" text-anchor="middle" fill="#22855A">修改</text>
+    <path d="M724 258 H1116" stroke="#E4E1EE"/>
+    <circle cx="738" cy="283" r="10" fill="none" stroke="#6B6780" stroke-width="2"/>
+    <text x="762" y="279" font-size="17" font-weight="600" fill="#6B6780">移动到文件夹</text>
+    <text x="762" y="299" font-size="14" fill="#6B6780">→ 会议</text>
+    <rect x="1066" y="271" width="50" height="24" rx="12" fill="#F7F6FB"/>
+    <text x="1091.0" y="288" font-size="14" text-anchor="middle" fill="#6B6780">移动</text>
+    <rect x="998.5" y="318" width="117.5" height="30" rx="15" fill="#7A5AF0"/>
+    <text x="1057.25" y="338" font-size="15" font-weight="600" text-anchor="middle" fill="#FFFFFF">应用 3 项</text>
+  </g>
+</svg>
