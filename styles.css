@@ -2437,6 +2437,8 @@
 .mist-sidebar .mist-path { display:flex; flex-wrap:wrap; align-items:center; gap:8px; }
 .mist-sidebar .mist-from { color:var(--mist-mute); }
 .mist-sidebar .mist-to { font-weight:600; }
+.mist-sidebar .mist-new { border-radius:999px; padding:1px 8px; background:var(--mist-clay-soft, var(--background-modifier-hover)); color:var(--mist-clay, var(--text-muted)); font-size:11px; }
+.mist-sidebar .mist-alt-new { color:var(--mist-clay, var(--text-muted)); }
 .mist-sidebar .mist-alts { display:flex; flex-wrap:wrap; align-items:center; gap:4px 10px; color:var(--mist-mute); font-size:12px; }
 .mist-sidebar .mist-alt { background:none; border:0; padding:0; color:var(--mist-ink2); font-size:12px; border-bottom:1px dashed var(--mist-hair); border-radius:0; }
 .mist-sidebar .mist-select { align-self:flex-start; max-width:100%; border:0; border-radius:999px; padding:3px 10px; background:var(--mist-paper);

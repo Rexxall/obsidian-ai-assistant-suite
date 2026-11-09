@@ -642,11 +642,17 @@ const DEFAULT_SETTINGS = {
     // Mover Settings
     moverSuggestionsCount: 4,
     ignoredFolders: '',
+    // 只在库里已有的文件夹里挑，不建新文件夹
+    moverExistingOnly: false,
     moverPrompt: MOVER_DEFAULT_PROMPT,
 
     // Tagger Settings
     taggerSuggestionsCount: 12,
     taggerExistingOnly: false,
+    // 标签只能以这些根开头（每行一个，例如 C、P、Type）；留空不限
+    taggerAllowedRoots: '',
+    // 父标签和子标签不同时出现，只留子标签
+    taggerDropParentTags: false,
     // 把过长的英文标签翻成短的中文标签；英文界面下默认不翻
     taggerEnableTranslation: isChineseInterface(),
     taggerTranslationTargetLanguage: tr('中文', 'English'),
@@ -662,7 +668,14 @@ const DEFAULT_SETTINGS = {
 
     // Meta Settings
     metaFileNameMaxLength: 100,
+    // 复核时“同时用标题重命名文件”默认勾上
+    metaRenameDefault: false,
+    // 应用属性时补上笔记里还没有的字段（YAML），已有的不动
+    metaFieldDefaults: '',
     metaPrompt: META_DEFAULT_PROMPT,
+
+    // 库的规矩：写给 AI 的长期说明，每次生成都会带上
+    vaultConventions: '',
 
     // Furigana Settings
     furiganaPrompt: FURIGANA_DEFAULT_PROMPT,
@@ -935,7 +948,7 @@ class AssistantView extends ItemView {
                 tags: (suggestions.tags || []).map(t => t.final || t.display || t),
                 folder: suggestions.mover?.[0]?.path || group.file.parent?.path || '/',
                 useMeta: !!suggestions.meta, useTags: !!suggestions.tags?.length, useFolder: !!suggestions.mover?.length,
-                rename: false, diffId: diffs.at(-1)?.id || '', originalTaskId: latest?.id };
+                rename: !!this.plugin.settings.metaRenameDefault, diffId: diffs.at(-1)?.id || '', originalTaskId: latest?.id };
         }
         return anchor.content.noteDraft;
     }
@@ -1147,11 +1160,18 @@ class AssistantView extends ItemView {
             path.createSpan({ text: `${group.file.parent?.path || '/'}/`.replace('//', '/'), cls: 'mist-from' });
             path.createSpan({ text: '→', attr: { 'aria-hidden': 'true' } });
             path.createSpan({ text: draft.folder, cls: 'mist-to' });
+            // 会新建的文件夹标出来，确认前看得见
+            const isNew = p => !this.plugin.app.vault.getAbstractFileByPath(p)?.children;
+            if (draft.folder && isNew(draft.folder)) path.createSpan({ text: tr('新文件夹', 'New folder'), cls: 'mist-new' });
             const alts = suggestions.mover.map(v => v.path).filter(p => p && p !== draft.folder);
             if (alts.length && !done) {
                 const row = el.createDiv({ cls: 'mist-alts' });
                 row.createSpan({ text: tr('也可以放：', 'Or:') });
-                for (const p of alts) row.createEl('button', { text: p, cls: 'mist-alt' }).onclick = () => { draft.folder = p; this.render(); };
+                for (const p of alts) {
+                    const alt = row.createEl('button', { text: p, cls: 'mist-alt' });
+                    if (isNew(p)) alt.createSpan({ text: tr(' · 新', ' · new'), cls: 'mist-alt-new' });
+                    alt.onclick = () => { draft.folder = p; this.render(); };
+                }
             }
             if (!done) {
                 const other = el.createEl('select', { cls: 'mist-select', attr: { 'aria-label': tr('其他文件夹', 'Other folder') } });
@@ -3857,7 +3877,7 @@ class AiAssistantSuite extends Plugin {
             const match=text.match(/^---\r?\n([\s\S]*?)\r?\n(?:---|\.\.\.)(?:\r?\n|$)/);
             const fm=match?(parseYaml(match[1])||{}):{};
             if(typeof fm!=='object'||Array.isArray(fm))throw new Error(tr('笔记属性不是有效的 YAML 对象，未写入。', 'The note properties are not a valid YAML object, so nothing was written.'));
-            if(draft.useMeta)for(const key of ['title','summary','tldr'])if(draft.meta[key]!==undefined&&!(draft.skipMeta||[]).includes(key))fm[key]=String(draft.meta[key]).trim();
+            if(draft.useMeta){for(const key of ['title','summary','tldr'])if(draft.meta[key]!==undefined&&String(draft.meta[key]).trim()&&!(draft.skipMeta||[]).includes(key))fm[key]=String(draft.meta[key]).trim();this.fillFieldDefaults(fm);}
             if(draft.useTags){const old=Array.isArray(fm.tags)?fm.tags:(fm.tags?[String(fm.tags)]:[]);fm.tags=[...new Set([...old,...draft.tags])];}
             const newline=current.includes('\r\n')?'\r\n':'\n';
             text=`---${newline}${stringifyYaml(fm).trimEnd().replace(/\r?\n/g,newline)}${newline}---${newline}${match?text.slice(match[0].length):text}`;
@@ -4528,16 +4548,7 @@ class AiAssistantSuite extends Plugin {
         try {
             progressNotice.setMessage(tr("正在扫描仓库文件夹...", 'Scanning vault folders…'));
 
-            const ignoredFoldersList = this.settings.ignoredFolders.split('\n').map(f => f.trim()).filter(Boolean);
-
-            const allAbstractFiles = app.vault.getAllLoadedFiles();
-            const folderPaths = allAbstractFiles
-                .filter(file => file.children)
-                .map(folder => folder.path)
-                .filter(path => {
-                    if (path === '/') return false;
-                    return !ignoredFoldersList.some(ignoredFolder => path.startsWith(ignoredFolder));
-                });
+            const folderPaths = this.vaultFolderPaths();
 
             if (folderPaths.length === 0) {
                 throw new Error(tr("仓库中未能找到任何可用的文件夹。请检查忽略文件夹列表设置。", 'No usable folders found. Check the ignored folders setting.'));
@@ -4568,9 +4579,11 @@ class AiAssistantSuite extends Plugin {
                 throw new Error(tr("无法解析AI返回的JSON。", 'Could not parse the JSON returned by the AI.'));
             }
 
-            const { suggestions } = parsedContent;
-            if (!suggestions || !Array.isArray(suggestions) || suggestions.length === 0) {
-                throw new Error(tr("AI未能提供有效的路径建议。", 'The AI gave no usable folder suggestion.'));
+            const suggestions = this.refineFolderSuggestions(parsedContent.suggestions);
+            if (suggestions.length === 0) {
+                throw new Error(this.settings.moverExistingOnly
+                    ? tr("AI 建议的都是新文件夹；可以关掉“只用现有文件夹”再试。", 'The AI only suggested new folders; turn off "Existing folders only" and try again.')
+                    : tr("AI未能提供有效的路径建议。", 'The AI gave no usable folder suggestion.'));
             }
 
             progressNotice.hide();
@@ -4631,8 +4644,7 @@ class AiAssistantSuite extends Plugin {
         let taskId = null;
         try {
             progressNotice.setMessage(tr("正在扫描知识库中的所有标签...", 'Scanning all tags in the vault…'));
-            const allTagsFromCache = this.app.metadataCache.getTags();
-            const existingTags = Object.keys(allTagsFromCache).map(tag => tag.substring(1));
+            const existingTags = this.vaultTagsByUse();
 
             progressNotice.setMessage(tr("正在请求 AI 生成初步标签...", 'Asking the AI for tags…'));
             const taggerPrompt = this.getTaggerPrompt(existingTags, content);
@@ -4674,7 +4686,8 @@ class AiAssistantSuite extends Plugin {
 
                 rawAiTags.forEach((tag, index) => {
                     const isLikelyEnglish = !/[\u3000-\u303F\u4e00-\u9fff\uff00-\uffef]/.test(tag);
-                    if (isLikelyEnglish && tag.length >= this.settings.taggerTranslationMinLength) {
+                    // 层级标签不整条翻译，否则 a/b/c 会被翻成一个没有层级的词
+                    if (isLikelyEnglish && !tag.includes('/') && tag.length >= this.settings.taggerTranslationMinLength) {
                         tagsToTranslate.push(tag);
                         originalIndicesOfTagsToTranslate.push(index);
                     }
@@ -4702,19 +4715,13 @@ class AiAssistantSuite extends Plugin {
                 }
             }
 
-            if (this.settings.taggerExistingOnly) {
-                processedTags = this.keepExistingTags(rawAiTags, existingTags);
-                if (processedTags.length === 0) {
-                    new Notice(tr('AI 建议的标签都不在你的现有标签里；可以关掉“只用现有标签”再试。', 'None of the suggested tags are in your existing tags; turn off "Existing tags only" and try again.'), 6000);
-                }
+            if (this.settings.taggerExistingOnly) processedTags = rawAiTags;
+            processedTags = this.refineTags(processedTags, existingTags, this.noteTags(currentFile));
+            if (processedTags.length === 0 && this.settings.taggerExistingOnly) {
+                new Notice(tr('AI 建议的标签都不在你的现有标签里；可以关掉“只用现有标签”再试。', 'None of the suggested tags are in your existing tags; turn off "Existing tags only" and try again.'), 6000);
             }
 
-            const tagsForPrompt = [];
-            processedTags.forEach(tag => {
-                const finalTag = tag.replace(/\s+/g, '-').replace(/，/g, '-');
-                const isNew = !existingTags.includes(finalTag);
-                tagsForPrompt.push({ display: finalTag, final: finalTag, is_new: isNew });
-            });
+            const tagsForPrompt = processedTags.map(tag => ({ display: tag, final: tag, is_new: !existingTags.includes(tag) }));
 
             progressNotice.hide();
 
@@ -4794,7 +4801,7 @@ class AiAssistantSuite extends Plugin {
                 }
 
                 aiGeneratedData = {
-                    title: parsedContent.title || tr("未命名标题", 'Untitled'),
+                    title: parsedContent.title || currentFile.basename,
                     summary: existingFrontmatter.summary,
                     tldr: existingFrontmatter.tldr
                 };
@@ -4816,9 +4823,9 @@ class AiAssistantSuite extends Plugin {
 
                 // 使用已有字段或AI生成的字段
                 aiGeneratedData = {
-                    title: title || tr("未命名标题", 'Untitled'),
-                    summary: hasExistingSummary ? existingFrontmatter.summary : (summary || tr("暂无摘要，请手动添加", 'No summary yet, add one by hand')),
-                    tldr: hasExistingTldr ? existingFrontmatter.tldr : (tldr || tr("暂无总结", 'No one-liner yet'))
+                    title: title || currentFile.basename,
+                    summary: hasExistingSummary ? existingFrontmatter.summary : (summary || ''),
+                    tldr: hasExistingTldr ? existingFrontmatter.tldr : (tldr || '')
                 };
             }
 
@@ -4946,17 +4953,12 @@ class AiAssistantSuite extends Plugin {
             let jsonStructure = {};
 
             if (oneClickProcessActions.tagger) {
-                const allTagsFromCache = this.app.metadataCache.getTags();
-                const existingTags = Object.keys(allTagsFromCache).map(tag => tag.substring(1));
+                const existingTags = this.vaultTagsByUse();
                 contextForPrompt += tr(`\n\n**现有标签列表 (你的风格指南):**\n${existingTags.join(', ')}`, `\n\n**Existing tags (your style guide):**\n${existingTags.join(', ')}`);
                 jsonStructure.tags = ["tag1/subtag", "tag2"];
             }
             if (oneClickProcessActions.mover) {
-                const ignoredFoldersList = this.settings.ignoredFolders.split('\n').map(f => f.trim()).filter(Boolean);
-                const folderPaths = app.vault.getAllLoadedFiles()
-                    .filter(file => file.children)
-                    .map(folder => folder.path)
-                    .filter(path => path !== '/' && !ignoredFoldersList.some(ignored => path.startsWith(ignored)));
+                const folderPaths = this.vaultFolderPaths();
                 contextForPrompt += tr(`\n\n**现有文件夹列表 (供你参考和选择):**\n${JSON.stringify(folderPaths, null, 2)}`, `\n\n**Existing folders (to choose from):**\n${JSON.stringify(folderPaths, null, 2)}`);
                 jsonStructure.mover_suggestions = [{ path: "path/to/folder", is_new: false }];
             }
@@ -4972,15 +4974,15 @@ class AiAssistantSuite extends Plugin {
 
 **核心规则**:
 1. 在分析时，请**专注于文本内容本身**，忽略任何Markdown链接或嵌入文件（如 \`![...]]\` 或 \`[...](...)\`）所指向的视觉或外部信息。
-2. 你的回答必须是一个严格遵守以下结构的JSON对象。
+2. 你的回答必须是一个严格遵守以下结构的JSON对象。标题和摘要用原文的语言写。
 
 **任务列表:**
-${oneClickProcessActions.meta ? this.getMetaTaskDescription(hasExistingSummary, hasExistingTldr) : ''}${oneClickProcessActions.tagger ? (this.settings.taggerExistingOnly ? `- **生成标签**: 提供最多 ${this.settings.taggerSuggestionsCount} 个标签，只能从"现有标签列表"中挑选，不要创造新标签。\n` : `- **生成标签**: 提供约 ${this.settings.taggerSuggestionsCount} 个标签。优先使用"现有标签列表"中的标签，新标签必须是层级格式 (如 a/b/c)。\n`) : ''}${oneClickProcessActions.mover ? `- **建议文件夹**: 提供 ${this.settings.moverSuggestionsCount} 个最合适的存放路径建议，可以从"现有文件夹列表"中选择或创造新的。\n` : ''}
+${oneClickProcessActions.meta ? this.getMetaTaskDescription(hasExistingSummary, hasExistingTldr) : ''}${oneClickProcessActions.tagger ? (this.settings.taggerExistingOnly ? `- **生成标签**: 提供最多 ${this.settings.taggerSuggestionsCount} 个标签，只能从"现有标签列表"中挑选，不要创造新标签。\n` : `- **生成标签**: 提供约 ${this.settings.taggerSuggestionsCount} 个标签。优先使用"现有标签列表"中的标签，新标签必须是层级格式 (如 a/b/c)。\n`) : ''}${oneClickProcessActions.mover ? (this.settings.moverExistingOnly ? `- **建议文件夹**: 提供最多 ${this.settings.moverSuggestionsCount} 个最合适的存放路径，只能从"现有文件夹列表"中选择。\n` : `- **建议文件夹**: 提供 ${this.settings.moverSuggestionsCount} 个最合适的存放路径建议，可以从"现有文件夹列表"中选择或创造新的。\n`) : ''}
 **JSON 输出格式:**
 \`\`\`json
 ${JSON.stringify(jsonStructure, null, 2)}
 \`\`\`
-${contextForPrompt}${this.userInstructionBlock()}
+${contextForPrompt}${this.vaultRulesBlock()}${this.userInstructionBlock()}
 
 **需要处理的文本如下：**
 \n\n${contentToProcess}`, `You are a capable multi-task AI assistant. Based on the text below, carry out every requested task.
@@ -4990,12 +4992,12 @@ ${contextForPrompt}${this.userInstructionBlock()}
 2. Reply with one JSON object that follows the structure below exactly. Write titles and summaries in the same language as the text.
 
 **Tasks:**
-${oneClickProcessActions.meta ? this.getMetaTaskDescription(hasExistingSummary, hasExistingTldr) : ''}${oneClickProcessActions.tagger ? (this.settings.taggerExistingOnly ? `- **Tags**: give at most ${this.settings.taggerSuggestionsCount} tags, chosen only from the existing tags; do not create new ones.\n` : `- **Tags**: give about ${this.settings.taggerSuggestionsCount} tags. Prefer the existing tags; new tags must be hierarchical (such as a/b/c).\n`) : ''}${oneClickProcessActions.mover ? `- **Folder**: give ${this.settings.moverSuggestionsCount} suggested paths, chosen from the existing folders or new.\n` : ''}
+${oneClickProcessActions.meta ? this.getMetaTaskDescription(hasExistingSummary, hasExistingTldr) : ''}${oneClickProcessActions.tagger ? (this.settings.taggerExistingOnly ? `- **Tags**: give at most ${this.settings.taggerSuggestionsCount} tags, chosen only from the existing tags; do not create new ones.\n` : `- **Tags**: give about ${this.settings.taggerSuggestionsCount} tags. Prefer the existing tags; new tags must be hierarchical (such as a/b/c).\n`) : ''}${oneClickProcessActions.mover ? (this.settings.moverExistingOnly ? `- **Folder**: give at most ${this.settings.moverSuggestionsCount} suggested paths, chosen only from the existing folders.\n` : `- **Folder**: give ${this.settings.moverSuggestionsCount} suggested paths, chosen from the existing folders or new.\n`) : ''}
 **JSON output format:**
 \`\`\`json
 ${JSON.stringify(jsonStructure, null, 2)}
 \`\`\`
-${contextForPrompt}${this.userInstructionBlock()}
+${contextForPrompt}${this.vaultRulesBlock()}${this.userInstructionBlock()}
 
 **The text to process:**
 \n\n${contentToProcess}`);
@@ -5013,20 +5015,12 @@ ${contextForPrompt}${this.userInstructionBlock()}
                 // 确保meta字段的完整性，使用已有字段或AI生成的字段
                 if (parsedContent.meta) {
                     // 如果某些字段为空，提供默认值
-                    if (!parsedContent.meta.title) parsedContent.meta.title = tr("未命名标题", 'Untitled');
-
-                    // 使用已有字段或AI生成的字段
-                    if (hasExistingSummary) {
-                        parsedContent.meta.summary = existingFrontmatter.summary;
-                    } else if (!parsedContent.meta.summary) {
-                        parsedContent.meta.summary = tr("暂无摘要，请手动添加", 'No summary yet, add one by hand');
-                    }
-
-                    if (hasExistingTldr) {
-                        parsedContent.meta.tldr = existingFrontmatter.tldr;
-                    } else if (!parsedContent.meta.tldr) {
-                        parsedContent.meta.tldr = tr("暂无总结", 'No one-liner yet');
-                    }
+                    // 缺的字段留空，不写“暂无摘要”这类占位话：空字段不会被写进笔记
+                    if (!parsedContent.meta.title) parsedContent.meta.title = currentFile.basename;
+                    if (hasExistingSummary) parsedContent.meta.summary = existingFrontmatter.summary;
+                    else if (!parsedContent.meta.summary) parsedContent.meta.summary = '';
+                    if (hasExistingTldr) parsedContent.meta.tldr = existingFrontmatter.tldr;
+                    else if (!parsedContent.meta.tldr) parsedContent.meta.tldr = '';
                 }
             } catch (e) {
                 // 不打印 AI 的原始回答：里面可能有笔记内容
@@ -5038,8 +5032,8 @@ ${contextForPrompt}${this.userInstructionBlock()}
             let tagSuggestions = [];
             if (parsedContent.tags) {
                 // Processing similar to runAiTagger...
-                const rawAiTags = parsedContent.tags;
-                const existingTags = Object.keys(this.app.metadataCache.getTags()).map(tag => tag.substring(1));
+                const rawAiTags = Array.isArray(parsedContent.tags) ? parsedContent.tags.map(String) : String(parsedContent.tags).split(/[,，]/);
+                const existingTags = this.vaultTagsByUse();
                 let processedTags = [...rawAiTags];
 
                 // Add translation logic for long english tags
@@ -5049,7 +5043,7 @@ ${contextForPrompt}${this.userInstructionBlock()}
 
                     rawAiTags.forEach((tag, index) => {
                         const isLikelyEnglish = !/[\u3000-\u303F\u4e00-\u9fff\uff00-\uffef]/.test(tag);
-                        if (isLikelyEnglish && tag.length >= this.settings.taggerTranslationMinLength) {
+                        if (isLikelyEnglish && !tag.includes('/') && tag.length >= this.settings.taggerTranslationMinLength) {
                             tagsToTranslate.push(tag);
                             originalIndicesOfTagsToTranslate.push(index);
                         }
@@ -5077,16 +5071,12 @@ ${contextForPrompt}${this.userInstructionBlock()}
                     }
                 }
 
-                if (this.settings.taggerExistingOnly) {
-                    processedTags = this.keepExistingTags(rawAiTags, existingTags);
-                }
-
-                tagSuggestions = processedTags.map(tag => {
-                    const finalTag = tag.replace(/\s+/g, '-').replace(/，/g, '-');
-                    const isNew = !existingTags.includes(finalTag);
-                    return { display: finalTag, final: finalTag, is_new: isNew };
-                });
+                if (this.settings.taggerExistingOnly) processedTags = rawAiTags;
+                processedTags = this.refineTags(processedTags, existingTags, this.noteTags(currentFile));
+                tagSuggestions = processedTags.map(tag => ({ display: tag, final: tag, is_new: !existingTags.includes(tag) }));
             }
+
+            const moverSuggestions = parsedContent.mover_suggestions ? this.refineFolderSuggestions(parsedContent.mover_suggestions) : [];
 
             // --- 4. Display results in sidebar ---
             await this.activateView();
@@ -5101,7 +5091,7 @@ ${contextForPrompt}${this.userInstructionBlock()}
                     suggestions: {
                         meta: parsedContent.meta,
                         tags: tagSuggestions.length > 0 ? tagSuggestions : null,
-                        mover: parsedContent.mover_suggestions,
+                        mover: moverSuggestions.length ? moverSuggestions : null,
                     },
                     file: currentFile
                 }
@@ -5125,9 +5115,10 @@ ${contextForPrompt}${this.userInstructionBlock()}
         let progressNotice = new Notice(tr("正在更新笔记元数据...", 'Updating note properties…'), 0);
         try {
             await this.app.fileManager.processFrontMatter(file, (fm) => {
-                fm.title = title.trim();
-                if (!fm.summary) fm.summary = summary.trim();
-                if (!fm.tldr) fm.tldr = tldr.trim();
+                if (String(title || '').trim()) fm.title = String(title).trim();
+                if (!fm.summary && String(summary || '').trim()) fm.summary = String(summary).trim();
+                if (!fm.tldr && String(tldr || '').trim()) fm.tldr = String(tldr).trim();
+                this.fillFieldDefaults(fm);
             });
             progressNotice.hide();
             new Notice(tr("笔记元数据已成功更新！", 'Note properties updated.'), 5000);
@@ -5149,7 +5140,7 @@ ${contextForPrompt}${this.userInstructionBlock()}
             prompt += tr(`\n\n**注意**: 文件已有${skipInstructions.join("和")}字段，请跳过生成这些字段，只返回需要生成的字段。`, `\n\n**Note**: the note already has ${skipInstructions.join(" and ")}; skip ${skipInstructions.length > 1 ? "those fields" : "that field"} and return only the fields still needed.`);
         }
 
-        return prompt.replace('{{content}}', content);
+        return prompt.replace('{{content}}', content) + this.vaultRulesBlock(true);
     }
 
     // 提示词跟界面语言走：没改过的默认提示词，英文界面发英文版；本人改过的照原样发
@@ -5191,7 +5182,7 @@ Reply in JSON:
   "title": "your title"
 }
 
-Make sure the JSON is valid.`);
+Make sure the JSON is valid.`) + this.vaultRulesBlock(true);
     }
 
     getMetaTaskDescription(hasExistingSummary, hasExistingTldr) {
@@ -5221,7 +5212,7 @@ Make sure the JSON is valid.`);
         const prompt = this.promptSetting('taggerPrompt')
             .replace('{{existing_tags}}', existingTags.join('， '))
             .replace('{{content}}', content)
-            .replace('{{count}}', this.settings.taggerSuggestionsCount);
+            .replace('{{count}}', this.settings.taggerSuggestionsCount) + this.vaultRulesBlock();
         if (!this.settings.taggerExistingOnly) return prompt;
         return tr(`${prompt}\n\n**额外规则：** 只能从“现有标签列表”里挑选，不要创造任何新标签；没有合适的就少给几个。`, `${prompt}\n\n**Extra rule:** choose only from the existing tags and create no new ones; if few fit, give fewer.`);
     }
@@ -5238,11 +5229,117 @@ Make sure the JSON is valid.`);
         return kept;
     }
 
+    // ---- 库的词表：标签根白名单、父子去重、文件夹只用现有的。都靠设置打开，默认不改变行为 ----
+    allowedTagRoots() {
+        return String(this.settings.taggerAllowedRoots || '').split(/[\n,，]/).map(r => r.trim().replace(/^#/, '').replace(/\/+$/, '')).filter(Boolean);
+    }
+
+    tagRootAllowed(tag, roots = this.allowedTagRoots()) {
+        if (!roots.length) return true;
+        const root = String(tag).split('/')[0].toLowerCase();
+        return roots.some(r => r.toLowerCase() === root);
+    }
+
+    // 库里的标签按使用次数从多到少排，常用的排前面，模型更容易沿用；有根白名单时只给白名单里的
+    vaultTagsByUse() {
+        const counts = this.app.metadataCache.getTags() || {};
+        const roots = this.allowedTagRoots();
+        return Object.entries(counts).sort((a, b) => b[1] - a[1]).map(([tag]) => tag.replace(/^#/, '')).filter(tag => this.tagRootAllowed(tag, roots));
+    }
+
+    noteTags(file) {
+        const fm = file ? this.app.metadataCache.getFileCache(file)?.frontmatter : null;
+        const raw = fm?.tags ?? fm?.tag;
+        const list = Array.isArray(raw) ? raw : (raw ? String(raw).split(/[,\s]+/) : []);
+        return list.map(t => String(t).trim().replace(/^#/, '')).filter(Boolean);
+    }
+
+    // 清理模型给的标签：统一写法、按库里拼写、去掉不在白名单根下的、笔记已有的和重复的；按设置去掉父标签
+    refineTags(tags, existingTags, noteTags = []) {
+        const byLowerCase = new Map(existingTags.map(tag => [tag.toLowerCase(), tag]));
+        const roots = this.allowedTagRoots();
+        const have = new Set(noteTags.map(t => t.toLowerCase()));
+        const out = [];
+        for (const raw of tags || []) {
+            let tag = String(raw).trim().replace(/^#/, '').replace(/\s+/g, '-').replace(/，/g, '-').replace(/^\/+|\/+$/g, '');
+            if (!tag) continue;
+            tag = byLowerCase.get(tag.toLowerCase()) || tag;
+            if (this.settings.taggerExistingOnly && !byLowerCase.has(tag.toLowerCase())) continue;
+            if (!this.tagRootAllowed(tag, roots)) continue;
+            if (have.has(tag.toLowerCase()) || out.some(t => t.toLowerCase() === tag.toLowerCase())) continue;
+            out.push(tag);
+        }
+        if (!this.settings.taggerDropParentTags) return out;
+        const all = [...out, ...noteTags].map(t => t.toLowerCase());
+        return out.filter(tag => !all.some(other => other.startsWith(tag.toLowerCase() + '/')));
+    }
+
+    ignoredFolderList() {
+        return String(this.settings.ignoredFolders || '').split('\n').map(f => f.trim().replace(/^\/+|\/+$/g, '')).filter(Boolean);
+    }
+
+    isIgnoredFolder(path, ignored = this.ignoredFolderList()) {
+        return ignored.some(folder => path === folder || path.startsWith(folder + '/'));
+    }
+
+    vaultFolderPaths() {
+        const ignored = this.ignoredFolderList();
+        return this.app.vault.getAllLoadedFiles().filter(f => f.children).map(f => f.path)
+            .filter(path => path && path !== '/' && !this.isIgnoredFolder(path, ignored));
+    }
+
+    // 文件夹建议：“是否新建”按库里实际情况算，不信模型自报；忽略的文件夹不当目的地；按设置去掉新文件夹
+    refineFolderSuggestions(suggestions) {
+        const ignored = this.ignoredFolderList();
+        const out = [];
+        for (const item of Array.isArray(suggestions) ? suggestions : []) {
+            const path = String(typeof item === 'string' ? item : item?.path || '').trim().replace(/^\/+|\/+$/g, '');
+            if (!path || out.some(s => s.path === path) || this.isIgnoredFolder(path, ignored)) continue;
+            const isNew = !this.app.vault.getAbstractFileByPath(path)?.children;
+            if (isNew && this.settings.moverExistingOnly) continue;
+            out.push({ path, is_new: isNew });
+        }
+        return out;
+    }
+
+    vaultRulesBlock(conventionsOnly = false) {
+        const rules = [];
+        if (!conventionsOnly) {
+        const roots = this.allowedTagRoots();
+        if (roots.length) rules.push(tr(`标签只能以这些根开头：${roots.map(r => r + '/').join('、')}；不要新建根，也不要单个词的标签。`, `Tags must start with one of these roots: ${roots.map(r => r + '/').join(', ')}. Do not create new roots or single-word tags.`));
+        if (this.settings.taggerDropParentTags) rules.push(tr('不要同时给一个标签和它的父标签，只留更具体的那个。', 'Never give a tag together with its parent; keep only the more specific one.'));
+        if (this.settings.moverExistingOnly) rules.push(tr('文件夹只能从“现有文件夹列表”里选，不要创造新路径。', 'Choose folders only from the existing folders; do not invent new paths.'));
+        }
+        const conventions = String(this.settings.vaultConventions || '').trim();
+        if (!rules.length && !conventions) return '';
+        return tr(`\n\n**这个库的规矩（必须遵守）:**\n${[...rules.map(r => '- ' + r), conventions].filter(Boolean).join('\n')}`, `\n\n**Rules of this vault (follow them):**\n${[...rules.map(r => '- ' + r), conventions].filter(Boolean).join('\n')}`);
+    }
+
+    // 应用属性时补上还没有的字段；YAML 写错就不补，免得把笔记写坏
+    fieldDefaults() {
+        const text = String(this.settings.metaFieldDefaults || '').trim();
+        if (!text) return {};
+        try {
+            const value = parseYaml(text);
+            return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+        } catch {
+            return {};
+        }
+    }
+
+    fillFieldDefaults(fm) {
+        for (const [key, value] of Object.entries(this.fieldDefaults())) {
+            if (key === 'tags' || key === 'title' || key === 'summary' || key === 'tldr') continue;
+            if (fm[key] === undefined || fm[key] === null || fm[key] === '') fm[key] = value;
+        }
+        return fm;
+    }
+
     getMoverPrompt(folderPaths, content) {
         return this.promptSetting('moverPrompt')
             .replace('{{folder_list}}', JSON.stringify(folderPaths, null, 2))
             .replace('{{content}}', content)
-            .replace('{{count}}', this.settings.moverSuggestionsCount);
+            .replace('{{count}}', this.settings.moverSuggestionsCount) + this.vaultRulesBlock();
     }
 
     getTranslationPrompt(phrases) {
@@ -5252,7 +5349,7 @@ Make sure the JSON is valid.`);
     }
 
     getStructurizerPrompt(contentToProcess) {
-        return this.promptSetting('structurizerPrompt').replace('{{content}}', contentToProcess) + this.userInstructionBlock();
+        return this.promptSetting('structurizerPrompt').replace('{{content}}', contentToProcess) + this.vaultRulesBlock(true) + this.userInstructionBlock();
     }
 
     getFuriganaPrompt(contentToProcess) {
@@ -6133,6 +6230,16 @@ class AiAssistantSettingTab extends PluginSettingTab {
                     await this.plugin.saveSettings();
                 }));
 
+        new Setting(containerEl)
+            .setName(tr('只用现有文件夹', 'Existing folders only'))
+            .setDesc(tr('不建议新建文件夹；模型给出的新路径会被去掉。', 'No new folders are suggested; new paths from the model are dropped.'))
+            .addToggle(toggle => toggle
+                .setValue(!!this.plugin.settings.moverExistingOnly)
+                .onChange(async (value) => {
+                    this.plugin.settings.moverExistingOnly = value;
+                    await this.plugin.saveSettings();
+                }));
+
         // -- Tagger --
         new Setting(containerEl).setName(tr('标签建议', 'Tag suggestions')).setHeading();
         new Setting(containerEl)
@@ -6152,6 +6259,27 @@ class AiAssistantSettingTab extends PluginSettingTab {
                 .setValue(!!this.plugin.settings.taggerExistingOnly)
                 .onChange(async (value) => {
                     this.plugin.settings.taggerExistingOnly = value;
+                    await this.plugin.saveSettings();
+                }));
+
+        new Setting(containerEl)
+            .setName(tr('允许的标签根', 'Allowed tag roots'))
+            .setDesc(tr('每行一个。不以这些根开头的标签不会出现；留空不限。', 'One per line. Tags outside these roots are dropped; leave empty for no limit.'))
+            .addTextArea(text => text
+                .setPlaceholder(tr('例如：\nC\nP\nType', 'For example:\nC\nP\nType'))
+                .setValue(this.plugin.settings.taggerAllowedRoots || '')
+                .onChange(async (value) => {
+                    this.plugin.settings.taggerAllowedRoots = value;
+                    await this.plugin.saveSettings();
+                }));
+
+        new Setting(containerEl)
+            .setName(tr('父子标签只留子标签', 'Keep only the child tag'))
+            .setDesc(tr('已有或建议了 a/b/c，就不再建议 a/b。', 'If a/b/c is present or suggested, a/b is not suggested.'))
+            .addToggle(toggle => toggle
+                .setValue(!!this.plugin.settings.taggerDropParentTags)
+                .onChange(async (value) => {
+                    this.plugin.settings.taggerDropParentTags = value;
                     await this.plugin.saveSettings();
                 }));
 
@@ -6199,6 +6327,41 @@ class AiAssistantSettingTab extends PluginSettingTab {
                     this.plugin.settings.metaFileNameMaxLength = parseInt(value, 10) || 100;
                     await this.plugin.saveSettings();
                 }));
+
+        new Setting(containerEl)
+            .setName(tr('默认用标题重命名', 'Rename to the title by default'))
+            .setDesc(tr('复核时“同时用标题重命名文件”默认勾上。', 'Ticks "Also rename the file to the title" in the review.'))
+            .addToggle(toggle => toggle
+                .setValue(!!this.plugin.settings.metaRenameDefault)
+                .onChange(async (value) => {
+                    this.plugin.settings.metaRenameDefault = value;
+                    await this.plugin.saveSettings();
+                }));
+
+        new Setting(containerEl)
+            .setName(tr('补上缺少的属性', 'Fill in missing properties'))
+            .setDesc(tr('YAML。应用属性时只补笔记里还没有的字段，已有的不动。', 'YAML. When properties are applied, only fields the note lacks are added.'))
+            .addTextArea(text => text
+                .setPlaceholder(tr('例如 status: draft', 'For example, status: draft'))
+                .setValue(this.plugin.settings.metaFieldDefaults || '')
+                .onChange(async (value) => {
+                    this.plugin.settings.metaFieldDefaults = value;
+                    await this.plugin.saveSettings();
+                }));
+
+        new Setting(containerEl).setName(tr('库的规矩', 'Vault rules')).setHeading();
+        new Setting(containerEl)
+            .setName(tr('写给 AI 的长期说明', 'Standing notes for the AI'))
+            .setDesc(tr('每次生成都会带上，例如标题怎么起、标题层级从几级开始。', 'Sent with every request, for example how titles are named or which heading level to start from.'))
+            .addTextArea(text => {
+                text.setPlaceholder(tr('例如：标题写成能搜到的短语，不要标题党。正文从二级标题开始。', 'For example: titles are searchable phrases, not headlines. Body headings start at level 2.'))
+                    .setValue(this.plugin.settings.vaultConventions || '')
+                    .onChange(async (value) => {
+                        this.plugin.settings.vaultConventions = value;
+                        await this.plugin.saveSettings();
+                    });
+                text.inputEl.rows = 6;
+            });
 
         new Setting(containerEl).setName(tr('侧栏', 'Sidebar')).setHeading();
         new Setting(containerEl).setName(tr('紧凑侧栏', 'Compact sidebar')).addToggle(t=>t.setValue(this.plugin.settings.sidebarCompact!==false).onChange(async value=>{this.plugin.settings.sidebarCompact=value;await this.plugin.saveSettings();this.plugin.refreshAssistantViews?.();}));
