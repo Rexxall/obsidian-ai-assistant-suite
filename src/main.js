@@ -54,7 +54,8 @@ class ReviewChecklistModal extends GlassModal {
                 if (!value) continue;
                 const old = before[key] === undefined || before[key] === null ? '' : String(before[key]).trim();
                 if (old === value) continue;
-                items.push({ title: tr(`属性 ${label}`, `Property ${label}`), detail: tr(`${old || '空'} → ${value}`, `${old || 'empty'} → ${value}`), pill: old ? tr('修改', 'Change') : tr('新增', 'New'), tone: old ? '' : 'is-accent',
+                const renamed = key === 'title' && draft.rename ? tr('（文件也改名）', ' (file renamed too)') : '';
+                items.push({ title: tr(`属性 ${label}`, `Property ${label}`), detail: tr(`${old || '空'} → ${value}${renamed}`, `${old || 'empty'} → ${value}${renamed}`), pill: old ? tr('修改', 'Change') : tr('新增', 'New'), tone: old ? '' : 'is-accent',
                     on: draft.useMeta && !skip.includes(key),
                     toggle: () => {
                         const off = draft.useMeta && !skip.includes(key);
@@ -62,6 +63,17 @@ class ReviewChecklistModal extends GlassModal {
                         if (!off) draft.useMeta = true;
                     } });
             }
+        }
+        if (suggestions.meta) {
+            // 设置里“补上缺少的属性”会写的字段也列出来，不悄悄写
+            const missing = Object.entries(this.view.plugin.fieldDefaults?.() || {}).filter(([key]) => !['tags', 'title', 'summary', 'tldr'].includes(key) && (before[key] === undefined || before[key] === null || before[key] === ''));
+            if (missing.length) items.push({ title: tr('补上属性', 'Add properties'), detail: missing.map(([k, v]) => `${k}: ${typeof v === 'object' ? JSON.stringify(v) : v}`).join('　'), pill: tr('新增', 'New'), tone: 'is-accent',
+                on: draft.useMeta && !draft.skipDefaults,
+                toggle: () => {
+                    const off = draft.useMeta && !draft.skipDefaults;
+                    draft.skipDefaults = off;
+                    if (!off) draft.useMeta = true;
+                } });
         }
         if (suggestions.mover?.length && draft.folder) {
             const from = group.file.parent?.path && group.file.parent.path !== '/' ? group.file.parent.path : tr('笔记库根目录', 'Vault root');
@@ -3877,7 +3889,7 @@ class AiAssistantSuite extends Plugin {
             const match=text.match(/^---\r?\n([\s\S]*?)\r?\n(?:---|\.\.\.)(?:\r?\n|$)/);
             const fm=match?(parseYaml(match[1])||{}):{};
             if(typeof fm!=='object'||Array.isArray(fm))throw new Error(tr('笔记属性不是有效的 YAML 对象，未写入。', 'The note properties are not a valid YAML object, so nothing was written.'));
-            if(draft.useMeta){for(const key of ['title','summary','tldr'])if(draft.meta[key]!==undefined&&String(draft.meta[key]).trim()&&!(draft.skipMeta||[]).includes(key))fm[key]=String(draft.meta[key]).trim();this.fillFieldDefaults(fm);}
+            if(draft.useMeta){for(const key of ['title','summary','tldr'])if(draft.meta[key]!==undefined&&String(draft.meta[key]).trim()&&!(draft.skipMeta||[]).includes(key))fm[key]=String(draft.meta[key]).trim();if(!draft.skipDefaults)this.fillFieldDefaults(fm);}
             if(draft.useTags){const old=Array.isArray(fm.tags)?fm.tags:(fm.tags?[String(fm.tags)]:[]);fm.tags=[...new Set([...old,...draft.tags])];}
             const newline=current.includes('\r\n')?'\r\n':'\n';
             text=`---${newline}${stringifyYaml(fm).trimEnd().replace(/\r?\n/g,newline)}${newline}---${newline}${match?text.slice(match[0].length):text}`;

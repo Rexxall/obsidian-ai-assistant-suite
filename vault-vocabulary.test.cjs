@@ -74,3 +74,10 @@ test('broken default YAML adds nothing instead of failing the write',()=>{
  const {p}=fixture({metaFieldDefaults:'status: [unclosed'});
  assert.deepEqual(plain(p.fillFieldDefaults({a:1})),{a:1});
 });
+
+test('unticking the added properties in the review leaves them out',async()=>{
+ const f=fixture({metaFieldDefaults:'{"learning_status":"raw"}'});
+ const task={id:'s',type:'one-click',content:{file:f.file,originalContent:f.text}};
+ await f.p.applyNoteGroup({file:f.file,tasks:[task]},{originalTaskId:'s',meta:{title:'T'},tags:[],useMeta:true,skipDefaults:true,useTags:false,useFolder:false,rename:false});
+ assert.equal(JSON.parse(f.text.split('\n')[1]).learning_status,undefined);
+});
