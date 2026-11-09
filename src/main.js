@@ -64,7 +64,7 @@ class ReviewChecklistModal extends GlassModal {
                     } });
             }
         }
-        if (suggestions.meta) {
+        if (suggestions.meta && (this.view.plugin.fieldDefaultsApplyTo?.(group.file.path) ?? true)) {
             // 设置里“补上缺少的属性”会写的字段也列出来，不悄悄写
             const missing = Object.entries(this.view.plugin.fieldDefaults?.() || {}).filter(([key]) => !['tags', 'title', 'summary', 'tldr'].includes(key) && (before[key] === undefined || before[key] === null || before[key] === ''));
             if (missing.length) items.push({ title: tr('补上属性', 'Add properties'), detail: missing.map(([k, v]) => `${k}: ${typeof v === 'object' ? JSON.stringify(v) : v}`).join('　'), pill: tr('新增', 'New'), tone: 'is-accent',
@@ -684,6 +684,8 @@ const DEFAULT_SETTINGS = {
     metaRenameDefault: false,
     // 应用属性时补上笔记里还没有的字段（YAML），已有的不动
     metaFieldDefaults: '',
+    // 上一项只对这些文件夹里的笔记生效（每行一个，含子文件夹）；留空不限
+    metaFieldDefaultsFolders: '',
     metaPrompt: META_DEFAULT_PROMPT,
 
     // 库的规矩：写给 AI 的长期说明，每次生成都会带上
@@ -3889,7 +3891,7 @@ class AiAssistantSuite extends Plugin {
             const match=text.match(/^---\r?\n([\s\S]*?)\r?\n(?:---|\.\.\.)(?:\r?\n|$)/);
             const fm=match?(parseYaml(match[1])||{}):{};
             if(typeof fm!=='object'||Array.isArray(fm))throw new Error(tr('笔记属性不是有效的 YAML 对象，未写入。', 'The note properties are not a valid YAML object, so nothing was written.'));
-            if(draft.useMeta){for(const key of ['title','summary','tldr'])if(draft.meta[key]!==undefined&&String(draft.meta[key]).trim()&&!(draft.skipMeta||[]).includes(key))fm[key]=String(draft.meta[key]).trim();if(!draft.skipDefaults)this.fillFieldDefaults(fm);}
+            if(draft.useMeta){for(const key of ['title','summary','tldr'])if(draft.meta[key]!==undefined&&String(draft.meta[key]).trim()&&!(draft.skipMeta||[]).includes(key))fm[key]=String(draft.meta[key]).trim();if(!draft.skipDefaults)this.fillFieldDefaults(fm,group.file.path);}
             if(draft.useTags){const old=Array.isArray(fm.tags)?fm.tags:(fm.tags?[String(fm.tags)]:[]);fm.tags=[...new Set([...old,...draft.tags])];}
             const newline=current.includes('\r\n')?'\r\n':'\n';
             text=`---${newline}${stringifyYaml(fm).trimEnd().replace(/\r?\n/g,newline)}${newline}---${newline}${match?text.slice(match[0].length):text}`;
@@ -5130,7 +5132,7 @@ ${contextForPrompt}${this.vaultRulesBlock()}${this.userInstructionBlock()}
                 if (String(title || '').trim()) fm.title = String(title).trim();
                 if (!fm.summary && String(summary || '').trim()) fm.summary = String(summary).trim();
                 if (!fm.tldr && String(tldr || '').trim()) fm.tldr = String(tldr).trim();
-                this.fillFieldDefaults(fm);
+                this.fillFieldDefaults(fm, file.path);
             });
             progressNotice.hide();
             new Notice(tr("笔记元数据已成功更新！", 'Note properties updated.'), 5000);
@@ -5339,7 +5341,16 @@ Make sure the JSON is valid.`) + this.vaultRulesBlock(true);
         }
     }
 
-    fillFieldDefaults(fm) {
+    // 补属性只作用于设置里的文件夹；没设文件夹就不限
+    fieldDefaultsApplyTo(path) {
+        const folders = String(this.settings.metaFieldDefaultsFolders || '').split('\n').map(f => f.trim().replace(/^\/+|\/+$/g, '')).filter(Boolean);
+        if (!folders.length) return true;
+        const parent = String(path || '').split('/').slice(0, -1).join('/');
+        return folders.some(folder => parent === folder || parent.startsWith(folder + '/'));
+    }
+
+    fillFieldDefaults(fm, path) {
+        if (path !== undefined && !this.fieldDefaultsApplyTo(path)) return fm;
         for (const [key, value] of Object.entries(this.fieldDefaults())) {
             if (key === 'tags' || key === 'title' || key === 'summary' || key === 'tldr') continue;
             if (fm[key] === undefined || fm[key] === null || fm[key] === '') fm[key] = value;
@@ -6358,6 +6369,17 @@ class AiAssistantSettingTab extends PluginSettingTab {
                 .setValue(this.plugin.settings.metaFieldDefaults || '')
                 .onChange(async (value) => {
                     this.plugin.settings.metaFieldDefaults = value;
+                    await this.plugin.saveSettings();
+                }));
+
+        new Setting(containerEl)
+            .setName(tr('只给这些文件夹补', 'Only in these folders'))
+            .setDesc(tr('每行一个，含子文件夹；按笔记应用前所在的位置算。留空不限。', 'One per line, subfolders included; based on where the note is before it moves. Leave empty for all folders.'))
+            .addTextArea(text => text
+                .setPlaceholder(tr('例如：\nInbox', 'For example:\nInbox'))
+                .setValue(this.plugin.settings.metaFieldDefaultsFolders || '')
+                .onChange(async (value) => {
+                    this.plugin.settings.metaFieldDefaultsFolders = value;
                     await this.plugin.saveSettings();
                 }));
 

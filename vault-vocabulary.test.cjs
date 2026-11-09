@@ -81,3 +81,17 @@ test('unticking the added properties in the review leaves them out',async()=>{
  await f.p.applyNoteGroup({file:f.file,tasks:[task]},{originalTaskId:'s',meta:{title:'T'},tags:[],useMeta:true,skipDefaults:true,useTags:false,useFolder:false,rename:false});
  assert.equal(JSON.parse(f.text.split('\n')[1]).learning_status,undefined);
 });
+
+test('added properties can be limited to inbox folders, judged by where the note sits before it moves',async()=>{
+ const scoped=fixture({metaFieldDefaults:'{"learning_status":"raw"}',metaFieldDefaultsFolders:'99 - ToDo/Inbox\n/Clippings/'});
+ assert.equal(scoped.p.fieldDefaultsApplyTo('99 - ToDo/Inbox/a.md'),true);
+ assert.equal(scoped.p.fieldDefaultsApplyTo('99 - ToDo/Inbox/sub/a.md'),true);
+ assert.equal(scoped.p.fieldDefaultsApplyTo('99 - ToDo/Inbox-old/a.md'),false);
+ assert.equal(scoped.p.fieldDefaultsApplyTo('Clippings/a.md'),true);
+ assert.equal(scoped.p.fieldDefaultsApplyTo('top.md'),false);
+ const task={id:'s',type:'one-click',content:{file:scoped.file,originalContent:scoped.text}};
+ await scoped.p.applyNoteGroup({file:scoped.file,tasks:[task]},{originalTaskId:'s',meta:{title:'T'},tags:[],useMeta:true,useTags:false,useFolder:true,folder:'99 - ToDo/Inbox',rename:false});
+ assert.equal(JSON.parse(scoped.text.split('\n')[1]).learning_status,undefined,'a note outside the inbox gets nothing even when moved into it');
+ const open=fixture({metaFieldDefaults:'{"learning_status":"raw"}'});
+ assert.equal(open.p.fieldDefaultsApplyTo('anywhere/a.md'),true);
+});
