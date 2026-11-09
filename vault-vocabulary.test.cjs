@@ -119,7 +119,7 @@ test('only ticked style items are written: span on the first line, cssclasses ke
  await f.p.applyNoteGroup({file:f.file,tasks:[task]},{originalTaskId:'s',meta:{},tags:[],useMeta:false,useTags:false,useFolder:false,rename:false,style:{sub:true,aged:true}});
  const [,yaml,,...rest]=f.text.split('\n');
  assert.deepEqual(JSON.parse(yaml).cssclasses,['wide','ih-aged-2']);
- assert.equal(rest.join('\n'),'<span class="ih-sub">A &lt; B &amp; C</span>\n\nBody');
+ assert.equal(rest.join('\n'),'\n<span class="ih-sub">A &lt; B &amp; C</span>\n\nBody','the blank line under the frontmatter stays, as in the notebook kit');
 });
 
 test('unticked style items change nothing',async()=>{
@@ -127,4 +127,25 @@ test('unticked style items change nothing',async()=>{
  const task={id:'s',type:'one-click',content:{file:f.file,originalContent:f.text}};
  await assert.rejects(f.p.applyNoteGroup({file:f.file,tasks:[task]},{originalTaskId:'s',meta:{tldr:'x'},tags:[],useMeta:false,useTags:false,useFolder:false,rename:false,style:{sub:false}}),/没有选中/);
  assert.equal(f.text,before);
+});
+
+test('subtitle placement and cssclasses follow the Ithaca notebook kit',()=>{
+ const {p}=fixture(ithacaStyles);
+ assert.equal(p.insertSubtitleLine('Body\n','ih-sub','x'),'<span class="ih-sub">x</span>\n\nBody\n');
+ assert.equal(p.insertSubtitleLine('\n\nBody','ih-sub','x'),'\n\n<span class="ih-sub">x</span>\n\nBody');
+ assert.equal(p.insertSubtitleLine('','ih-sub','x'),'<span class="ih-sub">x</span>\n');
+ assert.equal(p.insertSubtitleLine('\n','ih-sub','x'),'\n<span class="ih-sub">x</span>\n');
+ assert.equal(p.hasSpanClass('a <span class="ih-sub">t</span>','ih-sub'),true);
+ assert.equal(p.hasSpanClass('<span class="ih-mg ih-sub">t</span> class="ih-sub"','ih-sub'),false,'only an exact class counts, like the kit');
+ const both={cssclass:'old',cssclasses:['a']};p.applyStyleProposals(both,'',[{key:'card',cls:'ih-card'}]);
+ assert.deepEqual(plain(both),{cssclass:'old',cssclasses:['a','ih-card']},'cssclass is left alone when cssclasses exists');
+ const legacy={cssclass:'wide ih-aged'};p.applyStyleProposals(legacy,'',[{key:'aged',cls:'ih-aged-2',remove:['ih-aged']}]);
+ assert.deepEqual(plain(legacy),{cssclasses:['wide','ih-aged-2']},'old field moves over and the same group keeps one');
+});
+
+test('a one-line summary with line breaks becomes one line, and an older age class is never downgraded',()=>{
+ const {p,file}=fixture(ithacaStyles);
+ assert.equal(plain(p.styleProposals(file,{tldr:'a\nb'},{},''))[0].text,'a b');
+ assert.deepEqual(plain(p.styleProposals(file,{date:daysAgo(500),cssclasses:['ih-aged-2']},{},'')),[]);
+ assert.equal(plain(p.styleProposals(file,{date:daysAgo(1200),cssclasses:['ih-aged']},{},''))[0].cls,'ih-aged-2');
 });

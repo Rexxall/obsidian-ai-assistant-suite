@@ -5408,7 +5408,7 @@ Make sure the JSON is valid.`) + this.vaultRulesBlock(true);
         const sub = String(this.settings.styleSubtitleClass || '').trim();
         const draftTldr = draft.useMeta && !(draft.skipMeta || []).includes('tldr') ? String(draft.meta?.tldr || '').trim() : '';
         const tldr = draftTldr || String(fm.tldr || '').trim();
-        if (sub && tldr && !String(body).includes(`class="${sub}"`)) out.push({ key: 'sub', cls: sub, text: tldr });
+        if (sub && tldr && !this.hasSpanClass(body, sub)) out.push({ key: 'sub', cls: sub, text: tldr.replace(/\s+/g, ' ') });
         const card = String(this.settings.styleCardClass || '').trim();
         const folders = String(this.settings.styleCardFolders || '').split('\n').map(f => f.trim().replace(/^\/+|\/+$/g, '')).filter(Boolean);
         const destination = String(draft.useFolder ? draft.folder : (file?.parent?.path || '')).replace(/^\/+|\/+$/g, '');
@@ -5416,24 +5416,40 @@ Make sure the JSON is valid.`) + this.vaultRulesBlock(true);
         const rules = this.agedRules();
         const age = rules.length ? this.noteAgeDays(file, fm) : null;
         const rule = age === null ? null : rules.filter(r => age >= r.days).at(-1);
-        if (rule && !classes.includes(rule.cls)) out.push({ key: 'aged', cls: rule.cls, days: age, remove: rules.map(r => r.cls).filter(c => c !== rule.cls) });
+        // 同组只留一个，而且只往更旧升级：已有的同组类不比它短就不提议
+        const present = rules.filter(r => classes.includes(r.cls));
+        if (rule && !present.some(r => r.days >= rule.days)) out.push({ key: 'aged', cls: rule.cls, days: age, remove: rules.map(r => r.cls).filter(c => c !== rule.cls) });
         return out;
     }
 
+    // 写法照 Ithaca 手账工具（ithaca-notebook-kit）：<span class="类">字</span> 单行；判断已有副题按 class 完全相等
+    hasSpanClass(text, cls) {
+        for (const m of String(text).matchAll(/<span class="([^"]*)">(.*?)<\/span>/g)) if (m[1] === cls) return true;
+        return false;
+    }
+
+    // 副题放正文第一行：frontmatter 下原有的空行留着，下一行有字就隔一个空行
+    insertSubtitleLine(body, cls, text) {
+        const lines = String(body).split('\n');
+        let row = 0;
+        while (row < lines.length - 1 && lines[row].trim() === '') row++;
+        const gap = (lines[row] ?? '').trim() !== '';
+        const safe = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        lines.splice(row, 0, `<span class="${cls}">${safe}</span>`, ...(gap ? [''] : []));
+        return lines.join('\n');
+    }
+
+    // cssclasses 的增减照手账工具：先读 cssclasses，没有再读 cssclass；同组的先去掉再加；只有旧字段时才删旧字段
     applyStyleProposals(fm, body, proposals) {
         let classes = this.cssClassList(fm.cssclasses ?? fm.cssclass);
         for (const p of proposals) {
-            if (p.key === 'sub') {
-                const text = p.text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-                body = `<span class="${p.cls}">${text}</span>\n\n${body.replace(/^\s*\n/, '')}`;
-            } else {
-                classes = classes.filter(c => !(p.remove || []).includes(c));
-                if (!classes.includes(p.cls)) classes.push(p.cls);
-            }
+            if (p.key === 'sub') body = this.insertSubtitleLine(body, p.cls, p.text);
+            else if (!classes.includes(p.cls)) classes = [...classes.filter(c => !(p.remove || []).includes(c)), p.cls];
         }
         if (proposals.some(p => p.key !== 'sub')) {
-            delete fm.cssclass;
-            fm.cssclasses = classes;
+            if ('cssclass' in fm && !('cssclasses' in fm)) delete fm.cssclass;
+            if (classes.length) fm.cssclasses = classes;
+            else delete fm.cssclasses;
         }
         return body;
     }
