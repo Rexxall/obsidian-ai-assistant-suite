@@ -14,7 +14,7 @@ function fixture(settings={}){
    getAbstractFileByPath:path=>path===file.path?file:folders.has(path)?{children:[]}:null,createFolder:async path=>folders.add(path)},
   fileManager:{renameFile:async(_,path)=>{file.path=path;}}
  };
- return {p,file,get text(){return text}};
+ return {p,file,get text(){return text},set text(v){text=v}};
 }
 
 test('without vault settings tags are only cleaned: vault spelling, no duplicates, nothing already on the note',()=>{
@@ -94,4 +94,37 @@ test('added properties can be limited to inbox folders, judged by where the note
  assert.equal(JSON.parse(scoped.text.split('\n')[1]).learning_status,undefined,'a note outside the inbox gets nothing even when moved into it');
  const open=fixture({metaFieldDefaults:'{"learning_status":"raw"}'});
  assert.equal(open.p.fieldDefaultsApplyTo('anywhere/a.md'),true);
+});
+
+const ithacaStyles={styleSubtitleClass:'ih-sub',styleCardClass:'ih-card',styleCardFolders:'50 - Cards',styleAgedRules:'1095 ih-aged-2\n365 ih-aged'};
+const daysAgo=n=>new Date(Date.now()-n*86400000).toISOString().slice(0,10);
+
+test('without style classes in settings nothing is offered',()=>{
+ const {p,file}=fixture();
+ assert.deepEqual(plain(p.styleProposals(file,{tldr:'x',date:'2001-01-01'},{useFolder:true,folder:'50 - Cards'},'')),[]);
+});
+
+test('style classes are offered from settings: subtitle, card by destination, and the longest age rule met',()=>{
+ const {p,file}=fixture(ithacaStyles);
+ const out=plain(p.styleProposals(file,{date:daysAgo(400),cssclasses:['wide']},{useMeta:true,meta:{tldr:'一句话'},useFolder:true,folder:'50 - Cards/Concepts'},'Body'));
+ assert.deepEqual(out.map(x=>[x.key,x.cls]),[['sub','ih-sub'],['card','ih-card'],['aged','ih-aged']]);
+ assert.equal(plain(p.styleProposals(file,{date:daysAgo(1200)},{},''))[0].cls,'ih-aged-2');
+ assert.deepEqual(plain(p.styleProposals(file,{tldr:'t',date:daysAgo(10),cssclasses:'ih-card'},{useFolder:true,folder:'50 - Cards'},'<span class="ih-sub">t</span>')),[],'nothing already there is offered again');
+});
+
+test('only ticked style items are written: span on the first line, cssclasses kept and the older age class replaced',async()=>{
+ const f=fixture(ithacaStyles);
+ f.text='---\n{"date":"'+daysAgo(1200)+'","cssclasses":["wide","ih-aged"],"tldr":"A < B & C"}\n---\n\nBody';
+ const task={id:'s',type:'one-click',content:{file:f.file,originalContent:f.text}};
+ await f.p.applyNoteGroup({file:f.file,tasks:[task]},{originalTaskId:'s',meta:{},tags:[],useMeta:false,useTags:false,useFolder:false,rename:false,style:{sub:true,aged:true}});
+ const [,yaml,,...rest]=f.text.split('\n');
+ assert.deepEqual(JSON.parse(yaml).cssclasses,['wide','ih-aged-2']);
+ assert.equal(rest.join('\n'),'<span class="ih-sub">A &lt; B &amp; C</span>\n\nBody');
+});
+
+test('unticked style items change nothing',async()=>{
+ const f=fixture(ithacaStyles);const before=f.text;
+ const task={id:'s',type:'one-click',content:{file:f.file,originalContent:f.text}};
+ await assert.rejects(f.p.applyNoteGroup({file:f.file,tasks:[task]},{originalTaskId:'s',meta:{tldr:'x'},tags:[],useMeta:false,useTags:false,useFolder:false,rename:false,style:{sub:false}}),/没有选中/);
+ assert.equal(f.text,before);
 });

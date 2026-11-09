@@ -75,6 +75,17 @@ class ReviewChecklistModal extends GlassModal {
                     if (!off) draft.useMeta = true;
                 } });
         }
+        // 主题样式类：只在这里提议，默认不勾
+        const source = group.tasks.find(t => t.id === draft.originalTaskId)?.content.originalContent || '';
+        const sourceBody = source.replace(/^---\r?\n[\s\S]*?\r?\n(?:---|\.\.\.)(?:\r?\n|$)/, '');
+        for (const p of this.view.plugin.styleProposals?.(group.file, before, draft, sourceBody) || []) {
+            const detail = p.key === 'sub' ? tr(`正文第一行加副题：${p.text}`, `Subtitle on the first line: ${p.text}`)
+                : p.key === 'card' ? tr(`cssclasses 加 ${p.cls}（放在 ${p.folder}）`, `Add ${p.cls} to cssclasses (in ${p.folder})`)
+                : tr(`cssclasses 加 ${p.cls}（已有 ${p.days} 天）`, `Add ${p.cls} to cssclasses (${p.days} days old)`);
+            items.push({ title: p.key === 'sub' ? tr('样式 · 副题', 'Style · subtitle') : p.key === 'card' ? tr('样式 · 卡片', 'Style · card') : tr('样式 · 旧笔记', 'Style · old note'),
+                detail: `${detail}${p.key === 'sub' ? ` · ${p.cls}` : ''}`, pill: tr('样式', 'Style'), tone: '',
+                on: !!draft.style?.[p.key], toggle: () => { draft.style = { ...(draft.style || {}), [p.key]: !draft.style?.[p.key] }; } });
+        }
         if (suggestions.mover?.length && draft.folder) {
             const from = group.file.parent?.path && group.file.parent.path !== '/' ? group.file.parent.path : tr('笔记库根目录', 'Vault root');
             if (draft.folder !== (group.file.parent?.path || '/')) items.push({ title: tr('移到文件夹', 'Move to folder'), detail: `${from} → ${draft.folder}`, pill: tr('移动', 'Move'), tone: 'is-warn',
@@ -690,6 +701,13 @@ const DEFAULT_SETTINGS = {
 
     // 库的规矩：写给 AI 的长期说明，每次生成都会带上
     vaultConventions: '',
+
+    // 样式类提议：类名由主题提供，插件不自带；留空就不提议。只在审核单里出现，默认不勾
+    styleSubtitleClass: '',
+    styleCardClass: '',
+    styleCardFolders: '',
+    // 每行“天数 类名”，例如 365 old-note
+    styleAgedRules: '',
 
     // Furigana Settings
     furiganaPrompt: FURIGANA_DEFAULT_PROMPT,
@@ -3887,14 +3905,18 @@ class AiAssistantSuite extends Plugin {
         if(source?.content.originalContent!==undefined&&source.content.originalContent!==current)throw new Error(tr('笔记已有新修改，请重新生成建议。', 'The note changed since. Generate suggestions again.'));
         if(diff&&diff.content.originalContent!==current)throw new Error(tr('正文预览已过期，请重新生成。', 'The text preview is out of date. Generate it again.'));
         let text=diff?this.composeReviewContent(current,diff.content.reviewHunks||this.buildReviewHunks(current,diff.content.proposedContent),diff.content.reviewSelected|| (diff.content.reviewHunks||this.buildReviewHunks(current,diff.content.proposedContent)).map(h=>h.id)):current;
-        if(draft.useMeta||draft.useTags){
+        const styleChosen=Object.values(draft.style||{}).some(Boolean);
+        if(draft.useMeta||draft.useTags||styleChosen){
             const match=text.match(/^---\r?\n([\s\S]*?)\r?\n(?:---|\.\.\.)(?:\r?\n|$)/);
             const fm=match?(parseYaml(match[1])||{}):{};
             if(typeof fm!=='object'||Array.isArray(fm))throw new Error(tr('笔记属性不是有效的 YAML 对象，未写入。', 'The note properties are not a valid YAML object, so nothing was written.'));
+            let body=match?text.slice(match[0].length):text;
+            const styles=styleChosen?this.styleProposals(group.file,{...fm},draft,body).filter(p=>draft.style[p.key]):[];
             if(draft.useMeta){for(const key of ['title','summary','tldr'])if(draft.meta[key]!==undefined&&String(draft.meta[key]).trim()&&!(draft.skipMeta||[]).includes(key))fm[key]=String(draft.meta[key]).trim();if(!draft.skipDefaults)this.fillFieldDefaults(fm,group.file.path);}
             if(draft.useTags){const old=Array.isArray(fm.tags)?fm.tags:(fm.tags?[String(fm.tags)]:[]);fm.tags=[...new Set([...old,...draft.tags])];}
             const newline=current.includes('\r\n')?'\r\n':'\n';
-            text=`---${newline}${stringifyYaml(fm).trimEnd().replace(/\r?\n/g,newline)}${newline}---${newline}${match?text.slice(match[0].length):text}`;
+            if(styles.length)body=this.applyStyleProposals(fm,body,styles).replace(/\r?\n/g,newline);
+            text=`---${newline}${stringifyYaml(fm).trimEnd().replace(/\r?\n/g,newline)}${newline}---${newline}${body}`;
         }
         return text;
     }
@@ -5358,6 +5380,64 @@ Make sure the JSON is valid.`) + this.vaultRulesBlock(true);
         return fm;
     }
 
+    // ---- 样式类提议 ----
+    cssClassList(value) {
+        const list = Array.isArray(value) ? value : (value ? String(value).split(/[\s,]+/) : []);
+        return list.map(v => String(v).trim()).filter(Boolean);
+    }
+
+    noteAgeDays(file, fm) {
+        for (const value of [fm?.created, fm?.date]) {
+            if (!value) continue;
+            const time = value instanceof Date ? value.getTime() : Date.parse(String(value).trim().replace(' ', 'T'));
+            if (!Number.isNaN(time)) return Math.floor((Date.now() - time) / 86400000);
+        }
+        const ctime = file?.stat?.ctime;
+        return ctime ? Math.floor((Date.now() - ctime) / 86400000) : null;
+    }
+
+    agedRules() {
+        return String(this.settings.styleAgedRules || '').split('\n').map(line => line.trim().match(/^(\d+)\s+(\S+)$/)).filter(Boolean)
+            .map(m => ({ days: Number(m[1]), cls: m[2] })).sort((a, b) => a.days - b.days);
+    }
+
+    // 按设置算出这篇笔记可以挂哪些样式类；destination 是应用后所在的文件夹
+    styleProposals(file, fm = {}, draft = {}, body = '') {
+        const out = [];
+        const classes = this.cssClassList(fm.cssclasses ?? fm.cssclass);
+        const sub = String(this.settings.styleSubtitleClass || '').trim();
+        const draftTldr = draft.useMeta && !(draft.skipMeta || []).includes('tldr') ? String(draft.meta?.tldr || '').trim() : '';
+        const tldr = draftTldr || String(fm.tldr || '').trim();
+        if (sub && tldr && !String(body).includes(`class="${sub}"`)) out.push({ key: 'sub', cls: sub, text: tldr });
+        const card = String(this.settings.styleCardClass || '').trim();
+        const folders = String(this.settings.styleCardFolders || '').split('\n').map(f => f.trim().replace(/^\/+|\/+$/g, '')).filter(Boolean);
+        const destination = String(draft.useFolder ? draft.folder : (file?.parent?.path || '')).replace(/^\/+|\/+$/g, '');
+        if (card && folders.some(f => destination === f || destination.startsWith(f + '/')) && !classes.includes(card)) out.push({ key: 'card', cls: card, folder: destination });
+        const rules = this.agedRules();
+        const age = rules.length ? this.noteAgeDays(file, fm) : null;
+        const rule = age === null ? null : rules.filter(r => age >= r.days).at(-1);
+        if (rule && !classes.includes(rule.cls)) out.push({ key: 'aged', cls: rule.cls, days: age, remove: rules.map(r => r.cls).filter(c => c !== rule.cls) });
+        return out;
+    }
+
+    applyStyleProposals(fm, body, proposals) {
+        let classes = this.cssClassList(fm.cssclasses ?? fm.cssclass);
+        for (const p of proposals) {
+            if (p.key === 'sub') {
+                const text = p.text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+                body = `<span class="${p.cls}">${text}</span>\n\n${body.replace(/^\s*\n/, '')}`;
+            } else {
+                classes = classes.filter(c => !(p.remove || []).includes(c));
+                if (!classes.includes(p.cls)) classes.push(p.cls);
+            }
+        }
+        if (proposals.some(p => p.key !== 'sub')) {
+            delete fm.cssclass;
+            fm.cssclasses = classes;
+        }
+        return body;
+    }
+
     getMoverPrompt(folderPaths, content) {
         return this.promptSetting('moverPrompt')
             .replace('{{folder_list}}', JSON.stringify(folderPaths, null, 2))
@@ -6396,6 +6476,15 @@ class AiAssistantSettingTab extends PluginSettingTab {
                     });
                 text.inputEl.rows = 6;
             });
+
+        new Setting(containerEl).setName(tr('样式类', 'Style classes')).setHeading();
+        const styleText = (name, desc, key, placeholder) => new Setting(containerEl).setName(name).setDesc(desc)
+            .addTextArea(text => text.setPlaceholder(placeholder).setValue(this.plugin.settings[key] || '')
+                .onChange(async (value) => { this.plugin.settings[key] = value.trim(); await this.plugin.saveSettings(); }));
+        styleText(tr('副题类', 'Subtitle class'), tr('填了就提议把一句话总结放进正文第一行的 span。类名来自你的主题；留空不提议。', 'If set, offers to put the one-line summary in a span on the first line. The class comes from your theme; leave empty to skip.'), 'styleSubtitleClass', tr('例如 subtitle', 'For example, subtitle'));
+        styleText(tr('卡片类', 'Card class'), tr('笔记放进下面的文件夹时，提议加进 cssclasses。', 'Offered for cssclasses when the note ends up in the folders below.'), 'styleCardClass', tr('例如 card', 'For example, card'));
+        styleText(tr('卡片文件夹', 'Card folders'), tr('每行一个，含子文件夹。', 'One per line, subfolders included.'), 'styleCardFolders', tr('例如 Cards', 'For example, Cards'));
+        styleText(tr('旧笔记类', 'Old-note classes'), tr('每行“天数 类名”，按 created 或 date 字段算，没有就用创建时间；取满足的最长那条。', 'One "days class" per line, from the created or date field, else the file creation time; the longest rule met wins.'), 'styleAgedRules', tr('例如 365 old-note', 'For example, 365 old-note'));
 
         new Setting(containerEl).setName(tr('侧栏', 'Sidebar')).setHeading();
         new Setting(containerEl).setName(tr('紧凑侧栏', 'Compact sidebar')).addToggle(t=>t.setValue(this.plugin.settings.sidebarCompact!==false).onChange(async value=>{this.plugin.settings.sidebarCompact=value;await this.plugin.saveSettings();this.plugin.refreshAssistantViews?.();}));
