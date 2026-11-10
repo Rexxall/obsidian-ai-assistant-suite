@@ -1,7 +1,11 @@
 # Changelog
 
-## Unreleased
+## 1.8.1 — 2026-11-11
 
+- **Vault rules:** a new settings section. *Standing notes for the AI* are sent with every request, for example how titles are named. *Allowed tag roots* drops suggested tags outside the roots you list. *Keep only the child tag* never suggests a tag together with its parent. *Existing folders only* drops folder paths the model invents.
+- **Fill in missing properties:** YAML you write once in settings, optionally limited to chosen folders. When properties are applied, only the fields a note lacks are added, and the review lists each one.
+- **Rename to the title by default** ticks *Also rename the file to the title* in the review, and the review shows the rename as its own row.
+- **Style classes:** the review can offer a `cssclasses` value for notes in card folders and for old notes by age, and can put the one-line summary in a subtitle span on the first line. The class names come from your theme; all are empty by default.
 - **Load example leaves your notes alone.** If a note of yours has the example's file name, the example is written beside it with a number, and *Remove example* trashes only a note that carries the example flag.
 
 ## 1.8.0 — 2026-11-05
