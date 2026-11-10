@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Load example leaves your notes alone.** If a note of yours has the example's file name, the example is written beside it with a number, and *Remove example* trashes only a note that carries the example flag.
+
 ## 1.8.0 — 2026-11-05
 
 - **Keys in secret storage:** API keys move out of the plugin's settings file into Obsidian's Keychain, its secret storage (Obsidian 1.11.4 and later; the plugin already needs 1.13). Each configuration now picks a key by name. Keys you saved before are moved on first start, under names other plugins can share, such as `deepseek-api-key`; if another plugin already keeps a different key under that name, this plugin uses its own name instead. Afterwards `data.json` holds no key. Keys no longer sync with the vault: on another device, choose the key again.

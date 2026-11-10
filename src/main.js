@@ -3434,8 +3434,14 @@ class AiAssistantSuite extends Plugin {
     }
 
     // 载入示例：在库根目录放一篇标明是演示的笔记，配上预先写好的建议。不联网、不花钱；可以照常应用和撤销
+    // 只有 frontmatter 里标了 ai-assistant-demo: true 的才算示例笔记；同名的用户笔记不碰
+    async isDemoNote(file) {
+        if (!file || file.children) return false;
+        const fm = (await this.app.vault.cachedRead(file)).match(/^---\r?\n([\s\S]*?)\r?\n---/);
+        return !!fm && /^ai-assistant-demo:\s*true\s*$/m.test(fm[1]);
+    }
+
     async loadDemo() {
-        const path = this.demoNotePath();
         const zh = isChineseInterface();
         const body = zh
             ? '---\nai-assistant-demo: true\n---\n> 这是 AI Assistant Suite 的示例笔记，可以随时删除。\n\n周三和小林聊了下学期的计划 他说实验室三月开始招人 要先发邮件 附上研究计划 还要准备面谈\n\n要做的：研究计划写到两页以内 邮件里说清楚为什么选这个研究室 日语面谈练三次\n\n顺便记一下 他推荐了两本书 一本讲实验设计 一本讲科研写作\n'
@@ -3443,9 +3449,16 @@ class AiAssistantSuite extends Plugin {
         const structured = zh
             ? '---\nai-assistant-demo: true\n---\n> 这是 AI Assistant Suite 的示例笔记，可以随时删除。\n\n## 下学期计划（周三与小林）\n\n- 实验室**三月**开始招人。\n- 流程：先发邮件并附研究计划，之后面谈。\n\n## 待办\n\n- [ ] 研究计划控制在两页以内\n- [ ] 邮件里说清楚为什么选这个研究室\n- [ ] 日语面谈练习三次\n\n## 推荐书目\n\n- 一本讲实验设计\n- 一本讲科研写作\n'
             : '---\nai-assistant-demo: true\n---\n> This is the AI Assistant Suite example note. Delete it any time.\n\n## Next term (Wednesday, with Sam)\n\n- The lab starts hiring in **March**.\n- Steps: email first with a research plan, then an interview.\n\n## To do\n\n- [ ] Keep the plan under two pages\n- [ ] Say in the email why this lab\n- [ ] Practise the interview three times\n\n## Recommended books\n\n- One on experiment design\n- One on science writing\n';
-        let file = this.app.vault.getAbstractFileByPath(path);
+        let path = this.demoNotePath();
+        let file = null;
+        for (let n = 2; ; n++) {
+            const existing = this.app.vault.getAbstractFileByPath(path);
+            if (!existing) break;
+            if (await this.isDemoNote(existing)) { file = existing; break; }
+            path = this.demoNotePath().replace(/\.md$/, ` ${n}.md`);
+        }
         if (!file) file = await this.app.vault.create(path, body);
-        else await this.app.vault.modify(file, body);
+        else await this.app.vault.process(file, () => body);
         await this.app.workspace.getLeaf(false).openFile(file);
         await this.activateView();
         const folder = this.app.vault.getRoot().children.find(child => child.children && !child.name.startsWith('.'));
@@ -3470,14 +3483,18 @@ class AiAssistantSuite extends Plugin {
     }
 
     async removeDemo() {
-        const file = this.app.vault.getAbstractFileByPath(this.demoNotePath())
-            || this.app.vault.getMarkdownFiles().find(f => this.app.metadataCache.getFileCache(f)?.frontmatter?.['ai-assistant-demo'] === true);
+        const stem = this.demoNotePath().replace(/\.md$/, '');
+        const named = this.app.vault.getRoot().children.filter(f => !f.children && f.extension === 'md' && f.basename.startsWith(stem));
+        let file = null;
+        for (const f of named) if (await this.isDemoNote(f)) { file = f; break; }
+        if (!file) file = this.app.vault.getMarkdownFiles().find(f => this.app.metadataCache.getFileCache(f)?.frontmatter?.['ai-assistant-demo'] === true) || null;
         if (this.view) {
             this.view.tasks = this.view.tasks.filter(t => !t.content?.demo);
             this.view.workbenchPage = 'prepare';
             this.view.render();
         }
-        if (file) await this.app.fileManager.trashFile(file);
+        if (!file) return;
+        await this.app.fileManager.trashFile(file);
         new Notice(tr('示例笔记已移到回收站。', 'Example note moved to trash.'));
     }
 
