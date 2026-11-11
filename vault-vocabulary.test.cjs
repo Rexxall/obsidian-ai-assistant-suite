@@ -156,3 +156,16 @@ test('with allowed roots a bare root is not a tag, neither in the vault list nor
  assert.deepEqual(plain(p.vaultTagsByUse()),['Type/笔记','C/科研']);
  assert.deepEqual(plain(p.refineTags(['Type','C/新'],[],[])),['C/新']);
 });
+
+test('the language hint names the script the note is written in, so English notes are not summarised in Chinese',()=>{
+ const {p}=fixture();
+ assert.equal(p.noteScript('sync w/ Mika, Tom, Ana — launch date??? tom says 21st, mika thinks too early. agreed: 28th'),'latin');
+ assert.equal(p.noteScript('木曜定例。リリース日を28日に決定しました。担当者を確認する。'),'ja');
+ assert.equal(p.noteScript('周四和小林阿哲陈姐开会，上线日期最后定28号。'),'zh');
+ assert.equal(p.noteScript('中文笔记里夹几个 English words 和 [[Some Linked Note With Long English Name]] https://example.com/long/english/path'),'zh');
+ assert.equal(p.noteScript('```\nconst a = 1\n```'),'');
+ assert.match(p.languageHintBlock('This note is all in English and long enough to count as English text.'),/英文等拉丁字母文字/);
+ assert.equal(p.languageHintBlock(''),'');
+ p.settings={metaPrompt:'X {{content}}'};
+ assert.match(p.getMetaPrompt('sync w/ Mika, Tom, Ana — launch date??? tom says 21st, mika thinks too early.'),/不要翻译/);
+});

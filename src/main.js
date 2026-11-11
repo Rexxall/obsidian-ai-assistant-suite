@@ -5035,7 +5035,7 @@ ${oneClickProcessActions.meta ? this.getMetaTaskDescription(hasExistingSummary, 
 \`\`\`json
 ${JSON.stringify(jsonStructure, null, 2)}
 \`\`\`
-${contextForPrompt}${this.vaultRulesBlock()}${this.userInstructionBlock()}
+${contextForPrompt}${this.vaultRulesBlock()}${this.languageHintBlock(contentToProcess)}${this.userInstructionBlock()}
 
 **需要处理的文本如下：**
 \n\n${contentToProcess}`, `You are a capable multi-task AI assistant. Based on the text below, carry out every requested task.
@@ -5050,7 +5050,7 @@ ${oneClickProcessActions.meta ? this.getMetaTaskDescription(hasExistingSummary, 
 \`\`\`json
 ${JSON.stringify(jsonStructure, null, 2)}
 \`\`\`
-${contextForPrompt}${this.vaultRulesBlock()}${this.userInstructionBlock()}
+${contextForPrompt}${this.vaultRulesBlock()}${this.languageHintBlock(contentToProcess)}${this.userInstructionBlock()}
 
 **The text to process:**
 \n\n${contentToProcess}`);
@@ -5193,7 +5193,7 @@ ${contextForPrompt}${this.vaultRulesBlock()}${this.userInstructionBlock()}
             prompt += tr(`\n\n**注意**: 文件已有${skipInstructions.join("和")}字段，请跳过生成这些字段，只返回需要生成的字段。`, `\n\n**Note**: the note already has ${skipInstructions.join(" and ")}; skip ${skipInstructions.length > 1 ? "those fields" : "that field"} and return only the fields still needed.`);
         }
 
-        return prompt.replace('{{content}}', content) + this.vaultRulesBlock(true);
+        return prompt.replace('{{content}}', content) + this.vaultRulesBlock(true) + this.languageHintBlock(content);
     }
 
     // 提示词跟界面语言走：没改过的默认提示词，英文界面发英文版；本人改过的照原样发
@@ -5235,7 +5235,7 @@ Reply in JSON:
   "title": "your title"
 }
 
-Make sure the JSON is valid.`) + this.vaultRulesBlock(true);
+Make sure the JSON is valid.`) + this.vaultRulesBlock(true) + this.languageHintBlock(content);
     }
 
     getMetaTaskDescription(hasExistingSummary, hasExistingTldr) {
@@ -5471,6 +5471,28 @@ Make sure the JSON is valid.`) + this.vaultRulesBlock(true);
             else delete fm.cssclasses;
         }
         return body;
+    }
+
+    // 笔记主要用哪种文字：提示词是中文时，模型容易把英文笔记的标题和摘要也写成中文，所以明说一句
+    noteScript(text) {
+        const t = String(text || '').replace(/```[\s\S]*?```/g, '').replace(/\[\[[^\]]*\]\]|\]\([^)]*\)|https?:\/\/\S+/g, '');
+        const han = (t.match(/[一-鿿]/g) || []).length;
+        const kana = (t.match(/[぀-ヿ]/g) || []).length;
+        const hangul = (t.match(/[가-힯]/g) || []).length;
+        const latin = (t.match(/[A-Za-z]/g) || []).length;
+        if (kana >= 5 && kana * 5 >= han) return 'ja';
+        if (hangul >= 5 && hangul >= han) return 'ko';
+        if (latin >= 40 && latin > han * 3) return 'latin';
+        if (han >= 5) return 'zh';
+        return '';
+    }
+
+    languageHintBlock(text) {
+        const script = this.noteScript(text);
+        if (!script) return '';
+        const zh = { ja: '日文', ko: '韩文', latin: '英文等拉丁字母文字', zh: '中文' }[script];
+        const en = { ja: 'Japanese', ko: 'Korean', latin: 'English or another Latin-script language', zh: 'Chinese' }[script];
+        return tr(`\n\n**语言:** 这篇笔记主要是${zh}。标题、摘要和一句话总结用笔记原文的语言写，不要翻译成别的语言。`, `\n\n**Language:** this note is mainly ${en}. Write the title, summary and one-line summary in the note's own language; do not translate.`);
     }
 
     getMoverPrompt(folderPaths, content) {
