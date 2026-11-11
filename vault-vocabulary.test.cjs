@@ -149,3 +149,10 @@ test('a one-line summary with line breaks becomes one line, and an older age cla
  assert.deepEqual(plain(p.styleProposals(file,{date:daysAgo(500),cssclasses:['ih-aged-2']},{},'')),[]);
  assert.equal(plain(p.styleProposals(file,{date:daysAgo(1200),cssclasses:['ih-aged']},{},''))[0].cls,'ih-aged-2');
 });
+
+test('with allowed roots a bare root is not a tag, neither in the vault list nor in suggestions',()=>{
+ const {p}=fixture({taggerAllowedRoots:'C\nType'});
+ p.app.metadataCache.getTags=()=>({'#Type':9,'#Type/笔记':4,'#C':3,'#C/科研':2});
+ assert.deepEqual(plain(p.vaultTagsByUse()),['Type/笔记','C/科研']);
+ assert.deepEqual(plain(p.refineTags(['Type','C/新'],[],[])),['C/新']);
+});

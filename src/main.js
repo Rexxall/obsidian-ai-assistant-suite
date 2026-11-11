@@ -5287,8 +5287,10 @@ Make sure the JSON is valid.`) + this.vaultRulesBlock(true);
         return String(this.settings.taggerAllowedRoots || '').split(/[\n,，]/).map(r => r.trim().replace(/^#/, '').replace(/\/+$/, '')).filter(Boolean);
     }
 
+    // 设了根白名单时，只有根本身（如 Type）不算标签：Obsidian 的标签统计会把父级也单独列出来
     tagRootAllowed(tag, roots = this.allowedTagRoots()) {
         if (!roots.length) return true;
+        if (!String(tag).includes('/')) return false;
         const root = String(tag).split('/')[0].toLowerCase();
         return roots.some(r => r.toLowerCase() === root);
     }
