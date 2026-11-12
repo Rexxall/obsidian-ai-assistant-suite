@@ -582,6 +582,7 @@ const DEFAULT_SETTINGS = {
     structurizerMarks: '',
     structurizerMaxCards: 4,
     structurizerCondense: false,
+    sidebarLook: 'kit',
 
     // 样式类提议：类名由主题提供，插件不自带；留空就不提议。只在审核单里出现，默认不勾
     styleSubtitleClass: '',
@@ -722,6 +723,9 @@ class AssistantView extends ItemView {
         container.addClass('mist-sidebar-host');
         const root = container.createDiv({ cls: 'ap ap-view mist-sidebar' });
         if (this.plugin.settings.sidebarCompact !== false) root.addClass('mist-compact');
+        const paper = this.plugin.settings.sidebarLook === 'paper';
+        container.toggleClass('is-paper', paper);
+        root.toggleClass('is-paper', paper);
         const page = this.workbenchPage || 'prepare';
         const activeNote = this.plugin.app.workspace.getActiveFile();
         if (activeNote?.extension === 'md') this.plugin.assistantLastFile = activeNote;
@@ -6754,6 +6758,7 @@ class AiAssistantSettingTab extends PluginSettingTab {
         styleText(tr('旧笔记类', 'Old-note classes'), tr('每行“天数 类名”，按 created 或 date 字段算，没有就用创建时间；取满足的最长那条。', 'One "days class" per line, from the created or date field, else the file creation time; the longest rule met wins.'), 'styleAgedRules', tr('例如 365 old-note', 'For example, 365 old-note'));
 
         new Setting(containerEl).setName(tr('侧栏', 'Sidebar')).setHeading();
+        new Setting(containerEl).setName(tr('侧栏外观', 'Sidebar look')).addDropdown(d=>d.addOption('kit',tr('跟随主题','Follow theme')).addOption('paper',tr('暖纸','Warm paper')).setValue(this.plugin.settings.sidebarLook==='paper'?'paper':'kit').onChange(async value=>{this.plugin.settings.sidebarLook=value;await this.plugin.saveSettings();this.plugin.refreshAssistantViews?.();}));
         new Setting(containerEl).setName(tr('紧凑侧栏', 'Compact sidebar')).addToggle(t=>t.setValue(this.plugin.settings.sidebarCompact!==false).onChange(async value=>{this.plugin.settings.sidebarCompact=value;await this.plugin.saveSettings();this.plugin.refreshAssistantViews?.();}));
         new Setting(containerEl).setName(tr('确认后进入下一篇', 'Next note after confirming')).setDesc(tr('只在批量审阅时生效。', 'Batch review only.')).addToggle(t=>t.setValue(this.plugin.settings.sidebarAutoNext!==false).onChange(async value=>{this.plugin.settings.sidebarAutoNext=value;await this.plugin.saveSettings();}));
         this.addSectionHeading(containerEl, tr('默认处理步骤', 'Default steps'));

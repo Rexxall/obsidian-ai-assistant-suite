@@ -2342,25 +2342,38 @@
 .assistant-article-preview table { display: block; max-width: 100%; overflow: auto; }
 
 /* Mist sidebar (2026-10 redesign, plan B): choose what to do, then review one note's suggestions.
-   Warm paper, one soft glow, a dark pill for the main action; space and soft tints instead of boxes. */
+   Colours come from the shared kit (--ap-*), so the sidebar follows the user's theme and accent. */
 .mist-sidebar {
-  --mist-side:#f6f2ea; --mist-paper:#fffdf8; --mist-ink:#2a2925; --mist-ink2:#5b574f; --mist-mute:#9b968b;
-  --mist-sage:#7c9a86; --mist-sage-soft:#e2eadf; --mist-clay:#c4875c; --mist-clay-soft:#f2e2d3;
-  --mist-sky:#8ea8c2; --mist-sky-soft:#e1e9f1; --mist-hair:rgba(42,41,37,.08); --mist-shadow:0 22px 44px -30px rgba(42,41,37,.45);
-  --mist-serif:"Songti SC","Hiragino Mincho ProN","Noto Serif CJK SC",var(--font-text),serif;
+  --mist-side: var(--ap-page); --mist-paper: var(--ap-group); --mist-ink: var(--ap-label); --mist-ink2: var(--ap-label);
+  --mist-mute: var(--ap-label-2); --mist-sage: var(--ap-accent); --mist-sage-soft: var(--ap-accent-tint);
+  --mist-clay: var(--ap-warn); --mist-clay-soft: color-mix(in srgb, var(--ap-warn) 12%, transparent);
+  --mist-sky: var(--ap-accent); --mist-sky-soft: var(--ap-group); --mist-hair: var(--ap-sep); --mist-shadow: var(--ap-hair);
+  --mist-serif: var(--ap-font);
   position:relative; min-height:100%; padding:18px 18px 22px; display:flex; flex-direction:column; gap:14px;
   background:var(--mist-side); color:var(--mist-ink); font-size:13.5px; line-height:1.6; overflow:hidden;
 }
-.theme-dark .mist-sidebar {
-  --mist-side:#1d232a; --mist-paper:#232a32; --mist-ink:#ebe5d8; --mist-ink2:#bab3a4; --mist-mute:#837e72;
-  --mist-sage:#9dbba6; --mist-sage-soft:#283730; --mist-clay:#e0a37a; --mist-clay-soft:#3a2d24;
-  --mist-sky:#a8c0d9; --mist-sky-soft:#253241; --mist-hair:rgba(235,229,216,.09); --mist-shadow:0 22px 44px -30px rgba(0,0,0,.8);
+
+/* Optional look: warm paper (Settings › Sidebar look). Only the neutrals change; the accent still follows the theme. */
+.mist-sidebar-host.is-paper, .ap.mist-sidebar.is-paper {
+  --ap-page: #f6f2ea; --ap-group: #fffdf8; --ap-glass: color-mix(in srgb, #f6f2ea 72%, transparent);
+  --ap-label: #2a2925; --ap-label-2: #6f6a60; --ap-label-3: #9b968b;
+  --ap-fill: rgb(42 41 37 / 0.06); --ap-fill-strong: rgb(42 41 37 / 0.11); --ap-sep: rgb(42 41 37 / 0.09);
+  --ap-hair: 0 0 0 0.5px rgb(42 41 37 / 0.12);
+  --mist-serif: "Songti SC", "Hiragino Mincho ProN", "Noto Serif CJK SC", var(--font-text), serif;
 }
-.mist-sidebar::before {
-  content:""; position:absolute; right:-60px; top:-70px; width:280px; height:220px; border-radius:50%; pointer-events:none;
-  background:radial-gradient(closest-side,rgba(142,168,194,.32),rgba(196,135,92,.14) 60%,transparent); filter:blur(6px);
+.theme-dark .mist-sidebar-host.is-paper, .theme-dark .ap.mist-sidebar.is-paper {
+  --ap-page: #1f1d1a; --ap-group: #282521; --ap-glass: color-mix(in srgb, #1f1d1a 72%, transparent);
+  --ap-label: #ebe5d8; --ap-label-2: #b2ab9c; --ap-label-3: #837e72;
+  --ap-fill: rgb(235 229 216 / 0.07); --ap-fill-strong: rgb(235 229 216 / 0.12); --ap-sep: rgb(235 229 216 / 0.10);
+  --ap-hair: 0 0 0 0.5px rgb(235 229 216 / 0.14);
 }
-.theme-dark .mist-sidebar::before { background:radial-gradient(closest-side,rgba(168,192,217,.22),rgba(224,163,122,.10) 60%,transparent); }
+.view-content.mist-sidebar-host.is-paper { background: var(--ap-page); }
+.ap.mist-sidebar.is-paper .mist-title, .ap.mist-sidebar.is-paper .mist-empty strong, .ap.mist-sidebar.is-paper .mist-edit-title { font-family: var(--mist-serif); letter-spacing: .02em; }
+.ap.mist-sidebar.is-paper { overflow: clip; }
+/* One soft glow in the top corner, painted on the sticky header so it never leaves a seam. */
+.ap.mist-sidebar.is-paper .mist-head {
+  background: radial-gradient(220px 64px at 90% 0, color-mix(in srgb, var(--ap-accent) 16%, transparent), transparent 70%), var(--ap-glass);
+}
 .mist-sidebar > * { position:relative; }
 .mist-sidebar button { font:inherit; cursor:pointer; box-shadow:none; height:auto; }
 .mist-sidebar button:disabled { cursor:default; opacity:.55; }
@@ -2603,20 +2616,6 @@
 
 /* Sidebar: the old mist palette now reads from the kit's tokens. */
 .ap.mist-sidebar {
-  --mist-side: var(--ap-page);
-  --mist-paper: var(--ap-group);
-  --mist-ink: var(--ap-label);
-  --mist-ink2: var(--ap-label);
-  --mist-mute: var(--ap-label-2);
-  --mist-sage: var(--ap-accent);
-  --mist-sage-soft: var(--ap-accent-tint);
-  --mist-clay: var(--ap-warn);
-  --mist-clay-soft: color-mix(in srgb, var(--ap-warn) 12%, transparent);
-  --mist-sky: var(--ap-accent);
-  --mist-sky-soft: var(--ap-group);
-  --mist-hair: var(--ap-sep);
-  --mist-shadow: var(--ap-hair);
-  --mist-serif: var(--ap-font);
   padding: 0 var(--ap-s4) var(--ap-s5);
   gap: var(--ap-s3);
   font: var(--ap-body);
@@ -2909,3 +2908,9 @@
 .mist-sidebar .mist-ask textarea { min-height: 0; field-sizing: content; }
 .ap.mist-sidebar .mist-views > button.mist-view:not([aria-current="page"]):not(:focus-visible) { box-shadow: none; background: transparent; }
 .ap.mist-sidebar button:is(.mist-link, .mist-alt, .mist-back):not(:focus-visible) { box-shadow: none; background: transparent; }
+
+/* Two button sizes, as in the kit: 34px for the main action, 24px for small capsules. Text-style buttons keep height:auto. */
+.ap.mist-sidebar button.mist-primary { min-height: 34px; padding-block: 8px; line-height: 18px; }
+.ap.mist-sidebar button:is(.mist-act, .mist-chip, .mist-view),
+.mist-sidebar .mist-rows .mist-row-line > button.mist-row-apply,
+.mist-sidebar .mist-seg > button.mist-seg-btn { min-height: 24px; padding-block: 4px; line-height: 16px; }
