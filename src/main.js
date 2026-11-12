@@ -5035,7 +5035,7 @@ ${oneClickProcessActions.meta ? this.getMetaTaskDescription(hasExistingSummary, 
 \`\`\`json
 ${JSON.stringify(jsonStructure, null, 2)}
 \`\`\`
-${contextForPrompt}${this.vaultRulesBlock()}${this.languageHintBlock(contentToProcess)}${this.userInstructionBlock()}
+${contextForPrompt}${this.vaultRulesBlock()}${this.languageHintBlock(contentToProcess)}${this.titleHintBlock()}${this.userInstructionBlock()}
 
 **需要处理的文本如下：**
 \n\n${contentToProcess}`, `You are a capable multi-task AI assistant. Based on the text below, carry out every requested task.
@@ -5050,7 +5050,7 @@ ${oneClickProcessActions.meta ? this.getMetaTaskDescription(hasExistingSummary, 
 \`\`\`json
 ${JSON.stringify(jsonStructure, null, 2)}
 \`\`\`
-${contextForPrompt}${this.vaultRulesBlock()}${this.languageHintBlock(contentToProcess)}${this.userInstructionBlock()}
+${contextForPrompt}${this.vaultRulesBlock()}${this.languageHintBlock(contentToProcess)}${this.titleHintBlock()}${this.userInstructionBlock()}
 
 **The text to process:**
 \n\n${contentToProcess}`);
@@ -5193,7 +5193,7 @@ ${contextForPrompt}${this.vaultRulesBlock()}${this.languageHintBlock(contentToPr
             prompt += tr(`\n\n**注意**: 文件已有${skipInstructions.join("和")}字段，请跳过生成这些字段，只返回需要生成的字段。`, `\n\n**Note**: the note already has ${skipInstructions.join(" and ")}; skip ${skipInstructions.length > 1 ? "those fields" : "that field"} and return only the fields still needed.`);
         }
 
-        return prompt.replace('{{content}}', content) + this.vaultRulesBlock(true) + this.languageHintBlock(content);
+        return prompt.replace('{{content}}', content) + this.vaultRulesBlock(true) + this.languageHintBlock(content) + this.titleHintBlock();
     }
 
     // 提示词跟界面语言走：没改过的默认提示词，英文界面发英文版；本人改过的照原样发
@@ -5235,7 +5235,7 @@ Reply in JSON:
   "title": "your title"
 }
 
-Make sure the JSON is valid.`) + this.vaultRulesBlock(true) + this.languageHintBlock(content);
+Make sure the JSON is valid.`) + this.vaultRulesBlock(true) + this.languageHintBlock(content) + this.titleHintBlock();
     }
 
     getMetaTaskDescription(hasExistingSummary, hasExistingTldr) {
@@ -5493,6 +5493,11 @@ Make sure the JSON is valid.`) + this.vaultRulesBlock(true) + this.languageHintB
         const zh = { ja: '日文', ko: '韩文', latin: '英文等拉丁字母文字', zh: '中文' }[script];
         const en = { ja: 'Japanese', ko: 'Korean', latin: 'English or another Latin-script language', zh: 'Chinese' }[script];
         return tr(`\n\n**语言:** 这篇笔记主要是${zh}。标题、摘要和一句话总结用笔记原文的语言写，不要翻译成别的语言。`, `\n\n**Language:** this note is mainly ${en}. Write the title, summary and one-line summary in the note's own language; do not translate.`);
+    }
+
+    // 标题按内容定主题：人名、日期本身是主题时照写，只是罗列参会人或日期时不行
+    titleHintBlock() {
+        return tr(`\n\n**标题:** 先读完内容，判断这篇主要讲什么，再定标题：只看标题就该知道主题、结论或要做的事。人名、日期是主题的一部分时照常写进标题（比如写某个人的笔记）；只把参会人、日期、星期拼在一起、看不出内容的标题不行。`, `\n\n**Title:** read the whole note and decide what it is mainly about before writing the title; the title alone should tell the topic, the conclusion or the action. Keep names and dates when they are part of the topic (a note about a person, say); a title that only strings together attendees, dates or weekdays and says nothing about the content is not acceptable.`);
     }
 
     getMoverPrompt(folderPaths, content) {

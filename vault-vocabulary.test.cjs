@@ -52,7 +52,8 @@ test('vault rules reach every prompt only when set; structure and title prompts 
  const base={taggerPrompt:'T {{existing_tags}} {{content}} {{count}}',moverPrompt:'M {{folder_list}} {{content}} {{count}}',metaPrompt:'X {{content}}',structurizerPrompt:'S {{content}}',taggerSuggestionsCount:5,moverSuggestionsCount:3};
  const off=fixture(base).p;
  assert.equal(off.getTaggerPrompt(['a'],'body'),'T a body 5');
- assert.equal(off.getMetaPrompt('body'),'X body');
+ assert.ok(off.getMetaPrompt('body').startsWith('X body'));
+ assert.doesNotMatch(off.getMetaPrompt('body'),/库的规矩|标签只能/);
  const {p}=fixture({...base,taggerAllowedRoots:'C\nP',taggerDropParentTags:true,moverExistingOnly:true,vaultConventions:'正文从二级标题开始。'});
  assert.match(p.getTaggerPrompt(['a'],'body'),/C\/、P\//);
  assert.match(p.getMoverPrompt(['x'],'body'),/不要创造新路径/);
@@ -168,4 +169,14 @@ test('the language hint names the script the note is written in, so English note
  assert.equal(p.languageHintBlock(''),'');
  p.settings={metaPrompt:'X {{content}}'};
  assert.match(p.getMetaPrompt('sync w/ Mika, Tom, Ana — launch date??? tom says 21st, mika thinks too early.'),/不要翻译/);
+});
+
+test('title hint asks for the topic but keeps names that are the topic',()=>{
+ const {p}=fixture();
+ const hint=p.titleHintBlock();
+ assert.match(hint,/主要讲什么/);
+ assert.match(hint,/人名、日期是主题的一部分时照常写/);
+ assert.match(p.getTitleOnlyPrompt('随便一段内容'),/\*\*标题:\*\*/);
+ p.settings={metaPrompt:'X {{content}}'};
+ assert.match(p.getMetaPrompt('随便一段内容'),/\*\*标题:\*\*/);
 });
