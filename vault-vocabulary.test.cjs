@@ -223,10 +223,15 @@ test('property lines echoed from the prompt at the top of the reply are dropped'
 test('the condense switch changes only the wording rule, and lines stay real newlines',()=>{
  const strict=fixture({structurizerPrompt:'S {{content}}',structurizerMarks:MARKS}).p.getStructurizerPrompt('b');
  const loose=fixture({structurizerPrompt:'S {{content}}',structurizerMarks:MARKS,structurizerCondense:true}).p.getStructurizerPrompt('b');
- assert.match(strict,/不要缩写。\n- 原文已有/);assert.match(loose,/压成一行，保留原来的关键词。\n- 原文已有/);assert.doesNotMatch(loose,/\\n/);
+ assert.match(strict,/不要缩写。\n- 原文已有/);assert.match(loose,/不要再在正文里写一遍。\n- 原文已有/);assert.doesNotMatch(loose,/\\n/);
 });
 test('videos, images and links the note never had are dropped from a notebook tidy',()=>{
  const {p}=fixture({structurizerMarks:MARKS});
  const r=p.cleanNotebookMarks('<iframe src="https://www.youtube.com/embed/FAKE" allowfullscreen></iframe>\n正文 [来源](https://real.example/a) 和 [编的](https://fake.example/b)。\n![图](https://fake.example/c.png)','正文 [来源](https://real.example/a)。',{});
  assert.doesNotMatch(r.text,/iframe|fake\.example/);assert.match(r.text,/\[来源\]\(https:\/\/real\.example\/a\)/);assert.match(r.text,/和 编的。/);assert.equal(r.stats.removed,3);
+});
+test('a per-run choice overrides the condense setting for that run only',()=>{
+ const {p}=fixture({structurizerPrompt:'S {{content}}',structurizerMarks:MARKS,structurizerCondense:false});
+ p.condenseOverride=true;assert.match(p.getStructurizerPrompt('b'),/压进纸片的段落不要再在正文里写一遍/);
+ p.condenseOverride=undefined;assert.match(p.getStructurizerPrompt('b'),/不要缩写/);
 });

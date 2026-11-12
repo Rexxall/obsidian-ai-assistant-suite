@@ -959,6 +959,15 @@ class AssistantView extends ItemView {
             if (key === 'mover') pill.createEl('small', { text: tr('建议放哪', 'Where it goes') });
             pill.onclick = () => { this.sessionActions = { ...chosen, [key]: !on }; this.render(); };
         }
+        // 打开了手账写法时，整理正文可以选：原话优先，或者时间线和对话里允许缩写
+        if (chosen.structurizer && this.plugin.notebookMarks?.()) {
+            const condense = this.sessionCondense ?? !!this.plugin.settings.structurizerCondense;
+            const seg = body.createDiv({ cls: 'mist-seg', attr: { role: 'group', 'aria-label': tr('手账整理方式', 'Notebook tidy mode') } });
+            for (const [value, label, hint] of [[false, tr('原话优先', 'Keep wording'), tr('原话一字不改', 'Original words untouched')], [true, tr('允许缩写', 'Allow condensing'), tr('时间线和对话里可以压成一行', 'Timelines and chats may be condensed')]]) {
+                const btn = seg.createEl('button', { text: label, cls: condense === value ? 'mist-seg-btn is-on' : 'mist-seg-btn', attr: { 'aria-pressed': String(condense === value), title: hint } });
+                btn.onclick = () => { this.sessionCondense = value; this.render(); };
+            }
+        }
         const ask = body.createEl('label', { cls: 'mist-ask' });
         ask.createSpan({ text: tr('补充一句（可不填）', 'Add a note (optional)') });
         const input = ask.createEl('textarea', { attr: { rows: '2', placeholder: tr('例如：标签尽量用库里已有的', 'For example: prefer tags already in the vault'), 'aria-label': tr('补充要求', 'Extra request') } });
@@ -974,8 +983,9 @@ class AssistantView extends ItemView {
             if (this.workbenchRunning || !file) return;
             this.workbenchRunning = true; this.workbenchCancelled = false; this.workbenchPage = 'review';
             this.render(); this.plugin.refreshAssistantViews?.(this);
+            this.plugin.condenseOverride = this.sessionCondense;
             try { await this.plugin.runOneClickSmartProcess(file, { ...chosen }, () => this.workbenchCancelled, this.sessionInstruction || ''); }
-            finally { this.workbenchRunning = false; this.render(); this.plugin.refreshAssistantViews?.(this); }
+            finally { this.plugin.condenseOverride = undefined; this.workbenchRunning = false; this.render(); this.plugin.refreshAssistantViews?.(this); }
         };
         if (busy) this.renderCurrentRequestBanner(body);
 
@@ -5599,9 +5609,10 @@ Make sure the JSON is valid.`) + this.vaultRulesBlock(true) + this.languageHintB
     notebookPromptBlock(fm = {}) {
         const marks = this.notebookMarks();
         if (!marks) return '';
+        const condense = this.condenseOverride ?? this.settings.structurizerCondense;
         const facts = Object.entries(fm || {}).filter(([k, v]) => !['summary', 'tldr', 'tags', 'position'].includes(k) && ['string', 'number'].includes(typeof v) && String(v).length <= 120).map(([k, v]) => `${k}: ${v}`);
-        return tr(`\n\n**手账写法（只用下面这些）:**\n- 只能用清单里的写法，不要造新的纸片类型或类名。\n- 一篇最多 ${marks.max} 张纸片（> [!…]）。内容本来就是结论、原话金句、步骤、时间安排、对话或待办的，就放进对应的纸片；不是的不硬套。\n${this.settings.structurizerCondense ? '- 原话一个字不改，只挪位置、加小标题、包进纸片。只有时间线和对话纸片里，可以把一段原话压成一行，保留原来的关键词。\n' : '- 原话一个字不改，只挪位置、加小标题、包进纸片；时间线、对话里的每一行也用原话，不要缩写。\n'}- 原文已有的 <span class=…> 标注和纸片原样保留。\n- 不加圈重点、批注、贴纸这类表达个人判断的标注。\n- 正文不要重复属性里已有的标题、摘要和标签。\n- 频道、日期、链接这类信息只用下面属性里有的，没有就不放。\n\n清单：\n${marks.lines.join('\n')}${facts.length ? `\n\n属性：\n${facts.join('\n')}` : ''}`,
-            `\n\n**Notebook marks (use only these):**\n- Use only the marks listed; do not invent callout types or class names.\n- At most ${marks.max} cards (> [!…]) per note. Put conclusions, memorable quotes, steps, schedules, conversations and to-dos into their card; do not force anything else into one.\n${this.settings.structurizerCondense ? '- Keep the original wording; only move it, add subheadings and wrap it in cards. Only inside timeline and chat cards may a passage be condensed to one line, keeping its key words.\n' : '- Keep the original wording; only move it, add subheadings and wrap it in cards. Timeline and chat lines use the original words too; do not shorten them.\n'}- Keep every <span class=…> mark and card already in the text as it is.\n- Do not add circles, margin notes or stickers; those carry the writer's own judgement.\n- Do not repeat the title, summary or tags that are already in the properties.\n- Take channel, date or link details only from the properties below; leave them out if missing.\n\nList:\n${marks.lines.join('\n')}${facts.length ? `\n\nProperties:\n${facts.join('\n')}` : ''}`);
+        return tr(`\n\n**手账写法（只用下面这些）:**\n- 只能用清单里的写法，不要造新的纸片类型或类名。\n- 一篇最多 ${marks.max} 张纸片（> [!…]）。内容本来就是结论、原话金句、步骤、时间安排、对话或待办的，就放进对应的纸片；不是的不硬套。\n${condense ? '- 原话一个字不改，只挪位置、加小标题、包进纸片。只有时间线和对话纸片里，可以把一段原话压成一行，保留原来的关键词；压进纸片的段落不要再在正文里写一遍。\n' : '- 原话一个字不改，只挪位置、加小标题、包进纸片；时间线、对话里的每一行也用原话，不要缩写。\n'}- 原文已有的 <span class=…> 标注和纸片原样保留。\n- 不加圈重点、批注、贴纸这类表达个人判断的标注。\n- 正文不要重复属性里已有的标题、摘要和标签。\n- 频道、日期、链接这类信息只用下面属性里有的，没有就不放。\n\n清单：\n${marks.lines.join('\n')}${facts.length ? `\n\n属性：\n${facts.join('\n')}` : ''}`,
+            `\n\n**Notebook marks (use only these):**\n- Use only the marks listed; do not invent callout types or class names.\n- At most ${marks.max} cards (> [!…]) per note. Put conclusions, memorable quotes, steps, schedules, conversations and to-dos into their card; do not force anything else into one.\n${condense ? '- Keep the original wording; only move it, add subheadings and wrap it in cards. Only inside timeline and chat cards may a passage be condensed to one line, keeping its key words; do not repeat a condensed passage elsewhere in the text.\n' : '- Keep the original wording; only move it, add subheadings and wrap it in cards. Timeline and chat lines use the original words too; do not shorten them.\n'}- Keep every <span class=…> mark and card already in the text as it is.\n- Do not add circles, margin notes or stickers; those carry the writer's own judgement.\n- Do not repeat the title, summary or tags that are already in the properties.\n- Take channel, date or link details only from the properties below; leave them out if missing.\n\nList:\n${marks.lines.join('\n')}${facts.length ? `\n\nProperties:\n${facts.join('\n')}` : ''}`);
     }
 
     // 模型给回来的正文按清单把关：清单外的纸片和类名去掉，超出张数的拆回普通引用，去掉和属性重复的行，数一数原话有没有被改
