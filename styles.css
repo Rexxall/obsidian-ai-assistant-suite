@@ -2858,18 +2858,32 @@
 .assistant-settings-morning .ai-assistant-connection-check.is-fail { color: var(--ap-bad); }
 .assistant-settings-morning .ai-assistant-connection-check.is-skip { color: var(--ap-label-3); }
 
-/* 本篇建议：一块一块应用，底部固定“全部接受” */
+/* 本篇建议：一块一行，点开再改；底部固定“全部接受” */
 .mist-sidebar { overflow: clip; }
-.mist-sidebar .mist-part-head.is-card { align-self: stretch; align-items: flex-start; }
-.mist-sidebar .mist-part-copy { display: flex; flex-direction: column; min-width: 0; flex: 1; }
-.mist-sidebar .mist-part-title { color: var(--mist-ink); font-weight: 600; }
-.mist-sidebar .mist-part-copy small { overflow-wrap: anywhere; }
-.mist-sidebar .mist-part-acts { display: flex; align-items: center; gap: 12px; flex-shrink: 0; }
-.mist-sidebar .mist-apply { background: var(--mist-ink); color: var(--mist-side); padding: 3px 13px; }
-.mist-sidebar .mist-apply:hover:not(:disabled) { filter: brightness(1.12); }
-.mist-sidebar .mist-apply:active:not(:disabled) { transform: scale(.96); }
-.mist-sidebar .mist-part.is-skipped .mist-part-title { color: var(--mist-mute); font-weight: 400; }
-.mist-sidebar .mist-checks { display: flex; flex-direction: column; gap: 4px; }
+.mist-sidebar .mist-rows { display: flex; flex-direction: column; border-radius: 14px; background: var(--mist-paper); box-shadow: var(--mist-shadow); overflow: hidden; }
+.mist-sidebar .mist-row + .mist-row { border-top: 1px solid var(--mist-hair); }
+.mist-sidebar .mist-row-line { display: flex; align-items: center; gap: 8px; padding: 0 12px 0 0; min-height: 44px; }
+.mist-sidebar .mist-rows .mist-row-line > button.mist-row-main { flex: 1; min-width: 0; display: flex; align-items: center; justify-content: flex-start; gap: 9px; padding: 10px 0 10px 12px;
+  background: transparent; border: 0; border-radius: 0; box-shadow: none; color: var(--mist-ink); text-align: left; }
+.mist-sidebar .mist-rows .mist-row-line > button.mist-row-main:disabled { opacity: 1; cursor: default; }
+.mist-sidebar .mist-row-title { flex-shrink: 0; font-weight: 600; font-size: 13px; }
+.mist-sidebar .mist-row-sum { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--mist-mute); font-size: 12px; }
+.mist-sidebar .mist-row-sum.is-warn { color: var(--mist-clay); }
+.mist-sidebar .mist-rows .mist-row-line > button.mist-row-apply { flex-shrink: 0; border: 0; border-radius: 999px; padding: 3px 12px; font-size: 12px;
+  background: transparent; color: var(--mist-ink); box-shadow: inset 0 0 0 1px var(--mist-hair); }
+.mist-sidebar .mist-rows .mist-row-line > button.mist-row-apply:hover:not(:disabled) { background: var(--mist-sage-soft); box-shadow: none; }
+.mist-sidebar .mist-rows .mist-row-line > button.mist-row-apply:active:not(:disabled) { transform: scale(.96); }
+.mist-sidebar .mist-rows .mist-row-line > button.mist-link { flex-shrink: 0; background: transparent; box-shadow: none; color: var(--mist-mute); font-size: 12px; }
+.mist-sidebar .mist-row-more { flex-shrink: 0; color: var(--mist-mute); font-size: 16px; line-height: 1; padding: 0 4px; }
+.mist-sidebar .mist-row.is-applied .mist-row-title, .mist-sidebar .mist-row.is-skipped .mist-row-title { color: var(--mist-mute); font-weight: 500; }
+.mist-sidebar .mist-row.is-applied .mist-tick { background: var(--mist-sage); box-shadow: none; }
+.mist-sidebar .mist-row.is-open { background: color-mix(in srgb, var(--mist-sage-soft) 45%, transparent); }
+.mist-sidebar .mist-row-body { display: flex; flex-direction: column; gap: 8px; padding: 0 14px 12px 36px; }
+.mist-sidebar .mist-row-body .mist-rename { margin-top: 0; }
+.mist-sidebar .mist-row-body .mist-body-note { padding: 8px 11px; }
+.mist-sidebar .mist-rows button.mist-link.mist-row-skip { align-self: flex-start; background: transparent; box-shadow: none; color: var(--mist-mute); font-size: 12px; }
+.mist-sidebar .mist-caption.is-warn { color: var(--mist-clay); }
 .mist-sidebar .mist-foot.is-sticky { position: sticky; bottom: 0; z-index: 1; margin-inline: calc(-1 * var(--ap-s4, 18px)); padding: 14px var(--ap-s4, 18px) 40px;
   background: linear-gradient(to bottom, transparent, var(--mist-side) 28%); }
-@media (prefers-reduced-motion: reduce) { .mist-sidebar .mist-apply:active:not(:disabled) { transform: none; } }
+.mist-sidebar .mist-rows :is(button, select, textarea, input):focus-visible { outline: 2px solid var(--mist-sage); outline-offset: -2px; }
+@media (prefers-reduced-motion: reduce) { .mist-sidebar .mist-rows .mist-row-line > button.mist-row-apply:active:not(:disabled) { transform: none; } }

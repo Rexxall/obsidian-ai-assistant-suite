@@ -45,11 +45,13 @@ test('a custom action for a picked note cannot inherit another editor selection'
 
 test('sidebar puts five functions directly on the main surface and keeps secondary entries in More',()=>{const f=fixture();assert.equal(f.all().filter(e=>e.attrs['data-action']).length,5);assert.equal(f.all().filter(e=>e.options.cls==='mist-view').length,2);assert.ok(!f.all().some(e=>['at-art','at-document','aw-presets','aw-orb'].includes(e.options.cls)));const more=f.all().find(e=>e.options.cls==='clickable-icon mist-more');assert.ok(more);assert.equal(more.attrs['aria-label'],'更多');assert.ok(f.v.mistSecondaryEntries().some(([label])=>label==='设置'));assert.ok(!f.all().some(e=>e.options.cls==='mist-links mist-quiet'));});
 
-test('note review expands metadata and tags together and retains edits across render',()=>{
+const openRow=(f,key)=>{const part=f.all().find(e=>e.attrs['data-part']===key);const all=e=>[e,...e.children.flatMap(all)];all(part).find(e=>e.options.cls==='mist-row-main').onclick();};
+test('rows start folded, open one at a time for editing, and keep edits across render',()=>{
  const file={basename:'Note',path:'Note.md',extension:'md',parent:{path:'/'}};const f=fixture(file);
  f.v.addTask({id:'combined',type:'one-click',status:'displaying',content:{file,originalContent:'Body',suggestions:{meta:{title:'Suggested',summary:'Summary',tldr:'Short'},tags:[{final:'topic'}]}}});
- assert.ok(f.all().some(e=>e.options.cls==='mist-paper'));
- assert.ok(f.all().some(e=>e.options.cls==='mist-chips'));
+ assert.ok(!f.all().some(e=>e.tag==='textarea'));assert.ok(!f.all().some(e=>e.options.cls==='mist-chips'));
+ openRow(f,'tags');assert.ok(f.all().some(e=>e.options.cls==='mist-chips'));
+ openRow(f,'meta');assert.ok(!f.all().some(e=>e.options.cls==='mist-chips'));
  const title=f.all().find(e=>e.tag==='textarea');title.value='My title';title.oninput();f.v.render();assert.equal(f.all().find(e=>e.tag==='textarea').value,'My title');
  assert.ok(f.all().find(e=>e.tag==='button'&&/^全部接受 · \d+ 项$/.test(e.options.text||'')));
  f.v.workbenchPage='queue';f.v.render();assert.equal(f.all().filter(e=>e.options.cls==='mist-queue-row').length,1);
@@ -72,13 +74,13 @@ test('the one-line request reaches the AI call and the pills toggle what will be
 test('a tag tapped off stays out of the draft and the count follows',()=>{
  const file={basename:'Note',path:'Note.md',extension:'md',parent:{path:'/'}};const f=fixture(file);
  f.v.addTask({id:'combined',type:'one-click',status:'displaying',content:{file,originalContent:'Body',suggestions:{tags:[{final:'keep'},{final:'drop'}]}}});
- f.all().find(e=>e.tag==='button'&&e.options.text==='#drop').onclick();
+ openRow(f,'tags');f.all().find(e=>e.tag==='button'&&e.options.text==='#drop').onclick();
  const group=f.v.getNoteGroups()[0];assert.deepEqual(f.v.noteDraft(group).tags,['keep']);
  assert.ok(f.all().some(e=>e.tag==='button'&&e.options.text==='#drop'&&e.options.cls==='mist-chip is-off'));
  assert.ok(f.button('全部接受 · 1 项'));
 });
 
-test('each part has its own apply and skip, applied parts fold to one line, and accept all counts what is left',async()=>{
+test('each part is one row with one apply button, applied rows fold with undo, applied parts fold to one line, and accept all counts what is left',async()=>{
  const file={basename:'Trip',name:'Trip.md',path:'Notes/Trip.md',extension:'md',parent:{path:'Notes'}};const f=fixture(file);
  const calls=[];f.v.plugin.setNoteParts=async(group,draft,next)=>{calls.push([...next]);draft.applied=[...next];};
  f.v.addTask({id:'s',type:'one-click',status:'displaying',content:{file,originalContent:'Body',suggestions:{meta:{title:'Trip',summary:'Three days'},tags:[{final:'travel'}],mover:[{path:'Travel/2026'}]}}});
@@ -89,7 +91,7 @@ test('each part has its own apply and skip, applied parts fold to one line, and 
  const inPart=(key,text)=>{const part=f.all().find(e=>e.attrs['data-part']===key);const all=e=>[e,...e.children.flatMap(all)];return all(part).find(e=>e.tag==='button'&&e.options.text===text);};
  await inPart('tags','应用').onclick();assert.deepEqual(calls.at(-1),['tags']);
  assert.ok(inPart('tags','撤销'));assert.ok(!f.all().some(e=>e.options.cls==='mist-chips'));
- inPart('folder','跳过').onclick();assert.ok(inPart('folder','恢复'));
+ assert.ok(!inPart('folder','跳过'));openRow(f,'folder');inPart('folder','这块不要').onclick();assert.ok(inPart('folder','恢复'));
  assert.ok(f.button('全部接受 · 1 项'));
  await f.button('全部接受 · 1 项').onclick();assert.deepEqual(calls.at(-1),['tags','meta']);
  await inPart('tags','撤销').onclick();assert.deepEqual(calls.at(-1),['meta']);

@@ -1050,128 +1050,120 @@ class AssistantView extends ItemView {
             await this.plugin.setNoteParts(group, draft, next);
             if (!wasDone && this.noteStatus(group) === '已确认') this.afterNoteApplied(group);
         });
-        // 每块：标题、一句改了什么、应用 / 跳过；应用后收成一行，可以撤销
-        const card = (key, title, summary, doneText, canApply = true) => {
+        // 每块一行：勾、名字、一句改了什么、一个按钮。点这一行才展开编辑，一次只开一行。
+        const openKey = this.openPart?.path === group.file.path ? this.openPart.key : '';
+        const list = body.createDiv({ cls: 'mist-rows', attr: { role: 'list' } });
+        const row = (key, title, summary, doneText, canApply = true, warn = false) => {
             const applied = draft.applied.includes(key), skipped = draft.skipped.includes(key);
-            const el = body.createDiv({ cls: `mist-part${applied ? ' is-applied' : skipped ? ' is-skipped' : ''}`, attr: { 'data-part': key } });
-            const head = el.createDiv({ cls: 'mist-part-head is-static is-card' });
-            head.createSpan({ text: applied ? '✓' : '', cls: 'mist-tick', attr: { 'aria-hidden': 'true' } });
-            const copy = head.createDiv({ cls: 'mist-part-copy' });
-            copy.createSpan({ text: title, cls: 'mist-part-title' });
-            const line = applied ? doneText : skipped ? tr('已跳过', 'Skipped') : summary;
-            if (line) copy.createEl('small', { text: line });
+            const open = !applied && !skipped && !wholeDone && openKey === key;
+            const el = list.createDiv({ cls: `mist-row${applied ? ' is-applied' : skipped ? ' is-skipped' : ''}${open ? ' is-open' : ''}`, attr: { role: 'listitem', 'data-part': key } });
+            const line = el.createDiv({ cls: 'mist-row-line' });
+            const main = line.createEl('button', { cls: 'mist-row-main', attr: { 'aria-expanded': String(open) } });
+            main.createSpan({ text: applied ? '✓' : '', cls: 'mist-tick', attr: { 'aria-hidden': 'true' } });
+            main.createSpan({ text: title, cls: 'mist-row-title' });
+            main.createSpan({ text: applied ? doneText : skipped ? tr('不要', 'Left out') : summary, cls: warn && !applied && !skipped ? 'mist-row-sum is-warn' : 'mist-row-sum' });
+            main.disabled = applied || skipped || wholeDone;
+            main.onclick = () => { this.openPart = open ? null : { path: group.file.path, key }; this.render(); };
             if (wholeDone) return null;
-            const acts = head.createDiv({ cls: 'mist-part-acts' });
-            if (applied) {
-                const undo = acts.createEl('button', { text: tr('撤销', 'Undo'), cls: 'mist-link', attr: { 'aria-label': tr(`撤销${title}`, `Undo ${title}`) } });
-                undo.disabled = busy;
-                undo.onclick = () => setParts(draft.applied.filter(k => k !== key));
-                return null;
-            }
-            if (skipped) {
-                const back = acts.createEl('button', { text: tr('恢复', 'Restore'), cls: 'mist-link', attr: { 'aria-label': tr(`恢复${title}`, `Restore ${title}`) } });
-                back.disabled = busy;
-                back.onclick = () => { draft.skipped = draft.skipped.filter(k => k !== key); this.render(); };
-                return null;
-            }
-            const skip = acts.createEl('button', { text: tr('跳过', 'Skip'), cls: 'mist-link', attr: { 'aria-label': tr(`跳过${title}`, `Skip ${title}`) } });
-            skip.disabled = busy;
-            skip.onclick = () => { draft.skipped = [...draft.skipped, key]; this.render(); };
-            const apply = acts.createEl('button', { text: tr('应用', 'Apply'), cls: 'mist-chip mist-apply', attr: { 'aria-label': tr(`应用${title}`, `Apply ${title}`) } });
-            apply.disabled = busy || !canApply;
-            apply.onclick = () => setParts([...draft.applied, key]);
-            return el;
+            const act = (text, cls, label, fn) => { const btn = line.createEl('button', { text, cls, attr: { 'aria-label': label } }); btn.disabled = busy; btn.onclick = fn; return btn; };
+            if (applied) { act(tr('撤销', 'Undo'), 'mist-link', tr(`撤销${title}`, `Undo ${title}`), () => setParts(draft.applied.filter(k => k !== key))); return null; }
+            if (skipped) { act(tr('恢复', 'Restore'), 'mist-link', tr(`恢复${title}`, `Restore ${title}`), () => { draft.skipped = draft.skipped.filter(k => k !== key); this.render(); }); return null; }
+            if (canApply) act(tr('应用', 'Apply'), 'mist-row-apply', tr(`应用${title}`, `Apply ${title}`), () => setParts([...draft.applied, key]));
+            else line.createSpan({ text: '›', cls: 'mist-row-more', attr: { 'aria-hidden': 'true' } });
+            if (!open) return null;
+            const panel = el.createDiv({ cls: 'mist-row-body' });
+            // 编辑区在前，“这块不要”放最后
+            const tail = () => { const no = panel.createEl('button', { text: tr('这块不要', 'Leave this out'), cls: 'mist-link mist-row-skip' }); no.disabled = busy; no.onclick = () => { draft.skipped = [...draft.skipped, key]; this.openPart = null; this.render(); }; };
+            return { panel, tail };
         };
 
         if (parts.meta) {
             const fields = [['title', tr('标题', 'Title')], ['summary', tr('摘要', 'Summary')], ['tldr', tr('一句话总结', 'One-line summary')]];
             const changed = fields.filter(([k]) => String(draft.meta[k] ?? '').trim() && String(draft.meta[k]).trim() !== String(fm[k] ?? '').trim()).length;
-            const el = card('meta', tr('标题与摘要', 'Title & summary'), tr(`改 ${changed} 项${draft.rename ? ' · 文件也改名' : ''}`, `${changed} changed${draft.rename ? ' · file renamed too' : ''}`),
+            const r = row('meta', tr('标题与摘要', 'Title & summary'), tr(`改 ${changed} 项${draft.rename ? ' · 文件也改名' : ''}`, `${changed} changed${draft.rename ? ' · file renamed too' : ''}`),
                 tr(`已写入${draft.rename ? ' · 文件已改名' : ''}`, `Written${draft.rename ? ' · file renamed' : ''}`), changed > 0 || !!draft.rename);
-            if (el) {
-                const paper = el.createDiv({ cls: 'mist-paper' });
+            if (r) {
                 for (const [key, label] of fields) {
-                    const input = paper.createEl('textarea', { cls: `mist-edit mist-edit-${key}`, attr: { rows: key === 'title' ? '1' : '2', 'aria-label': label, placeholder: label } });
+                    const input = r.panel.createEl('textarea', { cls: `mist-edit mist-edit-${key}`, attr: { rows: key === 'title' ? '1' : '2', 'aria-label': label, placeholder: label } });
                     input.value = draft.meta[key] || '';
                     input.oninput = () => { draft.meta[key] = input.value; };
                     input.onchange = () => this.render();
                 }
-                const rename = paper.createEl('label', { cls: 'mist-rename' });
+                const rename = r.panel.createEl('label', { cls: 'mist-rename' });
                 const check = rename.createEl('input', { type: 'checkbox' }); check.checked = draft.rename;
                 rename.createSpan({ text: tr('同时用标题重命名文件', 'Also rename the file to the title') });
                 check.onchange = () => { draft.rename = check.checked; this.render(); };
+                r.tail();
             }
         }
         if (parts.defaults) {
             const text = parts.defaults.map(([k, v]) => `${k}: ${typeof v === 'object' ? JSON.stringify(v) : v}`).join(' · ');
-            card('defaults', tr('补上属性', 'Add properties'), text, tr('已补上', 'Added'));
+            row('defaults', tr('补上属性', 'Add properties'), text, tr('已补上', 'Added'))?.tail();
         }
         if (parts.tags) {
-            const el = card('tags', tr('标签', 'Tags'), draft.tags.length ? tr(`加 ${draft.tags.length} 个 · 点一下去掉`, `${draft.tags.length} to add · tap to remove`) : tr('都去掉了', 'All removed'),
+            const first = draft.tags[0];
+            const r = row('tags', tr('标签', 'Tags'), first ? `${first}${draft.tags.length > 1 ? ` +${draft.tags.length - 1}` : ''}` : tr('都去掉了', 'All removed'),
                 tr(`已加 ${draft.tags.length} 个`, `${draft.tags.length} added`), draft.tags.length > 0);
-            if (el) {
-                const chips = el.createDiv({ cls: 'mist-chips' });
+            if (r) {
+                const chips = r.panel.createDiv({ cls: 'mist-chips' });
                 for (const tag of suggestions.tags) {
                     const value = tag.final || tag.display || tag;
                     const kept = draft.tags.includes(value);
                     const chip = chips.createEl('button', { text: `#${value}`, cls: kept ? 'mist-chip' : 'mist-chip is-off', attr: { 'aria-pressed': String(kept) } });
                     chip.onclick = () => { draft.tags = kept ? draft.tags.filter(t => t !== value) : [...draft.tags, value]; this.render(); };
                 }
+                r.tail();
             }
         }
-        if (suggestions.mover?.length) {
+        if (parts.folder) {
             const isNew = p => !this.plugin.app.vault.getAbstractFileByPath(p)?.children;
-            const el = parts.folder ? card('folder', tr('归档', 'Folder'), isNew(draft.folder) ? tr('会新建文件夹', 'Creates a new folder') : '', tr(`已移到 ${draft.folder}`, `Moved to ${draft.folder}`))
-                : (draft.applied.length || wholeDone ? null : body.createDiv({ cls: 'mist-part' }));
-            if (el) {
-                if (!parts.folder) el.createDiv({ cls: 'mist-part-head is-static' }).createSpan({ text: tr('归档 · 已经在建议的位置', 'Folder · already where suggested'), cls: 'mist-part-title' });
-                const fromPath = draft.originalPath || group.file.path;
-                const path = el.createDiv({ cls: 'mist-path' });
-                path.createSpan({ text: `${fromPath.includes('/') ? fromPath.slice(0, fromPath.lastIndexOf('/')) : ''}/`, cls: 'mist-from' });
-                path.createSpan({ text: '→', attr: { 'aria-hidden': 'true' } });
-                path.createSpan({ text: draft.folder, cls: 'mist-to' });
-                if (draft.folder && isNew(draft.folder)) path.createSpan({ text: tr('新文件夹', 'New folder'), cls: 'mist-new' });
+            const r = row('folder', tr('归档', 'Folder'), `→ ${draft.folder}${isNew(draft.folder) ? tr(' · 新建', ' · new') : ''}`, tr(`已移到 ${draft.folder}`, `Moved to ${draft.folder}`));
+            if (r) {
                 const alts = suggestions.mover.map(v => v.path).filter(p => p && p !== draft.folder);
                 if (alts.length) {
-                    const row = el.createDiv({ cls: 'mist-alts' });
-                    row.createSpan({ text: tr('也可以放：', 'Or:') });
+                    const altRow = r.panel.createDiv({ cls: 'mist-alts' });
+                    altRow.createSpan({ text: tr('也可以放：', 'Or:') });
                     for (const p of alts) {
-                        const alt = row.createEl('button', { text: p, cls: 'mist-alt' });
+                        const alt = altRow.createEl('button', { text: p, cls: 'mist-alt' });
                         if (isNew(p)) alt.createSpan({ text: tr(' · 新', ' · new'), cls: 'mist-alt-new' });
                         alt.onclick = () => { draft.folder = p; this.render(); };
                     }
                 }
-                const other = el.createEl('select', { cls: 'mist-select', attr: { 'aria-label': tr('其他文件夹', 'Other folder') } });
+                const other = r.panel.createEl('select', { cls: 'mist-select', attr: { 'aria-label': tr('其他文件夹', 'Other folder') } });
                 other.createEl('option', { value: '', text: tr('其他文件夹…', 'Other folder…') });
                 for (const f of this.plugin.app.vault.getAllLoadedFiles().filter(f => f.children)) other.createEl('option', { value: f.path, text: f.path });
                 other.onchange = () => { if (other.value) { draft.folder = other.value; this.render(); } };
+                r.tail();
             }
         }
         if (parts.style) {
-            const chosen = parts.style.filter(p => draft.style?.[p.key]).length;
-            const el = card('style', tr('样式', 'Style'), tr(`勾了 ${chosen} / ${parts.style.length}`, `${chosen} of ${parts.style.length} ticked`), tr(`已加 ${chosen} 个`, `${chosen} added`), chosen > 0);
-            if (el) {
-                const list = el.createDiv({ cls: 'mist-checks' });
+            const chosen = parts.style.filter(p => draft.style?.[p.key]);
+            const name = p => p.key === 'sub' ? tr('副题', 'Subtitle') : p.key === 'card' ? tr('卡片', 'Card') : tr('旧纸', 'Old paper');
+            const r = row('style', tr('样式', 'Style'), chosen.length ? chosen.map(name).join(' · ') : tr(`${parts.style.map(name).join(' · ')} · 没勾`, `${parts.style.map(name).join(' · ')} · none ticked`),
+                tr(`已加 ${chosen.length} 个`, `${chosen.length} added`), chosen.length > 0);
+            if (r) {
                 for (const p of parts.style) {
-                    const row = list.createEl('label', { cls: 'mist-rename' });
-                    const check = row.createEl('input', { type: 'checkbox' }); check.checked = !!draft.style?.[p.key];
-                    row.createSpan({ text: p.key === 'sub' ? tr(`副题：${p.text}`, `Subtitle: ${p.text}`) : p.key === 'card' ? tr(`卡片 ${p.cls}`, `Card ${p.cls}`) : tr(`旧纸 ${p.cls} · ${p.days} 天`, `Old paper ${p.cls} · ${p.days} days`) });
+                    const item = r.panel.createEl('label', { cls: 'mist-rename' });
+                    const check = item.createEl('input', { type: 'checkbox' }); check.checked = !!draft.style?.[p.key];
+                    item.createSpan({ text: p.key === 'sub' ? tr(`副题：${p.text}`, `Subtitle: ${p.text}`) : p.key === 'card' ? tr(`卡片 ${p.cls}`, `Card ${p.cls}`) : tr(`旧纸 ${p.cls} · ${p.days} 天`, `Old paper ${p.cls} · ${p.days} days`) });
                     check.onchange = () => { draft.style = { ...(draft.style || {}), [p.key]: check.checked }; this.render(); };
                 }
+                r.tail();
             }
         }
         const diffs = group.tasks.filter(t => t.type === 'diff-preview' && !t.content.applied);
         if (parts.body) {
             const chosenDiff = diffs.find(t => t.id === draft.diffId);
-            let stat = '';
+            const shrink = this.plugin.shrinkWarning(chosenDiff);
+            let stat = tr('先选一个版本', 'Choose a version first');
             if (chosenDiff) {
                 const hunks = chosenDiff.content.reviewHunks || this.plugin.buildReviewHunks(chosenDiff.content.originalContent, chosenDiff.content.proposedContent);
-                const count = t => (String(t).match(/\n/g) || []).length + (t && !String(t).endsWith('\n') ? 1 : 0);
-                stat = tr(`${hunks.length} 处改动 · +${hunks.reduce((n, h) => n + count(h.after), 0)} −${hunks.reduce((n, h) => n + count(h.before), 0)} 行`, `${hunks.length} changes · +${hunks.reduce((n, h) => n + count(h.after), 0)} −${hunks.reduce((n, h) => n + count(h.before), 0)} lines`);
+                const lost = Math.round((1 - String(chosenDiff.content.proposedContent || '').length / Math.max(1, String(chosenDiff.content.originalContent || '').length)) * 100);
+                stat = tr(`${hunks.length} 处改动${shrink ? ` · 短了 ${lost}%` : ''}`, `${hunks.length} changes${shrink ? ` · ${lost}% shorter` : ''}`);
             }
-            const el = card('body', tr('正文', 'Text'), chosenDiff ? stat : tr('先选一个版本', 'Choose a version first'), tr('已替换', 'Replaced'), !!chosenDiff);
-            if (el) {
-                const note = el.createDiv({ cls: 'mist-body-note' });
+            const r = row('body', tr('正文', 'Text'), stat, tr('已替换', 'Replaced'), !!chosenDiff, !!shrink);
+            if (r) {
+                const note = r.panel.createDiv({ cls: 'mist-body-note' });
                 if (diffs.length > 1 || !draft.diffId) {
                     const select = note.createEl('select', { cls: 'mist-select', attr: { 'aria-label': tr('选择正文版本', 'Choose a text version') } });
                     select.createEl('option', { value: '', text: tr('保留当前正文', 'Keep current text') });
@@ -1183,12 +1175,12 @@ class AssistantView extends ItemView {
                 }
                 const look = note.createEl('button', { text: tr('对比 ↗', 'Compare ↗'), cls: 'mist-link is-strong', attr: { 'aria-label': tr('在新标签页对比整理前后', 'Compare before and after in a new tab') } });
                 look.onclick = () => { if (chosenDiff) this.plugin.openNotePreview(chosenDiff); else new Notice(tr('先选择一个正文版本。', 'Choose a text version first.')); };
-                const shrink = this.plugin.shrinkWarning(chosenDiff);
-                if (shrink) el.createDiv({ text: shrink, cls: 'assistant-shrink-warning', attr: { role: 'alert' } });
+                if (shrink) r.panel.createDiv({ text: shrink, cls: 'mist-caption is-warn', attr: { role: 'alert' } });
+                r.tail();
             }
         }
         const error = group.tasks.at(-1)?.type === 'error' ? group.tasks.at(-1) : null;
-        if (!error && !wholeDone && !keys.length && !suggestions.mover?.length) {
+        if (!error && !wholeDone && !keys.length) {
             this.renderMistEmpty(body, tr('这次没有建议', 'No suggestions this time'), tr('AI 认为这篇不需要改，原文没有改动。', 'The AI found nothing to change; the note is untouched.'),
                 [tr('换个功能再试', 'Try other actions'), () => { this.workbenchPage = 'prepare'; this.render(); }]);
         }
@@ -1212,11 +1204,8 @@ class AssistantView extends ItemView {
             return;
         }
         if (!keys.length) return;
-        if (draft.applied.length) {
-            foot.createEl('button', { text: tr('撤销这篇', 'Undo this note'), cls: 'mist-link' }).onclick = () => run(async () => { await this.plugin.setNoteParts(group, draft, []); draft.skipped = []; });
-        } else {
-            foot.createEl('button', { text: tr('全部跳过', 'Skip all'), cls: 'mist-link' }).onclick = () => { draft.skipped = [...keys]; this.render(); };
-        }
+        if (draft.applied.length) foot.createEl('button', { text: tr('撤销这篇', 'Undo this note'), cls: 'mist-link' }).onclick = () => run(async () => { await this.plugin.setNoteParts(group, draft, []); draft.skipped = []; });
+        else foot.createSpan();
         const all = foot.createEl('button', { text: tr(`全部接受 · ${plan.accept.length} 项`, `Accept all · ${plan.accept.length}`), cls: 'mist-primary' });
         all.disabled = busy || !plan.accept.length;
         all.onclick = () => this.acceptAllNote(group, draft, run);
