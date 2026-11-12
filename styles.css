@@ -2857,3 +2857,19 @@
 .assistant-settings-morning .ai-assistant-connection-check.is-ok .ai-assistant-connection-check-icon { color: var(--ap-good); }
 .assistant-settings-morning .ai-assistant-connection-check.is-fail { color: var(--ap-bad); }
 .assistant-settings-morning .ai-assistant-connection-check.is-skip { color: var(--ap-label-3); }
+
+/* 本篇建议：一块一块应用，底部固定“全部接受” */
+.mist-sidebar { overflow: clip; }
+.mist-sidebar .mist-part-head.is-card { align-self: stretch; align-items: flex-start; }
+.mist-sidebar .mist-part-copy { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.mist-sidebar .mist-part-title { color: var(--mist-ink); font-weight: 600; }
+.mist-sidebar .mist-part-copy small { overflow-wrap: anywhere; }
+.mist-sidebar .mist-part-acts { display: flex; align-items: center; gap: 12px; flex-shrink: 0; }
+.mist-sidebar .mist-apply { background: var(--mist-ink); color: var(--mist-side); padding: 3px 13px; }
+.mist-sidebar .mist-apply:hover:not(:disabled) { filter: brightness(1.12); }
+.mist-sidebar .mist-apply:active:not(:disabled) { transform: scale(.96); }
+.mist-sidebar .mist-part.is-skipped .mist-part-title { color: var(--mist-mute); font-weight: 400; }
+.mist-sidebar .mist-checks { display: flex; flex-direction: column; gap: 4px; }
+.mist-sidebar .mist-foot.is-sticky { position: sticky; bottom: 0; z-index: 1; margin-inline: calc(-1 * var(--ap-s4, 18px)); padding: 14px var(--ap-s4, 18px) 40px;
+  background: linear-gradient(to bottom, transparent, var(--mist-side) 28%); }
+@media (prefers-reduced-motion: reduce) { .mist-sidebar .mist-apply:active:not(:disabled) { transform: none; } }

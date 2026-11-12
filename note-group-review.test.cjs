@@ -27,3 +27,24 @@ test('disabled sections remain untouched and empty confirmation produces no snap
 test('global rollback routes a grouped snapshot through content and path restoration',async()=>{
  const f=fixture(),before=f.text;await f.p.applyNoteGroup(f.group,f.draft);await f.p.rollbackLastChange();assert.equal(f.text,before);assert.equal(f.file.path,'Inbox/note.md');
 });
+
+// 面板里一块一块确认
+const partsDraft=f=>{const d={...f.draft,applied:[],skipped:[],originalPath:f.file.path};f.task.content.suggestions={meta:d.meta,tags:[{final:'added'}],mover:[{path:'Library'}]};f.task.content.noteDraft=d;return d;};
+test('parts can be applied in any order and each one undone; the note always matches the parts that are on',async()=>{
+ const f=fixture(),before=f.text,d=partsDraft(f);
+ await f.p.setNoteParts(f.group,d,['tags']);assert.match(f.text,/"tags":\["existing","added"\]/);assert.doesNotMatch(f.text,/Updated/);assert.equal(f.file.path,'Inbox/note.md');
+ await f.p.setNoteParts(f.group,d,['tags','folder']);assert.equal(f.file.path,'Library/note.md');
+ await f.p.setNoteParts(f.group,d,['tags','folder','meta']);assert.equal(f.file.path,'Library/Updated.md');assert.match(f.text,/"title":"Updated"/);
+ assert.equal(f.task.content.noteApplied,true);assert.equal(f.p.settings.rollbackHistory.length,1);
+ await f.p.setNoteParts(f.group,d,['folder','meta']);assert.doesNotMatch(f.text,/"added"/);assert.match(f.text,/"title":"Updated"/);assert.equal(f.task.content.noteApplied,false);
+ await f.p.setNoteParts(f.group,d,[]);assert.equal(f.text,before);assert.equal(f.file.path,'Inbox/note.md');assert.equal(f.p.settings.rollbackHistory.length,0);
+});
+test('a part applied after an outside edit is refused and nothing is written',async()=>{
+ const f=fixture(),d=partsDraft(f);await f.p.setNoteParts(f.group,d,['tags']);f.text+=' user';const edited=f.text;
+ await assert.rejects(f.p.setNoteParts(f.group,d,['tags','meta']),/新修改/);assert.equal(f.text,edited);assert.deepEqual([...d.applied],['tags']);
+});
+test('a skipped part counts as decided, and the one undo record restores the original text and place',async()=>{
+ const f=fixture(),before=f.text,d=partsDraft(f);d.skipped=['folder'];
+ await f.p.setNoteParts(f.group,d,['meta','tags']);assert.equal(f.task.content.noteApplied,true);assert.equal(f.file.path,'Inbox/Updated.md');
+ f.p.assistantSession={tasks:[f.task]};await f.p.rollbackLastChange();assert.equal(f.text,before);assert.equal(f.file.path,'Inbox/note.md');assert.deepEqual([...d.applied],[]);
+});

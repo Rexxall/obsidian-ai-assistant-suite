@@ -4,8 +4,9 @@ class El {
  createEl(t,o={}){let e=new El(t,o);this.children.push(e);return e;} createDiv(o){return this.createEl('div',o);} createSpan(o){return this.createEl('span',o);} empty(){this.children=[];} addClass(){} toggleClass(){} setText(t){this.options.text=t;} setAttr(k,v){this.attrs[k]=v;} setAttribute(k,v){this.attrs[k]=v;} addEventListener(k,v){this.events[k]=v;}
 }
 function fixture(file={basename:'Example',path:'Example.md',extension:'md',parent:{path:'/'}}){
- const module={exports:{}};vm.runInNewContext(fs.readFileSync(__dirname+'/main.js','utf8')+'\nmodule.exports=AssistantView;',{module,console,require:()=>Object.fromEntries(['Plugin','Notice','PluginSettingTab','Setting','FuzzySuggestModal','Modal','ItemView','TFile'].map(k=>[k,class{}]))});
- let runArgs,resolve;const v=Object.create(module.exports.prototype);v.tasks=[];v.containerEl={children:[new El(),new El()]};v.plugin={settings:{oneClickProcessActions:{tagger:true},customActions:[]},app:{workspace:{getActiveFile:()=>file}},getRecentHistory:()=>[],hasUsableConfig:()=>true,runOneClickSmartProcess:(...a)=>{runArgs=a;return new Promise(r=>resolve=r);}};
+ const module={exports:{}};vm.runInNewContext(fs.readFileSync(__dirname+'/main.js','utf8')+'\nmodule.exports={View:AssistantView,Plugin:module.exports};',{module,console,require:()=>Object.fromEntries(['Plugin','Notice','PluginSettingTab','Setting','FuzzySuggestModal','Modal','ItemView','TFile'].map(k=>[k,class{}]))});
+ let runArgs,resolve;const v=Object.create(module.exports.View.prototype);v.tasks=[];v.containerEl={children:[new El(),new El()]};
+ v.plugin=Object.assign(Object.create(module.exports.Plugin.prototype),{settings:{oneClickProcessActions:{tagger:true},customActions:[]},app:{workspace:{getActiveFile:()=>file},vault:{getAbstractFileByPath:()=>null,getAllLoadedFiles:()=>[]}},getRecentHistory:()=>[],hasUsableConfig:()=>true,refreshAssistantViews:()=>{},activateView:async()=>{},runOneClickSmartProcess:(...a)=>{runArgs=a;return new Promise(r=>resolve=r);}});
  v.renderTask=(el,t)=>el.createEl('article',{text:t.id});v.render();
  const all=(e=v.containerEl.children[1])=>[e,...e.children.flatMap(all)];
  return {v,all,button:text=>all().find(e=>e.tag==='button'&&e.options.text===text),get args(){return runArgs;},finish:()=>resolve()};
@@ -50,7 +51,7 @@ test('note review expands metadata and tags together and retains edits across re
  assert.ok(f.all().some(e=>e.options.cls==='mist-paper'));
  assert.ok(f.all().some(e=>e.options.cls==='mist-chips'));
  const title=f.all().find(e=>e.tag==='textarea');title.value='My title';title.oninput();f.v.render();assert.equal(f.all().find(e=>e.tag==='textarea').value,'My title');
- assert.ok(f.all().find(e=>e.tag==='button'&&/^审核并应用 · \d+ 项$/.test(e.options.text||'')));
+ assert.ok(f.all().find(e=>e.tag==='button'&&/^全部接受 · \d+ 项$/.test(e.options.text||'')));
  f.v.workbenchPage='queue';f.v.render();assert.equal(f.all().filter(e=>e.options.cls==='mist-queue-row').length,1);
 });
 test('existing non-note tools remain reachable when note results exist',()=>{
@@ -74,23 +75,22 @@ test('a tag tapped off stays out of the draft and the count follows',()=>{
  f.all().find(e=>e.tag==='button'&&e.options.text==='#drop').onclick();
  const group=f.v.getNoteGroups()[0];assert.deepEqual(f.v.noteDraft(group).tags,['keep']);
  assert.ok(f.all().some(e=>e.tag==='button'&&e.options.text==='#drop'&&e.options.cls==='mist-chip is-off'));
- assert.ok(f.button('审核并应用 · 1 项'));
+ assert.ok(f.button('全部接受 · 1 项'));
 });
 
-test('the review checklist lists tags, each changed property and the move, and counts what stays ticked',()=>{
- const module={exports:{}};class Modal{constructor(app){this.app=app;this.modalEl=new El();this.contentEl=new El();} close(){this.closed=true;}}
- vm.runInNewContext(fs.readFileSync(__dirname+'/main.js','utf8')+'\nmodule.exports={AssistantView,ReviewChecklistModal};',{module,console,require:()=>({...Object.fromEntries(['Plugin','Notice','PluginSettingTab','Setting','FuzzySuggestModal','ItemView','TFile'].map(k=>[k,class{}])),Modal})});
- const {AssistantView,ReviewChecklistModal}=module.exports;
- const file={basename:'Trip',name:'Trip.md',path:'Notes/Trip.md',extension:'md',parent:{path:'Notes'}};
- const v=Object.create(AssistantView.prototype);v.tasks=[{id:'s',type:'one-click',status:'displaying',content:{file,originalContent:'Body',suggestions:{meta:{title:'Trip',summary:'Three days'},tags:[{final:'travel'},{final:'kyoto'}],mover:[{path:'Travel/2026'}]}}}];v.render=()=>{};v.plugin={settings:{}};
- const app={metadataCache:{getFileCache:()=>({frontmatter:{title:'Trip'}})}};
- const group=v.getNoteGroups()[0],modal=new ReviewChecklistModal(app,v,group);modal.onOpen();
- const all=(e=modal.contentEl)=>[e,...e.children.flatMap(all)];
- const rows=()=>all().filter(e=>e.attrs.role==='checkbox');
- assert.deepEqual(rows().map(r=>r.children[1].children[0].options.text),['标签','属性 摘要','移到文件夹']);
- assert.deepEqual(rows().map(r=>r.children.at(-1).options.text),['新增 2','新增','移动']);
- assert.ok(all().some(e=>e.tag==='button'&&e.options.text==='应用 3 项'));
- rows()[1].onclick();assert.deepEqual([...v.noteDraft(group).skipMeta],['summary']);assert.equal(v.noteDraft(group).useMeta,false);
- rows()[2].onclick();assert.equal(v.noteDraft(group).useFolder,false);
- assert.ok(all().some(e=>e.tag==='button'&&e.options.text==='应用 1 项'));
+test('each part has its own apply and skip, applied parts fold to one line, and accept all counts what is left',async()=>{
+ const file={basename:'Trip',name:'Trip.md',path:'Notes/Trip.md',extension:'md',parent:{path:'Notes'}};const f=fixture(file);
+ const calls=[];f.v.plugin.setNoteParts=async(group,draft,next)=>{calls.push([...next]);draft.applied=[...next];};
+ f.v.addTask({id:'s',type:'one-click',status:'displaying',content:{file,originalContent:'Body',suggestions:{meta:{title:'Trip',summary:'Three days'},tags:[{final:'travel'}],mover:[{path:'Travel/2026'}]}}});
+ const parts=()=>f.all().filter(e=>e.attrs['data-part']).map(e=>e.attrs['data-part']);
+ assert.deepEqual(parts(),['meta','tags','folder']);
+ assert.ok(f.button('全部接受 · 3 项'));
+ assert.ok(!f.all().some(e=>e.options.cls==='modal-button-container'));
+ const inPart=(key,text)=>{const part=f.all().find(e=>e.attrs['data-part']===key);const all=e=>[e,...e.children.flatMap(all)];return all(part).find(e=>e.tag==='button'&&e.options.text===text);};
+ await inPart('tags','应用').onclick();assert.deepEqual(calls.at(-1),['tags']);
+ assert.ok(inPart('tags','撤销'));assert.ok(!f.all().some(e=>e.options.cls==='mist-chips'));
+ inPart('folder','跳过').onclick();assert.ok(inPart('folder','恢复'));
+ assert.ok(f.button('全部接受 · 1 项'));
+ await f.button('全部接受 · 1 项').onclick();assert.deepEqual(calls.at(-1),['tags','meta']);
+ await inPart('tags','撤销').onclick();assert.deepEqual(calls.at(-1),['meta']);
 });
