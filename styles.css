@@ -2887,3 +2887,6 @@
   background: linear-gradient(to bottom, transparent, var(--mist-side) 28%); }
 .mist-sidebar .mist-rows :is(button, select, textarea, input):focus-visible { outline: 2px solid var(--mist-sage); outline-offset: -2px; }
 @media (prefers-reduced-motion: reduce) { .mist-sidebar .mist-rows .mist-row-line > button.mist-row-apply:active:not(:disabled) { transform: none; } }
+.mist-sidebar .mist-row:not(.is-applied) .mist-tick { box-shadow: none; }
+.mist-sidebar .mist-rows .mist-tick { flex-shrink: 0; }
+.mist-sidebar .mist-rows .mist-chip { max-width: 100%; white-space: normal; overflow-wrap: anywhere; text-align: left; }

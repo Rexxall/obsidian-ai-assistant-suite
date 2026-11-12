@@ -1028,14 +1028,10 @@ class AssistantView extends ItemView {
         }
         const { parts, fm } = this.plugin.notePartsInfo(group, draft);
         const keys = Object.keys(parts);
-        const pending = keys.filter(k => !draft.applied.includes(k) && !draft.skipped.includes(k));
         const others = groups.filter(g => g !== group && this.noteStatus(g) === '待确认').length;
-        const state = body.createDiv({ cls: 'mist-state' });
-        const stateText = wholeDone || (done && !pending.length) ? tr('已确认 · 可以撤销', 'Confirmed · can be undone')
-            : status === '需重试' ? tr('生成失败 · 原文没有改动', 'Failed · the note was not changed')
-            : draft.applied.length ? tr(`已应用 ${draft.applied.length} 块 · 还剩 ${pending.length} 块`, `${draft.applied.length} applied · ${pending.length} left`)
-            : tr('建议已生成 · 原文还没改', 'Suggestions ready · the note is not changed yet');
-        state.createSpan({ text: stateText, cls: done || draft.applied.length ? 'mist-dot is-done' : 'mist-dot' });
+        // 每行自己说明状态（没勾、已应用、不要），这里只留行里看不出来的：生成失败、还有别的笔记在等
+        const state = status === '需重试' || others ? body.createDiv({ cls: 'mist-state' }) : null;
+        if (status === '需重试') state.createSpan({ text: tr('生成失败 · 原文没有改动', 'Failed · the note was not changed'), cls: 'mist-dot is-done' });
         if (others) state.createEl('button', { text: tr(`还有 ${others} 篇`, `${others} more`), cls: 'mist-link' }).onclick = () => { this.workbenchPage = 'queue'; this.render(); };
 
         const run = async (work) => {
@@ -1061,7 +1057,8 @@ class AssistantView extends ItemView {
             const main = line.createEl('button', { cls: 'mist-row-main', attr: { 'aria-expanded': String(open) } });
             main.createSpan({ text: applied ? '✓' : '', cls: 'mist-tick', attr: { 'aria-hidden': 'true' } });
             main.createSpan({ text: title, cls: 'mist-row-title' });
-            main.createSpan({ text: applied ? doneText : skipped ? tr('不要', 'Left out') : summary, cls: warn && !applied && !skipped ? 'mist-row-sum is-warn' : 'mist-row-sum' });
+            const sumText = applied ? doneText : skipped ? tr('不要', 'Left out') : summary;
+            main.createSpan({ text: sumText, cls: warn && !applied && !skipped ? 'mist-row-sum is-warn' : 'mist-row-sum', attr: { title: sumText } });
             main.disabled = applied || skipped || wholeDone;
             main.onclick = () => { this.openPart = open ? null : { path: group.file.path, key }; this.render(); };
             if (wholeDone) return null;
@@ -1117,7 +1114,8 @@ class AssistantView extends ItemView {
         }
         if (parts.folder) {
             const isNew = p => !this.plugin.app.vault.getAbstractFileByPath(p)?.children;
-            const r = row('folder', tr('归档', 'Folder'), `→ ${draft.folder}${isNew(draft.folder) ? tr(' · 新建', ' · new') : ''}`, tr(`已移到 ${draft.folder}`, `Moved to ${draft.folder}`));
+            const tailPath = draft.folder.split('/').length > 2 ? `…/${draft.folder.split('/').slice(-2).join('/')}` : draft.folder;
+            const r = row('folder', tr('归档', 'Folder'), `→ ${tailPath}${isNew(draft.folder) ? tr(' · 新建', ' · new') : ''}`, tr(`已移到 ${draft.folder}`, `Moved to ${draft.folder}`));
             if (r) {
                 const alts = suggestions.mover.map(v => v.path).filter(p => p && p !== draft.folder);
                 if (alts.length) {
@@ -4500,7 +4498,6 @@ class AiAssistantSuite extends Plugin {
                 originalContent: originalFullContent,
                 proposedContent
             });
-            new Notice(tr("结构优化预览已生成，请在侧栏确认后应用。", 'Structure preview ready. Confirm it in the sidebar to apply.'), 5000);
 
         } catch (error) {
             progressNotice?.hide();
