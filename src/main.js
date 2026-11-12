@@ -581,6 +581,7 @@ const DEFAULT_SETTINGS = {
     vaultConventions: '',
     structurizerMarks: '',
     structurizerMaxCards: 4,
+    structurizerCondense: false,
 
     // 样式类提议：类名由主题提供，插件不自带；留空就不提议。只在审核单里出现，默认不勾
     styleSubtitleClass: '',
@@ -5599,8 +5600,8 @@ Make sure the JSON is valid.`) + this.vaultRulesBlock(true) + this.languageHintB
         const marks = this.notebookMarks();
         if (!marks) return '';
         const facts = Object.entries(fm || {}).filter(([k, v]) => !['summary', 'tldr', 'tags', 'position'].includes(k) && ['string', 'number'].includes(typeof v) && String(v).length <= 120).map(([k, v]) => `${k}: ${v}`);
-        return tr(`\n\n**手账写法（只用下面这些）:**\n- 只能用清单里的写法，不要造新的纸片类型或类名。\n- 一篇最多 ${marks.max} 张纸片（> [!…]）。内容本来就是结论、原话金句、步骤、时间安排、对话或待办的，就放进对应的纸片；不是的不硬套。\n- 原话一个字不改，只挪位置、加小标题、包进纸片；时间线、对话里的每一行也用原话，不要缩写。\n- 原文已有的 <span class=…> 标注和纸片原样保留。\n- 不加圈重点、批注、贴纸这类表达个人判断的标注。\n- 正文不要重复属性里已有的标题、摘要和标签。\n- 频道、日期、链接这类信息只用下面属性里有的，没有就不放。\n\n清单：\n${marks.lines.join('\n')}${facts.length ? `\n\n属性：\n${facts.join('\n')}` : ''}`,
-            `\n\n**Notebook marks (use only these):**\n- Use only the marks listed; do not invent callout types or class names.\n- At most ${marks.max} cards (> [!…]) per note. Put conclusions, memorable quotes, steps, schedules, conversations and to-dos into their card; do not force anything else into one.\n- Keep the original wording; only move it, add subheadings and wrap it in cards. Timeline and chat lines use the original words too; do not shorten them.\n- Keep every <span class=…> mark and card already in the text as it is.\n- Do not add circles, margin notes or stickers; those carry the writer's own judgement.\n- Do not repeat the title, summary or tags that are already in the properties.\n- Take channel, date or link details only from the properties below; leave them out if missing.\n\nList:\n${marks.lines.join('\n')}${facts.length ? `\n\nProperties:\n${facts.join('\n')}` : ''}`);
+        return tr(`\n\n**手账写法（只用下面这些）:**\n- 只能用清单里的写法，不要造新的纸片类型或类名。\n- 一篇最多 ${marks.max} 张纸片（> [!…]）。内容本来就是结论、原话金句、步骤、时间安排、对话或待办的，就放进对应的纸片；不是的不硬套。\n${this.settings.structurizerCondense ? '- 原话一个字不改，只挪位置、加小标题、包进纸片。只有时间线和对话纸片里，可以把一段原话压成一行，保留原来的关键词。\n' : '- 原话一个字不改，只挪位置、加小标题、包进纸片；时间线、对话里的每一行也用原话，不要缩写。\n'}- 原文已有的 <span class=…> 标注和纸片原样保留。\n- 不加圈重点、批注、贴纸这类表达个人判断的标注。\n- 正文不要重复属性里已有的标题、摘要和标签。\n- 频道、日期、链接这类信息只用下面属性里有的，没有就不放。\n\n清单：\n${marks.lines.join('\n')}${facts.length ? `\n\n属性：\n${facts.join('\n')}` : ''}`,
+            `\n\n**Notebook marks (use only these):**\n- Use only the marks listed; do not invent callout types or class names.\n- At most ${marks.max} cards (> [!…]) per note. Put conclusions, memorable quotes, steps, schedules, conversations and to-dos into their card; do not force anything else into one.\n${this.settings.structurizerCondense ? '- Keep the original wording; only move it, add subheadings and wrap it in cards. Only inside timeline and chat cards may a passage be condensed to one line, keeping its key words.\n' : '- Keep the original wording; only move it, add subheadings and wrap it in cards. Timeline and chat lines use the original words too; do not shorten them.\n'}- Keep every <span class=…> mark and card already in the text as it is.\n- Do not add circles, margin notes or stickers; those carry the writer's own judgement.\n- Do not repeat the title, summary or tags that are already in the properties.\n- Take channel, date or link details only from the properties below; leave them out if missing.\n\nList:\n${marks.lines.join('\n')}${facts.length ? `\n\nProperties:\n${facts.join('\n')}` : ''}`);
     }
 
     // 模型给回来的正文按清单把关：清单外的纸片和类名去掉，超出张数的拆回普通引用，去掉和属性重复的行，数一数原话有没有被改
@@ -5651,7 +5652,15 @@ Make sure the JSON is valid.`) + this.vaultRulesBlock(true) + this.languageHintB
             if (!line.trim() && out.length && !out.at(-1).trim()) continue;
             out.push(line);
         }
-        let cleaned = out.join('\n').replace(/\n{3,}/g, '\n\n');
+        let cleaned = out.join('\n');
+        // 原文里没有的视频、图片和链接一律去掉：模型会编出不存在的视频地址
+        const knownUrls = new Set((original.match(/https?:\/\/[^\s"'<>)\]]+/g) || []));
+        const known = url => knownUrls.has(url);
+        cleaned = cleaned
+            .replace(/<iframe\b[^>]*src="([^"]+)"[^>]*>(?:\s*<\/iframe>)?/gi, (all, url) => known(url) ? all : (stats.removed++, ''))
+            .replace(/!\[([^\]]*)\]\((https?:\/\/[^)\s]+)[^)]*\)/g, (all, alt, url) => known(url) ? all : (stats.removed++, ''))
+            .replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)[^)]*\)/g, (all, text, url) => known(url) ? all : (stats.removed++, text))
+            .replace(/\n{3,}/g, '\n\n');
         // 原文开头那行副题之类的标注被模型丢了，放回去
         const lead = original.split('\n').find(l => l.trim());
         if (lead && /^\s*<span class="[^"]*">.*<\/span>\s*$/.test(lead) && !cleaned.includes(lead.trim())) cleaned = `${lead.trim()}\n\n${cleaned.replace(/^\s+/, '')}`;
@@ -6716,6 +6725,12 @@ class AiAssistantSettingTab extends PluginSettingTab {
             .setName(tr('一篇最多几张纸片', 'Most cards per note'))
             .addSlider(slider => slider.setLimits(1, 10, 1).setValue(Number(this.plugin.settings.structurizerMaxCards) || 4).setDynamicTooltip()
                 .onChange(async (value) => { this.plugin.settings.structurizerMaxCards = value; await this.plugin.saveSettings(); }));
+
+        new Setting(containerEl)
+            .setName(tr('时间线和对话可以缩写', 'Timelines and chats may condense'))
+            .setDesc(tr('打开后纸片会多一些，但这两种纸片里的原话会被压成一行；其他地方仍然一字不改。', 'More cards, but the original words inside these two cards get condensed to one line; everything else stays word for word.'))
+            .addToggle(toggle => toggle.setValue(!!this.plugin.settings.structurizerCondense)
+                .onChange(async (value) => { this.plugin.settings.structurizerCondense = value; await this.plugin.saveSettings(); }));
 
         new Setting(containerEl).setName(tr('样式类', 'Style classes')).setHeading();
         const styleText = (name, desc, key, placeholder) => new Setting(containerEl).setName(name).setDesc(desc)
