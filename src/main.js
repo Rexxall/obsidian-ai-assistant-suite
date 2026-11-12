@@ -942,7 +942,7 @@ class AssistantView extends ItemView {
 
     renderMistPrepare(body, file, busy) {
         const chosen = this.sessionActions || this.plugin.settings.oneClickProcessActions || {};
-        const actions = [['meta', tr('标题与摘要', 'Title & summary'), tr('补全笔记属性', 'Fill in properties')], ['tagger', tr('标签', 'Tags'), tr('连接已有分类', 'Link to existing tags')], ['mover', tr('归档', 'Folder'), tr('建议存放位置', 'Suggest where it goes')], ['structurizer', tr('整理正文', 'Tidy text'), tr('梳理段落与标题', 'Sort paragraphs and headings')], ['furigana', tr('假名', 'Furigana'), tr('给日文加读音', 'Add readings to Japanese')]];
+        const actions = [['meta', tr('标题与摘要', 'Title & summary'), tr('补全笔记属性', 'Fill in properties')], ['tagger', tr('标签', 'Tags'), tr('连接已有分类', 'Link to existing tags')], ['mover', tr('归档', 'Folder'), tr('建议存放位置', 'Suggest where it goes')], ['furigana', tr('假名', 'Furigana'), tr('给日文加读音', 'Add readings to Japanese')], ['structurizer', tr('整理正文', 'Tidy text'), tr('梳理段落与标题', 'Sort paragraphs and headings')]];
         const configured = this.plugin.hasUsableConfig();
         if (!configured) {
             this.renderMistEmpty(body, tr('还没连上 AI 服务', 'No AI service connected yet'),
@@ -956,7 +956,6 @@ class AssistantView extends ItemView {
             const on = !!chosen[key];
             const pill = list.createEl('button', { cls: on ? 'mist-act is-on' : 'mist-act', attr: { 'data-action': key, 'aria-pressed': String(on), title: hint } });
             pill.createSpan({ text: label });
-            if (key === 'mover') pill.createEl('small', { text: tr('建议放哪', 'Where it goes') });
             pill.onclick = () => { this.sessionActions = { ...chosen, [key]: !on }; this.render(); };
         }
         // 打开了手账写法时，整理正文可以选：原话优先，或者时间线和对话里允许缩写
@@ -970,7 +969,7 @@ class AssistantView extends ItemView {
         }
         const ask = body.createEl('label', { cls: 'mist-ask' });
         ask.createSpan({ text: tr('补充一句（可不填）', 'Add a note (optional)') });
-        const input = ask.createEl('textarea', { attr: { rows: '2', placeholder: tr('例如：标签尽量用库里已有的', 'For example: prefer tags already in the vault'), 'aria-label': tr('补充要求', 'Extra request') } });
+        const input = ask.createEl('textarea', { attr: { rows: '1', placeholder: tr('例如：标签尽量用库里已有的', 'For example: prefer tags already in the vault'), 'aria-label': tr('补充要求', 'Extra request') } });
         input.value = this.sessionInstruction || '';
         input.oninput = () => { this.sessionInstruction = input.value; };
 
@@ -1068,7 +1067,9 @@ class AssistantView extends ItemView {
             const el = list.createDiv({ cls: `mist-row${applied ? ' is-applied' : skipped ? ' is-skipped' : ''}${open ? ' is-open' : ''}`, attr: { role: 'listitem', 'data-part': key } });
             const line = el.createDiv({ cls: 'mist-row-line' });
             const main = line.createEl('button', { cls: 'mist-row-main', attr: { 'aria-expanded': String(open) } });
-            main.createSpan({ text: applied ? '✓' : '', cls: 'mist-tick', attr: { 'aria-hidden': 'true' } });
+            // 行首：没应用时是这一块的图标，应用后换成勾
+            if (applied) main.createSpan({ text: '✓', cls: 'mist-tick', attr: { 'aria-hidden': 'true' } });
+            else setIcon?.(main.createSpan({ cls: 'mist-row-icon', attr: { 'aria-hidden': 'true' } }), { meta: 'heading', defaults: 'list-plus', tags: 'tag', folder: 'folder', style: 'palette', body: 'file-text' }[key] || 'dot');
             main.createSpan({ text: title, cls: 'mist-row-title' });
             const sumText = applied ? doneText : skipped ? tr('不要', 'Left out') : summary;
             main.createSpan({ text: sumText, cls: warn && !applied && !skipped ? 'mist-row-sum is-warn' : 'mist-row-sum', attr: { title: sumText } });
