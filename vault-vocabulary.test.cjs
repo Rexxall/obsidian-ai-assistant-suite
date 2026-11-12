@@ -180,3 +180,43 @@ test('title hint asks for the topic but keeps names that are the topic',()=>{
  p.settings={metaPrompt:'X {{content}}'};
  assert.match(p.getMetaPrompt('随便一段内容'),/\*\*标题:\*\*/);
 });
+
+const MARKS='> [!summary] 一句话结论\n> [!quote] 原话\n> [!timeline] 有先后的安排\n<span class="ih-arrow">所以</span> 连接因果';
+test('notebook marks reach the structure prompt only when listed, with the card limit and short properties',()=>{
+ const off=fixture({structurizerPrompt:'S {{content}}'}).p;assert.equal(off.getStructurizerPrompt('body'),'S body');
+ const {p}=fixture({structurizerPrompt:'S {{content}}',structurizerMarks:MARKS,structurizerMaxCards:3});
+ const prompt=p.getStructurizerPrompt('body',{channel:'小雨',summary:'长摘要',date:'2026-11-01'});
+ assert.match(prompt,/最多 3 张纸片/);assert.match(prompt,/\[!timeline\]/);assert.match(prompt,/channel: 小雨/);assert.doesNotMatch(prompt,/长摘要/);
+});
+test('notebook output keeps listed marks, strips the rest, caps cards, drops repeated property lines and counts reworded sentences',()=>{
+ const {p}=fixture({structurizerMarks:MARKS,structurizerMaxCards:2});
+ const original='**tldr:** 一句话\n给予自己的时间再多都不算多，这是我学到的。\n每天上午先做规划再处理客户的事情。';
+ const out=['**tldr:** 一句话','> [!summary] 结论','> 给予自己的时间再多都不算多，这是我学到的。','','> [!tip] 提示','> 每天上午先做规划再处理客户的事情。','','> [!quote]','> 别的','<span class="ih-circ">圈</span> <span class="ih-arrow">所以</span>'].join('\n');
+ const r=p.cleanNotebookMarks(out,original,{tldr:'一句话'});
+ assert.equal(r.stats.dupLines,1);assert.equal(r.stats.cards,2);assert.equal(r.stats.removed,2);assert.equal(r.stats.changed,0);
+ assert.doesNotMatch(r.text,/\[!tip\]/);assert.match(r.text,/> \*\*提示\*\*/);assert.doesNotMatch(r.text,/ih-circ/);assert.match(r.text,/ih-arrow/);assert.doesNotMatch(r.text,/tldr/);
+ const changed=p.cleanNotebookMarks('> [!summary] 结论\n> 时间多一点总是好的。',original,{tldr:'一句话'});assert.equal(changed.stats.changed,2);
+ assert.equal(fixture({}).p.cleanNotebookMarks('x','x').text,'x');
+});
+test('notebook output drops a copied property block and stamps whose text is not in the properties',()=>{
+ const marks=MARKS+'\n<span class="ih-postmark">频道名<br>日期</span> 频道和日期取自属性\n<span class="ih-barcode">时间 · 视频ID</span> 视频 ID 取自属性';
+ const {p}=fixture({structurizerMarks:marks});
+ const out='---\ntitle: X\n---\n正文第一段。\n<span class="ih-postmark">旅居普吉</span>\n<span class="ih-postmark">小雨<br>2026-11-01</span>\n<span class="ih-barcode">时间 · 视频ID</span>';
+ const r=p.cleanNotebookMarks(out,'正文第一段。',{title:'旅居普吉',channel:'小雨',date:'2026-11-01'});
+ assert.doesNotMatch(r.text,/title: X/);assert.doesNotMatch(r.text,/旅居普吉/);assert.match(r.text,/小雨<br>2026-11-01/);assert.doesNotMatch(r.text,/视频ID/);assert.equal(r.stats.removed,2);
+});
+test('notebook output drops an unclosed copied property block and bold-colon repeats',()=>{
+ const {p}=fixture({structurizerMarks:MARKS});
+ const r=p.cleanNotebookMarks('---\ntitle: X\nstatus: ❌\n\n## 核心想法\n**tldr:** 重复\n正文。','正文。',{tldr:'a'});
+ assert.match(r.text,/^\n?## 核心想法/);assert.doesNotMatch(r.text,/tldr|status/);assert.equal(r.stats.dupLines,1);
+});
+test('a subtitle line at the top of the note survives a notebook tidy',()=>{
+ const {p}=fixture({structurizerMarks:MARKS});
+ const r=p.cleanNotebookMarks('## 核心想法\n正文。','<span class="ih-sub">副题</span>\n\n正文。',{});
+ assert.match(r.text,/^<span class="ih-sub">副题<\/span>\n\n## 核心想法/);
+});
+test('property lines echoed from the prompt at the top of the reply are dropped',()=>{
+ const {p}=fixture({structurizerMarks:MARKS});
+ const r=p.cleanNotebookMarks('title: 旅居\nstatus: ❌\n\n<span class="ih-sub">副</span>\n\n正文。','<span class="ih-sub">副</span>\n\n正文。',{title:'旅居',status:'❌'});
+ assert.match(r.text,/^<span class="ih-sub">副<\/span>/);
+});

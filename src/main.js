@@ -579,6 +579,8 @@ const DEFAULT_SETTINGS = {
 
     // 库的规矩：写给 AI 的长期说明，每次生成都会带上
     vaultConventions: '',
+    structurizerMarks: '',
+    structurizerMaxCards: 4,
 
     // 样式类提议：类名由主题提供，插件不自带；留空就不提议。只在审核单里出现，默认不勾
     styleSubtitleClass: '',
@@ -1158,8 +1160,13 @@ class AssistantView extends ItemView {
                 const hunks = chosenDiff.content.reviewHunks || this.plugin.buildReviewHunks(chosenDiff.content.originalContent, chosenDiff.content.proposedContent);
                 const lost = Math.round((1 - String(chosenDiff.content.proposedContent || '').length / Math.max(1, String(chosenDiff.content.originalContent || '').length)) * 100);
                 stat = tr(`${shrink ? `短了 ${lost}% · ` : ''}${hunks.length} 处改动`, `${shrink ? `${lost}% shorter · ` : ''}${hunks.length} changes`);
+                // 手账整理：说清放了几张纸片、去掉了几行重复属性；原话被改了放最前面
+                const nb = chosenDiff.content.notebook;
+                if (nb) stat = tr([nb.changed ? `改了 ${nb.changed} 句原话` : '', `${nb.cards} 张纸片`, nb.dupLines ? `去掉 ${nb.dupLines} 行重复属性` : ''].filter(Boolean).join(' · '),
+                    [nb.changed ? `${nb.changed} sentences reworded` : '', `${nb.cards} cards`, nb.dupLines ? `${nb.dupLines} repeated property lines removed` : ''].filter(Boolean).join(' · '));
             }
-            const r = row('body', tr('正文', 'Text'), stat, tr('已替换', 'Replaced'), !!chosenDiff, !!shrink);
+            const bodyWarn = !!shrink && !chosenDiff?.content.notebook || !!chosenDiff?.content.notebook?.changed;
+            const r = row('body', tr('正文', 'Text'), stat, tr('已替换', 'Replaced'), !!chosenDiff, bodyWarn);
             if (r) {
                 const note = r.panel.createDiv({ cls: 'mist-body-note' });
                 if (diffs.length > 1 || !draft.diffId) {
@@ -4083,7 +4090,7 @@ class AiAssistantSuite extends Plugin {
         } catch (error) { new Notice(tr(`无法撤回：${error.message}`, `Cannot undo: ${error.message}`), 6000); }
     }
 
-    async createDiffPreviewTask({ taskId = null, file, action, title, originalContent, proposedContent }) {
+    async createDiffPreviewTask({ taskId = null, file, action, title, originalContent, proposedContent, notebook = null }) {
         await this.activateView();
         const id = taskId || `diff-${Date.now()}`;
         const task = {
@@ -4096,6 +4103,7 @@ class AiAssistantSuite extends Plugin {
                 action,
                 originalContent,
                 proposedContent,
+                notebook,
                 originalPreview: this.truncatePreview(originalContent),
                 proposedPreview: this.truncatePreview(proposedContent),
                 applied: false
@@ -4462,7 +4470,8 @@ class AiAssistantSuite extends Plugin {
                 content: { file: currentFile, streamingContent: '' }
             });
 
-            const prompt = this.getStructurizerPrompt(contentToProcess);
+            const notebookFm = app.metadataCache.getFileCache(currentFile)?.frontmatter || {};
+            const prompt = this.getStructurizerPrompt(contentToProcess, isSelection ? {} : notebookFm);
 
             const newContent = await this.makeApiRequest(prompt, null, false, null, {
                 label: tr('结构优化', 'Tidy structure'),
@@ -4476,6 +4485,7 @@ class AiAssistantSuite extends Plugin {
             });
 
             let proposedContent;
+            const notebook = !isSelection && this.notebookMarks() ? this.cleanNotebookMarks(newContent, contentToProcess, notebookFm) : null;
             if (isSelection && activeEditor) {
                 const replacement = newContent.trim();
                 if (selectionStartOffset !== null && selectionEndOffset !== null) {
@@ -4486,14 +4496,15 @@ class AiAssistantSuite extends Plugin {
                     proposedContent = originalFullContent.replace(contentToProcess, replacement);
                 }
             } else {
-                proposedContent = originalFrontmatter + newContent.trim();
+                proposedContent = originalFrontmatter + (notebook ? notebook.text : newContent).trim();
             }
 
             progressNotice.hide();
             await this.createDiffPreviewTask({
                 taskId,
+                notebook: notebook?.stats,
                 file: currentFile,
-                action: tr("结构优化", 'Tidy structure'),
+                action: notebook ? tr('手账整理', 'Notebook tidy') : tr("结构优化", 'Tidy structure'),
                 title: tr(`结构优化预览: ${currentFile.basename}`, `Structure preview: ${currentFile.basename}`),
                 originalContent: originalFullContent,
                 proposedContent
@@ -5567,6 +5578,91 @@ Make sure the JSON is valid.`) + this.vaultRulesBlock(true) + this.languageHintB
         return tr(`\n\n**标题:** 先读完内容，判断这篇主要讲什么，再定标题：只看标题就该知道主题、结论或要做的事。人名、日期是主题的一部分时照常写进标题（比如写某个人的笔记）；只把参会人、日期、星期拼在一起、看不出内容的标题不行。`, `\n\n**Title:** read the whole note and decide what it is mainly about before writing the title; the title alone should tell the topic, the conclusion or the action. Keep names and dates when they are part of the topic (a note about a person, say); a title that only strings together attendees, dates or weekdays and says nothing about the content is not acceptable.`);
     }
 
+    // 手账写法：设置里列出能用的纸片和标注，整理正文时只许用这些
+    notebookMarks() {
+        const lines = String(this.settings.structurizerMarks || '').split('\n').map(l => l.trim()).filter(Boolean);
+        if (!lines.length) return null;
+        const callouts = new Set(), spans = new Set();
+        for (const line of lines) {
+            for (const m of line.matchAll(/\[!([\w-]+)\]/g)) callouts.add(m[1].toLowerCase());
+            for (const m of line.matchAll(/class="([^"]+)"/g)) spans.add(m[1].trim());
+        }
+        // 清单里写着“取自属性”的标注（邮戳、条码这类），内容必须真在属性里
+        const fromProps = new Set();
+        for (const line of lines) for (const m of line.matchAll(/<span class="([^"]+)">(.*?)<\/span>/g)) {
+            if (/属性|propert/i.test(line.slice(m.index + m[0].length))) fromProps.add(m[1].trim());
+        }
+        return { lines, callouts, spans, fromProps, max: Math.max(1, Number(this.settings.structurizerMaxCards) || 4) };
+    }
+
+    notebookPromptBlock(fm = {}) {
+        const marks = this.notebookMarks();
+        if (!marks) return '';
+        const facts = Object.entries(fm || {}).filter(([k, v]) => !['summary', 'tldr', 'tags', 'position'].includes(k) && ['string', 'number'].includes(typeof v) && String(v).length <= 120).map(([k, v]) => `${k}: ${v}`);
+        return tr(`\n\n**手账写法（只用下面这些）:**\n- 只能用清单里的写法，不要造新的纸片类型或类名。\n- 一篇最多 ${marks.max} 张纸片（> [!…]）。内容本来就是结论、原话金句、步骤、时间安排、对话或待办的，就放进对应的纸片；不是的不硬套。\n- 原话一个字不改，只挪位置、加小标题、包进纸片；时间线、对话里的每一行也用原话，不要缩写。\n- 原文已有的 <span class=…> 标注和纸片原样保留。\n- 不加圈重点、批注、贴纸这类表达个人判断的标注。\n- 正文不要重复属性里已有的标题、摘要和标签。\n- 频道、日期、链接这类信息只用下面属性里有的，没有就不放。\n\n清单：\n${marks.lines.join('\n')}${facts.length ? `\n\n属性：\n${facts.join('\n')}` : ''}`,
+            `\n\n**Notebook marks (use only these):**\n- Use only the marks listed; do not invent callout types or class names.\n- At most ${marks.max} cards (> [!…]) per note. Put conclusions, memorable quotes, steps, schedules, conversations and to-dos into their card; do not force anything else into one.\n- Keep the original wording; only move it, add subheadings and wrap it in cards. Timeline and chat lines use the original words too; do not shorten them.\n- Keep every <span class=…> mark and card already in the text as it is.\n- Do not add circles, margin notes or stickers; those carry the writer's own judgement.\n- Do not repeat the title, summary or tags that are already in the properties.\n- Take channel, date or link details only from the properties below; leave them out if missing.\n\nList:\n${marks.lines.join('\n')}${facts.length ? `\n\nProperties:\n${facts.join('\n')}` : ''}`);
+    }
+
+    // 模型给回来的正文按清单把关：清单外的纸片和类名去掉，超出张数的拆回普通引用，去掉和属性重复的行，数一数原话有没有被改
+    cleanNotebookMarks(text, originalBody = '', fm = {}) {
+        const marks = this.notebookMarks();
+        const stats = { cards: 0, removed: 0, dupLines: 0, changed: 0 };
+        if (!marks) return { text, stats };
+        const original = String(originalBody || '');
+        const had = new Set([...original.matchAll(/\[!([\w-]+)\]/g)].map(m => m[1].toLowerCase()));
+        const hadSpan = new Set([...original.matchAll(/<span class="([^"]*)">/g)].map(m => m[1]));
+        const dupKeys = ['tldr', 'summary', 'tags'].filter(k => fm && fm[k] !== undefined && fm[k] !== null && fm[k] !== '');
+        if (dupKeys.includes('tags')) dupKeys.push('标签');
+        const dupRe = dupKeys.length ? new RegExp(`^\\s*\\**\\s*(?:${dupKeys.join('|')})\\s*\\**\\s*[:：]`, 'i') : null;
+        // 模型有时会在正文前面再抄一份属性，原文正文没有的话就去掉
+        let source = String(text);
+        if (!/^\s*---\r?\n/.test(original) && /^\s*---\r?\n/.test(source)) {
+            const lines = source.replace(/^\s*---\r?\n/, '').split('\n');
+            let i = 0;
+            while (i < lines.length && /^([\w\u4e00-\u9fff-]+\s*:|\s+-\s|\s*$)/.test(lines[i]) && !/^\s*$/.test(lines[i] || 'x') ) i++;
+            if (lines[i]?.trim() === '---') i++;
+            source = lines.slice(i).join('\n');
+        }
+        // 也会把提示词里给的“属性：”几行原样抄在开头，去掉
+        const factLines = new Set(Object.entries(fm || {}).filter(([, v]) => ['string', 'number'].includes(typeof v)).map(([k, v]) => `${k}: ${v}`));
+        const head = source.split('\n');
+        let skip = 0;
+        while (skip < head.length && (factLines.has(head[skip].trim()) || /^(属性|Properties)[:：]?$/.test(head[skip].trim()) || (!head[skip].trim() && skip > 0 && factLines.has(head[skip - 1].trim())))) skip++;
+        if (skip) source = head.slice(skip).join('\n');
+        const propValues = new Set(Object.entries(fm || {}).filter(([k]) => !['title', 'summary', 'tldr', 'tags', 'position'].includes(k)).flatMap(([, v]) => Array.isArray(v) ? v : [v]).map(v => String(v).trim()).filter(Boolean));
+        const out = [];
+        for (let line of source.split('\n')) {
+            if (dupRe && dupRe.test(line)) { stats.dupLines++; continue; }
+            const head = line.match(/^(\s*>\s*)\[!([\w-]+)\]([+-]?)\s*(.*)$/);
+            if (head && !/^\s*>\s*>/.test(line)) {
+                const type = head[2].toLowerCase();
+                const allowed = marks.callouts.has(type) || had.has(type);
+                if (allowed && stats.cards < marks.max) stats.cards++;
+                else { stats.removed++; line = head[4] ? `${head[1]}**${head[4]}**` : head[1].trimEnd(); }
+            }
+            line = line.replace(/<span class="([^"]*)">(.*?)<\/span>/g, (all, cls, inner) => {
+                if (hadSpan.has(cls)) return all;
+                if (!marks.spans.has(cls)) { stats.removed++; return inner; }
+                const parts = inner.split(/<br\s*\/?>|\s+·\s+/).map(t => t.trim()).filter(Boolean);
+                const made = marks.fromProps.has(cls) && !parts.every(t => propValues.has(t));
+                if (made) { stats.removed++; return ''; }
+                return all;
+            });
+            if (!line.trim() && out.length && !out.at(-1).trim()) continue;
+            out.push(line);
+        }
+        let cleaned = out.join('\n').replace(/\n{3,}/g, '\n\n');
+        // 原文开头那行副题之类的标注被模型丢了，放回去
+        const lead = original.split('\n').find(l => l.trim());
+        if (lead && /^\s*<span class="[^"]*">.*<\/span>\s*$/.test(lead) && !cleaned.includes(lead.trim())) cleaned = `${lead.trim()}\n\n${cleaned.replace(/^\s+/, '')}`;
+        // 原话检查：去掉标点、符号和空白后，原文里每一句（8 个字以上）都应该还能在新正文里找到
+        const flat = t => String(t).replace(/<[^>]+>|\[![\w-]+\][+-]?|[#>*_`~\-|[\]()!=\s，。、；：“”‘’"'（）,.;:]/g, '');
+        const body = flat(cleaned);
+        const sentences = original.split('\n').filter(l => !(dupRe && dupRe.test(l))).join('\n').split(/[。！？!?\n]|\.\s/).map(flat).filter(t => t.length >= 8);
+        stats.changed = sentences.filter(t => !body.includes(t)).length;
+        return { text: cleaned, stats };
+    }
+
     getMoverPrompt(folderPaths, content) {
         return this.promptSetting('moverPrompt')
             .replace('{{folder_list}}', JSON.stringify(folderPaths, null, 2))
@@ -5580,8 +5676,8 @@ Make sure the JSON is valid.`) + this.vaultRulesBlock(true) + this.languageHintB
             .replace('{{phrases_to_translate}}', phrases.join('\n'));
     }
 
-    getStructurizerPrompt(contentToProcess) {
-        return this.promptSetting('structurizerPrompt').replace('{{content}}', contentToProcess) + this.vaultRulesBlock(true) + this.userInstructionBlock();
+    getStructurizerPrompt(contentToProcess, fm = {}) {
+        return this.promptSetting('structurizerPrompt').replace('{{content}}', contentToProcess) + this.vaultRulesBlock(true) + this.notebookPromptBlock(fm) + this.userInstructionBlock();
     }
 
     getFuriganaPrompt(contentToProcess) {
@@ -6605,6 +6701,21 @@ class AiAssistantSettingTab extends PluginSettingTab {
                     });
                 text.inputEl.rows = 6;
             });
+
+        new Setting(containerEl).setName(tr('手账写法', 'Notebook marks')).setHeading();
+        new Setting(containerEl)
+            .setName(tr('整理正文时能用的写法', 'Marks the text tidy may use'))
+            .setDesc(tr('一行一种，写法加一句什么时候用。留空就是普通整理。清单外的纸片和类名会被去掉。', 'One per line: the syntax and when to use it. Leave empty for a plain tidy. Cards and classes not listed are removed.'))
+            .addTextArea(text => {
+                text.setPlaceholder(tr('例如：> [!summary] 一句话结论，放最前面', 'For example: > [!summary] the one-line conclusion, at the top'))
+                    .setValue(this.plugin.settings.structurizerMarks || '')
+                    .onChange(async (value) => { this.plugin.settings.structurizerMarks = value; await this.plugin.saveSettings(); });
+                text.inputEl.rows = 8;
+            });
+        new Setting(containerEl)
+            .setName(tr('一篇最多几张纸片', 'Most cards per note'))
+            .addSlider(slider => slider.setLimits(1, 10, 1).setValue(Number(this.plugin.settings.structurizerMaxCards) || 4).setDynamicTooltip()
+                .onChange(async (value) => { this.plugin.settings.structurizerMaxCards = value; await this.plugin.saveSettings(); }));
 
         new Setting(containerEl).setName(tr('样式类', 'Style classes')).setHeading();
         const styleText = (name, desc, key, placeholder) => new Setting(containerEl).setName(name).setDesc(desc)
