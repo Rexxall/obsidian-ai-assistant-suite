@@ -2353,7 +2353,8 @@
   background:var(--mist-side); color:var(--mist-ink); font-size:13.5px; line-height:1.6; overflow:hidden;
 }
 
-/* Optional look: warm paper (Settings › Sidebar look). Only the neutrals change; the accent still follows the theme. */
+/* Optional look: warm paper (Settings › Sidebar look). Only the neutrals and the title face change; the accent still follows the theme.
+   No glow or gradient: in a pane it always meets an edge and leaves a line. */
 .mist-sidebar-host.is-paper, .ap.mist-sidebar.is-paper {
   --ap-page: #f6f2ea; --ap-group: #fffdf8; --ap-glass: color-mix(in srgb, #f6f2ea 72%, transparent);
   --ap-label: #2a2925; --ap-label-2: #6f6a60; --ap-label-3: #9b968b;
@@ -2370,10 +2371,6 @@
 .view-content.mist-sidebar-host.is-paper { background: var(--ap-page); }
 .ap.mist-sidebar.is-paper .mist-title, .ap.mist-sidebar.is-paper .mist-empty strong, .ap.mist-sidebar.is-paper .mist-edit-title { font-family: var(--mist-serif); letter-spacing: .02em; }
 .ap.mist-sidebar.is-paper { overflow: clip; }
-/* One soft glow in the top corner, painted on the sticky header so it never leaves a seam. */
-.ap.mist-sidebar.is-paper .mist-head {
-  background: radial-gradient(220px 64px at 90% 0, color-mix(in srgb, var(--ap-accent) 16%, transparent), transparent 70%), var(--ap-glass);
-}
 .mist-sidebar > * { position:relative; }
 .mist-sidebar button { font:inherit; cursor:pointer; box-shadow:none; height:auto; }
 .mist-sidebar button:disabled { cursor:default; opacity:.55; }
@@ -2860,7 +2857,9 @@
 /* 本篇建议：一块一行，点开再改；底部固定“全部接受” */
 .mist-sidebar { overflow: clip; }
 .mist-sidebar .mist-rows { display: flex; flex-direction: column; border-radius: 14px; background: var(--mist-paper); box-shadow: var(--mist-shadow); overflow: hidden; }
-.mist-sidebar .mist-row + .mist-row { border-top: 1px solid var(--mist-hair); }
+/* Row separators start under the text, as in a grouped list, instead of crossing the whole card. */
+.mist-sidebar .mist-row + .mist-row { position: relative; }
+.mist-sidebar .mist-row + .mist-row::before { content: ""; position: absolute; top: 0; left: 36px; right: 0; height: 1px; background: var(--mist-hair); pointer-events: none; }
 .mist-sidebar .mist-row-line { display: flex; align-items: center; gap: 8px; padding: 0 12px 0 0; min-height: 44px; }
 .mist-sidebar .mist-rows .mist-row-line > button.mist-row-main { flex: 1; min-width: 0; display: flex; align-items: center; justify-content: flex-start; gap: 9px; padding: 10px 0 10px 12px;
   background: transparent; border: 0; border-radius: 0; box-shadow: none; color: var(--mist-ink); text-align: left; }
