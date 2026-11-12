@@ -1157,7 +1157,7 @@ class AssistantView extends ItemView {
             if (chosenDiff) {
                 const hunks = chosenDiff.content.reviewHunks || this.plugin.buildReviewHunks(chosenDiff.content.originalContent, chosenDiff.content.proposedContent);
                 const lost = Math.round((1 - String(chosenDiff.content.proposedContent || '').length / Math.max(1, String(chosenDiff.content.originalContent || '').length)) * 100);
-                stat = tr(`${hunks.length} 处改动${shrink ? ` · 短了 ${lost}%` : ''}`, `${hunks.length} changes${shrink ? ` · ${lost}% shorter` : ''}`);
+                stat = tr(`${shrink ? `短了 ${lost}% · ` : ''}${hunks.length} 处改动`, `${shrink ? `${lost}% shorter · ` : ''}${hunks.length} changes`);
             }
             const r = row('body', tr('正文', 'Text'), stat, tr('已替换', 'Replaced'), !!chosenDiff, !!shrink);
             if (r) {
