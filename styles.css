@@ -2353,24 +2353,6 @@
   background:var(--mist-side); color:var(--mist-ink); font-size:13.5px; line-height:1.6; overflow:hidden;
 }
 
-/* Optional look: warm paper (Settings › Sidebar look). Only the neutrals and the title face change; the accent still follows the theme.
-   No glow or gradient: in a pane it always meets an edge and leaves a line. */
-.mist-sidebar-host.is-paper, .ap.mist-sidebar.is-paper {
-  --ap-page: #f6f2ea; --ap-group: #fffdf8; --ap-glass: color-mix(in srgb, #f6f2ea 72%, transparent);
-  --ap-label: #2a2925; --ap-label-2: #6f6a60; --ap-label-3: #9b968b;
-  --ap-fill: rgb(42 41 37 / 0.06); --ap-fill-strong: rgb(42 41 37 / 0.11); --ap-sep: rgb(42 41 37 / 0.09);
-  --ap-hair: 0 0 0 0.5px rgb(42 41 37 / 0.12);
-  --mist-serif: "Songti SC", "Hiragino Mincho ProN", "Noto Serif CJK SC", var(--font-text), serif;
-}
-.theme-dark .mist-sidebar-host.is-paper, .theme-dark .ap.mist-sidebar.is-paper {
-  --ap-page: #1f1d1a; --ap-group: #282521; --ap-glass: color-mix(in srgb, #1f1d1a 72%, transparent);
-  --ap-label: #ebe5d8; --ap-label-2: #b2ab9c; --ap-label-3: #837e72;
-  --ap-fill: rgb(235 229 216 / 0.07); --ap-fill-strong: rgb(235 229 216 / 0.12); --ap-sep: rgb(235 229 216 / 0.10);
-  --ap-hair: 0 0 0 0.5px rgb(235 229 216 / 0.14);
-}
-.view-content.mist-sidebar-host.is-paper { background: var(--ap-page); }
-.ap.mist-sidebar.is-paper .mist-title, .ap.mist-sidebar.is-paper .mist-empty strong, .ap.mist-sidebar.is-paper .mist-edit-title { font-family: var(--mist-serif); letter-spacing: .02em; }
-.ap.mist-sidebar.is-paper { overflow: clip; }
 .mist-sidebar > * { position:relative; }
 .mist-sidebar button { font:inherit; cursor:pointer; box-shadow:none; height:auto; }
 .mist-sidebar button:disabled { cursor:default; opacity:.55; }
@@ -2913,3 +2895,99 @@
 .ap.mist-sidebar button:is(.mist-act, .mist-chip, .mist-view),
 .mist-sidebar .mist-rows .mist-row-line > button.mist-row-apply,
 .mist-sidebar .mist-seg > button.mist-seg-btn { min-height: 24px; padding-block: 4px; line-height: 16px; }
+
+/* ---- styles/ap-signature.css (shared; copied verbatim from the other plugins, keep in sync) ---- */
+/* ==========================================================================
+   Signature layer, shared by the plugins (same file in every repo).
+   1. Serif numbers: one number per panel, in Didot italic. The plugin puts
+      .ap-signed on its root (setting "Serif numbers", on by default) and
+      .ap-sig-num on that one number; the size stays the plugin's own.
+      The font is read from --ap-sig-* with fallbacks only, so a theme or
+      snippet can change or switch it off for every plugin at once on body.
+   2. Journal look: an optional appearance (setting "Look"). The plugin puts
+      .ap-look-journal on its root. Paper, a serif title, small caps labels
+      with two short red strokes, a figure number. The accent stays the
+      user's --interactive-accent; nothing here animates.
+   ========================================================================== */
+
+.ap.ap-signed .ap-sig-num {
+  font-family: var(--ap-sig-font, "Didot", "Bodoni 72", Georgia, "Times New Roman", serif);
+  font-style: var(--ap-sig-style, italic);
+  font-weight: var(--ap-sig-weight, 700);
+  letter-spacing: -0.03em;
+  font-variant-numeric: lining-nums;
+}
+
+.ap.ap-look-journal {
+  --ap-journal-red: #c8291c;
+  --ap-journal-voice: "Songti SC", "Hiragino Mincho ProN", "Noto Serif SC", "Noto Serif CJK SC", Georgia, serif;
+  --ap-journal-label: "Futura", "Avenir Next", "Helvetica Neue", Arial, sans-serif;
+  --ap-page: color-mix(in srgb, #fbfaf7 88%, var(--background-primary));
+  --ap-group: transparent;
+  --ap-glass: color-mix(in srgb, var(--ap-page) 82%, transparent);
+  background-color: var(--ap-page);
+}
+.theme-dark .ap.ap-look-journal {
+  --ap-journal-red: #e0483a;
+  --ap-page: color-mix(in srgb, #0c0c0f 55%, var(--background-primary));
+}
+
+.ap.ap-look-journal .ap-title { font-family: var(--ap-journal-voice); font-weight: 700; letter-spacing: 0.02em; }
+.ap-look-journal .ap-card,
+.ap-look-journal .ap-card.is-inset,
+.ap-look-journal .ap-group {
+  background: transparent;
+  border-radius: 0;
+  box-shadow: inset 0 1px 0 var(--ap-sep), inset 0 -1px 0 var(--ap-sep);
+}
+.ap-look-journal .ap-section-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font: 500 10px/14px var(--ap-journal-label);
+  letter-spacing: 0.32em;
+  text-transform: uppercase;
+  color: var(--ap-label-2);
+}
+.ap-look-journal .ap-section-title::before {
+  content: "";
+  flex: none;
+  width: 14px;
+  height: 2px;
+  background: var(--ap-journal-red);
+  box-shadow: 0 4px 0 var(--ap-journal-red);
+  transform: translateY(-2px);
+}
+.ap-look-journal button { border-radius: 6px; }
+.ap-look-journal .ap-item.is-selected,
+.ap-look-journal .ap-item[aria-selected="true"] {
+  border-radius: 0;
+  background: color-mix(in srgb, var(--ap-accent) 10%, transparent);
+}
+
+/* Figure number: FIG. PC · 03. Hidden unless the journal look is on. */
+.ap-fig { display: none; }
+.ap-look-journal .ap-fig {
+  display: block;
+  font: 500 9px/1.6 var(--ap-journal-label);
+  letter-spacing: 0.36em;
+  text-transform: uppercase;
+  color: var(--ap-label-2);
+}
+/* ---- end ap-signature.css ---- */
+
+/* Signature layer in the sidebar. The serif number is the count on "Accept all".
+   Journal look: the sidebar's cards are mist classes, not .ap-card, so they are mapped here.
+   No group rules or seams: cards keep a faint fill instead of lines (Rex 11-12: no stray horizontal lines). */
+.view-content.mist-sidebar-host.is-journal { background: color-mix(in srgb, #fbfaf7 88%, var(--background-primary)); }
+.theme-dark .view-content.mist-sidebar-host.is-journal { background: color-mix(in srgb, #0c0c0f 55%, var(--background-primary)); }
+.ap.mist-sidebar.ap-look-journal { --ap-group: color-mix(in srgb, var(--text-normal) 3%, transparent); }
+.ap.mist-sidebar .mist-head-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.ap.mist-sidebar.ap-look-journal .mist-title { font-family: var(--ap-journal-voice); font-weight: 700; letter-spacing: 0.02em; }
+.ap.mist-sidebar.ap-look-journal .mist-label { display: flex; align-items: center; gap: 8px; }
+.ap.mist-sidebar.ap-look-journal .mist-label::before {
+  content: ""; flex: none; width: 14px; height: 2px; background: var(--ap-journal-red); box-shadow: 0 4px 0 var(--ap-journal-red); transform: translateY(-2px);
+}
+/* The button is a flex box, which drops the spaces around the number; keep them. */
+.ap.mist-sidebar .mist-foot .mist-primary { white-space: pre; }
+.ap.mist-sidebar.ap-signed .mist-primary .ap-sig-num { font-size: 15px; line-height: 1; }

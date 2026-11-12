@@ -1,15 +1,16 @@
 const {test}=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm');
 class El {
  constructor(tag='div',o={}){this.tag=tag;this.options=o;this.children=[];this.style={};this.events={};this.attrs=o.attr||{};}
- createEl(t,o={}){let e=new El(t,o);this.children.push(e);return e;} createDiv(o){return this.createEl('div',o);} createSpan(o){return this.createEl('span',o);} empty(){this.children=[];} addClass(){} toggleClass(){} setText(t){this.options.text=t;} setAttr(k,v){this.attrs[k]=v;} setAttribute(k,v){this.attrs[k]=v;} addEventListener(k,v){this.events[k]=v;}
+ createEl(t,o={}){let e=new El(t,o);this.children.push(e);return e;} createDiv(o){return this.createEl('div',o);} createSpan(o){return this.createEl('span',o);} empty(){this.children=[];} appendText(t){this.children.push(new El('#text',{text:t}));} addClass(){} toggleClass(){} setText(t){this.options.text=t;} setAttr(k,v){this.attrs[k]=v;} setAttribute(k,v){this.attrs[k]=v;} addEventListener(k,v){this.events[k]=v;}
 }
+const textOf=e=>e.options.text??e.children.map(textOf).join('');
 function fixture(file={basename:'Example',path:'Example.md',extension:'md',parent:{path:'/'}}){
  const module={exports:{}};vm.runInNewContext(fs.readFileSync(__dirname+'/main.js','utf8')+'\nmodule.exports={View:AssistantView,Plugin:module.exports};',{module,console,require:()=>Object.fromEntries(['Plugin','Notice','PluginSettingTab','Setting','FuzzySuggestModal','Modal','ItemView','TFile'].map(k=>[k,class{}]))});
  let runArgs,resolve;const v=Object.create(module.exports.View.prototype);v.tasks=[];v.containerEl={children:[new El(),new El()]};
  v.plugin=Object.assign(Object.create(module.exports.Plugin.prototype),{settings:{oneClickProcessActions:{tagger:true},customActions:[]},app:{workspace:{getActiveFile:()=>file},vault:{getAbstractFileByPath:()=>null,getAllLoadedFiles:()=>[]}},getRecentHistory:()=>[],hasUsableConfig:()=>true,refreshAssistantViews:()=>{},activateView:async()=>{},runOneClickSmartProcess:(...a)=>{runArgs=a;return new Promise(r=>resolve=r);}});
  v.renderTask=(el,t)=>el.createEl('article',{text:t.id});v.render();
  const all=(e=v.containerEl.children[1])=>[e,...e.children.flatMap(all)];
- return {v,all,button:text=>all().find(e=>e.tag==='button'&&e.options.text===text),get args(){return runArgs;},finish:()=>resolve()};
+ return {v,all,button:text=>all().find(e=>e.tag==='button'&&textOf(e)===text),get args(){return runArgs;},finish:()=>resolve()};
 }
 test('prepare shows the note and work choices without rendering unrelated history/tools',()=>{const f=fixture();assert.ok(f.all().some(e=>e.options.text==='Example'));assert.ok(f.button('生成建议 →'));assert.ok(!f.all().some(e=>e.options.text==='快速操作'));assert.ok(!f.all().some(e=>e.options.text==='待审阅结果'));});
 test('missing/non-Markdown note disables generation; no chosen steps also disables it',()=>{for(const file of [null,{extension:'pdf'}])assert.equal(fixture(file).button('生成建议 →').disabled,true);const f=fixture();f.v.sessionActions={};f.v.render();assert.equal(f.button('生成建议 →').disabled,true);});
@@ -53,7 +54,7 @@ test('rows start folded, open one at a time for editing, and keep edits across r
  openRow(f,'tags');assert.ok(f.all().some(e=>e.options.cls==='mist-chips'));
  openRow(f,'meta');assert.ok(!f.all().some(e=>e.options.cls==='mist-chips'));
  const title=f.all().find(e=>e.tag==='textarea');title.value='My title';title.oninput();f.v.render();assert.equal(f.all().find(e=>e.tag==='textarea').value,'My title');
- assert.ok(f.all().find(e=>e.tag==='button'&&/^全部接受 · \d+ 项$/.test(e.options.text||'')));
+ assert.ok(f.all().find(e=>e.tag==='button'&&/^全部接受 · \d+ 项$/.test(textOf(e))));
  f.v.workbenchPage='queue';f.v.render();assert.equal(f.all().filter(e=>e.options.cls==='mist-queue-row').length,1);
 });
 test('existing non-note tools remain reachable when note results exist',()=>{
