@@ -1,5 +1,7 @@
 <p align="right"><a href="README_zh.md">中文</a></p>
 
+<p align="center"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/icon-dark.svg"><img src="assets/readme/icon-light.svg" width="96" height="96" alt="AI Assistant Suite icon"></picture></p>
+
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="assets/readme/hero-dark.svg">
   <img src="assets/readme/hero-light.svg" width="100%" alt="AI Assistant Suite: messy note in, tidy note out. You tick what gets written.">

@@ -1,5 +1,7 @@
 <p align="right"><a href="README.md">English</a></p>
 
+<p align="center"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/icon-dark.svg"><img src="assets/readme/icon-light.svg" width="96" height="96" alt="AI Assistant Suite icon"></picture></p>
+
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="assets/readme/hero-zh-dark.svg">
   <img src="assets/readme/hero-zh-light.svg" width="100%" alt="AI Assistant Suite：乱笔记进去，整齐笔记出来。写进什么，由你勾选。">
