@@ -9,10 +9,7 @@
 
 <p align="center"><a href="https://community.obsidian.md/plugins/ai-assistant-suite"><b>Obsidian からインストール</b></a></p>
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="assets/readme/demo-dark.gif">
-  <img src="assets/readme/demo-light.gif" width="100%" alt="未整理の会議メモから、実際のモデルでタイトル、タグ、要約、整理した本文を生成します。確認リストでフォルダー移動のチェックを外し、残りを適用すると、ノートの本文とプロパティが更新されます。">
-</picture>
+<img src="assets/readme/demo.webp" width="100%" alt="未整理の会議メモから、実際のモデルでタイトル、タグ、要約、整理した本文を生成します。確認リストでフォルダー移動のチェックを外し、残りを適用すると、ノートの本文とプロパティが更新されます。">
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="assets/readme/cards-dark.svg">

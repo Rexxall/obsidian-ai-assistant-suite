@@ -9,10 +9,7 @@
 
 <p align="center"><a href="https://community.obsidian.md/plugins/ai-assistant-suite"><b>Install from Obsidian</b></a></p>
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="assets/readme/demo-dark.gif">
-  <img src="assets/readme/demo-light.gif" width="100%" alt="A messy meeting note. The assistant generates a title, tags, a summary and tidier text with a real model. In the review list the folder move is unticked, the rest is applied, and the note comes back tidy with its properties filled in.">
-</picture>
+<img src="assets/readme/demo.webp" width="100%" alt="A messy meeting note. The assistant generates a title, tags, a summary and tidier text with a real model. In the review list the folder move is unticked, the rest is applied, and the note comes back tidy with its properties filled in.">
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="assets/readme/cards-dark.svg">

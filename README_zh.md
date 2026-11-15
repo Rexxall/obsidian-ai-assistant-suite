@@ -9,10 +9,7 @@
 
 <p align="center"><a href="https://community.obsidian.md/plugins/ai-assistant-suite"><b>在 Obsidian 里安装</b></a></p>
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="assets/readme/demo-dark.gif">
-  <img src="assets/readme/demo-light.gif" width="100%" alt="一篇乱糟糟的会议笔记。助手用真实模型生成标题、标签、摘要和整理后的正文；在审核清单里取消“移动到文件夹”，其余应用，笔记变整齐，属性也填好了。">
-</picture>
+<img src="assets/readme/demo.webp" width="100%" alt="一篇乱糟糟的会议笔记。助手用真实模型生成标题、标签、摘要和整理后的正文；在审核清单里取消“移动到文件夹”，其余应用，笔记变整齐，属性也填好了。">
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="assets/readme/cards-zh-dark.svg">
