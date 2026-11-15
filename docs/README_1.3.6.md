@@ -2,9 +2,9 @@
 
 > 一个全面的AI驱动的Obsidian笔记处理套件，让你的笔记管理更智能、更高效
 
-[![Version](https://img.shields.io/badge/version-1.3.6-blue.svg)](https://github.com/your-repo/ai-assistant-suite)
+[![Version](https://img.shields.io/badge/version-1.3.6-blue.svg)](https://github.com/Rexxall/obsidian-ai-assistant-suite)
 [![Obsidian](https://img.shields.io/badge/Obsidian-1.2.0+-purple.svg)](https://obsidian.md/)
-[![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![License](https://img.shields.io/badge/license-MIT-green.svg)](../LICENSE)
 
 ## 🌟 最新更新 (v1.3.6)
 
@@ -109,7 +109,7 @@
 
 #### 方法二：BRAT安装
 1. 安装BRAT插件
-2. 添加仓库地址：`your-repo/ai-assistant-suite`
+2. 添加仓库地址：`Rexxall/obsidian-ai-assistant-suite`
 3. 安装并启用插件
 
 ### 基础配置
@@ -474,7 +474,7 @@ A: 在设置页面使用"导出设置"功能，可以备份所有配置和处理
 
 ### 开发环境设置
 ```bash
-git clone https://github.com/your-repo/ai-assistant-suite
+git clone https://github.com/Rexxall/obsidian-ai-assistant-suite
 cd ai-assistant-suite
 npm install
 npm run dev
@@ -489,7 +489,7 @@ npm run dev
 
 ## 📄 许可证
 
-MIT License - 详见 [LICENSE](LICENSE) 文件
+MIT License - 详见 [LICENSE](../LICENSE) 文件
 
 ## 🙏 致谢
 
@@ -503,10 +503,9 @@ MIT License - 详见 [LICENSE](LICENSE) 文件
 
 ## 🔗 相关链接
 
-- 📖 **官方文档**：[插件使用指南](https://github.com/your-repo/ai-assistant-suite/wiki)
-- 🐛 **问题反馈**：[GitHub Issues](https://github.com/your-repo/ai-assistant-suite/issues)
+- 📖 **官方文档**：[插件使用指南](../README.md)
+- 🐛 **问题反馈**：[GitHub Issues](https://github.com/Rexxall/obsidian-ai-assistant-suite/issues)
 - 💬 **社区讨论**：[Obsidian论坛](https://forum.obsidian.md/)
-- 📺 **视频教程**：[YouTube频道](https://youtube.com/your-channel)
 
 ---
 
