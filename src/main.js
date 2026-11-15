@@ -3434,11 +3434,11 @@ class AiAssistantSuite extends Plugin {
     async loadDemo() {
         const zh = isChineseInterface();
         const body = zh
-            ? '---\nai-assistant-demo: true\n---\n> 这是 AI Assistant Suite 的示例笔记，可以随时删除。\n\n周三和小林聊了下学期的计划 他说实验室三月开始招人 要先发邮件 附上研究计划 还要准备面谈\n\n要做的：研究计划写到两页以内 邮件里说清楚为什么选这个研究室 日语面谈练三次\n\n顺便记一下 他推荐了两本书 一本讲实验设计 一本讲科研写作\n'
-            : '---\nai-assistant-demo: true\n---\n> This is the AI Assistant Suite example note. Delete it any time.\n\nwed talked w/ Sam about next term. lab starts hiring in march, need to email first with a research plan, then an interview\n\ntodo: keep plan under 2 pages, say in the email why this lab, practice interview 3 times\n\nalso he recommended two books one on experiment design one on science writing\n';
+            ? '---\nai-assistant-demo: true\n---\n> 这是 AI Assistant Suite 的示例笔记，可以随时删除。\n\n周三和小林聊了月底搬家的事 新房子三月一号能入住 要先给房东发邮件约退房检查 再订搬家公司\n\n要做的：纸箱先要二十个 邮件里写清楚退房日期 网络和电费月底前办好转移\n\n顺便记一下 他推荐了两家搬家公司 一家便宜 一家周末也能搬\n'
+            : '---\nai-assistant-demo: true\n---\n> This is the AI Assistant Suite example note. Delete it any time.\n\nwed talked w/ Sam about the move. new place is ready march 1, need to email the landlord first to book the move-out check, then book movers\n\ntodo: get 20 boxes, say the move-out date in the email, move internet and power before the end of the month\n\nalso he recommended two moving companies one cheap one that works weekends\n';
         const structured = zh
-            ? '---\nai-assistant-demo: true\n---\n> 这是 AI Assistant Suite 的示例笔记，可以随时删除。\n\n## 下学期计划（周三与小林）\n\n- 实验室**三月**开始招人。\n- 流程：先发邮件并附研究计划，之后面谈。\n\n## 待办\n\n- [ ] 研究计划控制在两页以内\n- [ ] 邮件里说清楚为什么选这个研究室\n- [ ] 日语面谈练习三次\n\n## 推荐书目\n\n- 一本讲实验设计\n- 一本讲科研写作\n'
-            : '---\nai-assistant-demo: true\n---\n> This is the AI Assistant Suite example note. Delete it any time.\n\n## Next term (Wednesday, with Sam)\n\n- The lab starts hiring in **March**.\n- Steps: email first with a research plan, then an interview.\n\n## To do\n\n- [ ] Keep the plan under two pages\n- [ ] Say in the email why this lab\n- [ ] Practise the interview three times\n\n## Recommended books\n\n- One on experiment design\n- One on science writing\n';
+            ? '---\nai-assistant-demo: true\n---\n> 这是 AI Assistant Suite 的示例笔记，可以随时删除。\n\n## 月底搬家（周三与小林）\n\n- 新房子**三月一日**起能入住。\n- 流程：先给房东发邮件约退房检查，再订搬家公司。\n\n## 待办\n\n- [ ] 准备二十个纸箱\n- [ ] 邮件里写清楚退房日期\n- [ ] 月底前办好网络和电费转移\n\n## 推荐的搬家公司\n\n- 一家便宜\n- 一家周末也能搬\n'
+            : '---\nai-assistant-demo: true\n---\n> This is the AI Assistant Suite example note. Delete it any time.\n\n## Moving out (Wednesday, with Sam)\n\n- The new place is ready on **1 March**.\n- Steps: email the landlord to book the move-out check, then book movers.\n\n## To do\n\n- [ ] Get twenty boxes\n- [ ] Say the move-out date in the email\n- [ ] Move internet and power before the month ends\n\n## Recommended movers\n\n- One that is cheap\n- One that works weekends\n';
         let path = this.demoNotePath();
         let file = null;
         for (let n = 2; ; n++) {
@@ -3460,9 +3460,9 @@ class AiAssistantSuite extends Plugin {
             content: {
                 demo: true, file, originalContent: body,
                 suggestions: {
-                    meta: zh ? { title: '下学期研究室申请计划', summary: '实验室三月招人，需要先发邮件并附研究计划，再参加面谈。待办包括压缩研究计划、写清选择理由和练习面谈。', tldr: '三月前备好研究计划和邮件，练三次面谈。' }
-                        : { title: 'Lab application plan for next term', summary: 'The lab hires from March: email with a research plan first, then an interview. To do: shorten the plan, explain the choice, practise the interview.', tldr: 'Have the plan and email ready before March; practise three times.' },
-                    tags: (zh ? ['示例/申请', '示例/待办'] : ['example/application', 'example/todo']).map(tag => ({ display: tag, final: tag, is_new: true })),
+                    meta: zh ? { title: '月底搬家计划', summary: '新房子三月一日能入住：先给房东发邮件约退房检查，再订搬家公司。待办包括准备纸箱、写清退房日期、转移网络和电费。', tldr: '三月前约好退房检查和搬家公司，备好纸箱。' }
+                        : { title: 'Moving plan for the end of the month', summary: 'The new place is ready on 1 March: email the landlord to book the move-out check, then book movers. To do: boxes, the move-out date, internet and power.', tldr: 'Book the move-out check and movers before March; get boxes.' },
+                    tags: (zh ? ['示例/搬家', '示例/待办'] : ['example/moving', 'example/todo']).map(tag => ({ display: tag, final: tag, is_new: true })),
                     mover: folder ? [{ path: folder.path, is_new: false }] : null,
                 },
             },
