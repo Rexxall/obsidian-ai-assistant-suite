@@ -41,7 +41,7 @@ def render(c, t):
     for i, (title, body, kind) in enumerate(t["cards"]):
         x = 24 + i * 392
         parts.append(f'<rect x="{x}" y="16" width="368" height="158" rx="22" fill="{c["bg"]}" stroke="{c["line"]}"/>')
-        parts.append(f'<rect x="{x+28}" y="44" width="48" height="48" rx="14" fill="{c["accent_soft"]}"/>')
+        parts.append(f'<rect x="{x+28}" y="44" width="48" height="48" rx="14" fill="{c["soft"]}"/>')
         parts.append(glyph(kind, x + 28, 44, c))
         parts.append(f'<text x="{x+96}" y="78" font-size="27" font-weight="700" fill="{c["fg"]}">{escape(title)}</text>')
         parts.append(f'<text x="{x+28}" y="138" font-size="20" fill="{c["muted"]}">{escape(body)}</text>')

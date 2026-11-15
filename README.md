@@ -1,4 +1,4 @@
-<p align="right"><a href="README_zh.md">中文</a></p>
+<p align="right"><a href="README_zh.md">中文</a> · <a href="README.ja.md">日本語</a></p>
 
 <p align="center"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/icon-dark.svg"><img src="assets/readme/icon-light.svg" width="96" height="96" alt="AI Assistant Suite icon"></picture></p>
 
@@ -23,9 +23,11 @@
 
 1. Install **AI Assistant Suite** from *Settings → Community plugins → Browse* and enable it.
 2. Open the assistant (anchor icon in the ribbon). Not connected yet? Click **Load example** (also a command): a demo note with pre-written suggestions, no network and no cost, so you can try ticking, applying and undoing.
-3. To use your own notes, open *Settings → AI Assistant Suite → Connections*: choose a provider (DeepSeek is preselected), choose or create a key, keep the suggested model, and press **Test**. Then open a note, pick what you want done and choose **Generate suggestions**.
+3. To use your own notes, open *Settings → AI Assistant Suite → Connections*: choose a provider (DeepSeek is preselected), choose or create a key, keep the suggested model, and press **Test** to check the connection. Then open a note, pick what you want done and choose **Generate suggestions** to begin.
 
-**Needs** Obsidian 1.13+ on desktop or mobile, and an API key or a local model. **Costs** nothing for the plugin; the model is paid to your provider by usage, and a local model is free.
+**Needs** Obsidian 1.13+ on desktop or mobile, and an API key or a local model. **Costs** nothing for the plugin; the model is paid to your provider by usage, and a local model has no API fee.
+
+Something not working? [Copy a fix-it prompt](docs/troubleshooting.md) for your AI assistant.
 
 ## Everything else
 
@@ -54,7 +56,7 @@ Ask an AI to suggest a title, summary, tags, a folder and tidier text for the no
 
 - **Needs:** Obsidian 1.13 or later, desktop or mobile, and either an API key from a model provider or a local model (Ollama, LM Studio) on your computer.
 - **The plugin:** free and open source (MIT). No account with the author, no subscription, no telemetry.
-- **The model:** paid to the provider you choose, by usage. A local model costs nothing. Some providers have free tiers or new-user credit; check their own pricing pages, which change often. **Test** sends one short line and asks for a very short answer, usually a tiny fraction of a cent.
+- **The model:** paid to the provider you choose, by usage. A local model has no API fee. Some providers have free tiers or new-user credit; check their own pricing pages, which change often. **Test** sends one short line and asks for a very short answer, usually a tiny fraction of a cent.
 
 </details>
 
@@ -104,7 +106,7 @@ Colours come from your theme's variables and the styles apply only inside the pl
 - Suggestions are only as good as the model; review them, especially text rewrites.
 - Batch runs send one request per note; large folders cost accordingly.
 - Answers do not stream: requests use Obsidian's `requestUrl`, which works on mobile and is not blocked by CORS but returns the whole answer at once. In testing, tidying a 10,000-character note with DeepSeek Flash took about 48 seconds.
-- A local model on your computer cannot be reached from a phone.
+- The default `localhost` address on a phone does not reach a model running on your computer.
 
 </details>
 

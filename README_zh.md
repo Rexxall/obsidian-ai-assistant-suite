@@ -1,6 +1,6 @@
-<p align="right"><a href="README.md">English</a></p>
+<p align="right"><a href="README.md">English</a> · <a href="README.ja.md">日本語</a></p>
 
-<p align="center"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/icon-dark.svg"><img src="assets/readme/icon-light.svg" width="96" height="96" alt="AI Assistant Suite icon"></picture></p>
+<p align="center"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/icon-dark.svg"><img src="assets/readme/icon-light.svg" width="96" height="96" alt="AI Assistant Suite 图标"></picture></p>
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="assets/readme/hero-zh-dark.svg">
@@ -21,11 +21,13 @@
 
 ## 三步上手
 
-1. 在“设置 → 第三方插件 → 浏览”里搜索 **AI Assistant Suite**，安装并启用。
+1. 在“设置 → 第三方插件 → 浏览”里搜索并安装 **AI Assistant Suite** 后启用。
 2. 点左侧功能区的锚形图标打开助手。还没连 AI？点“载入示例”（也有同名命令）：一篇演示笔记配上预先写好的建议，不联网、不花钱，可以照常试勾选、应用和撤销。
 3. 要处理自己的笔记，打开“设置 → AI Assistant Suite → 模型连接”：选服务商（默认 DeepSeek），选择或新建密钥，模型用推荐的就行，点“测试”。然后打开一篇笔记，选好要做的事，点“生成建议”。
 
-**需要** Obsidian 1.13 或更新（电脑、手机都行），再加一个 API 密钥或本地模型。**费用** 插件不要钱；模型按用量付给你选的服务商，本地模型免费。
+**需要** Obsidian 1.13 或更新（电脑、手机都行），再加一个 API 密钥或本地模型。**费用** 插件不要钱；模型按用量付给你选的服务商，本地模型不收 API 费用。
+
+遇到问题？[复制一段排查提示词](docs/troubleshooting.zh-CN.md) 给你的 AI 助手。
 
 ## 其余内容
 
@@ -54,7 +56,7 @@
 
 - **需要：** Obsidian 1.13 或更新，电脑和手机都能用；再准备一个模型服务商的 API 密钥，或者电脑上的本地模型（Ollama、LM Studio）。
 - **插件费用：** 免费开源（MIT）。不用注册作者的账号，没有订阅，没有统计上报。
-- **模型费用：** 按用量付给你选的服务商。本地模型不花钱。有的服务商有免费额度或新用户赠送额度，以它们官网的价格页为准，价格经常变。“测试”只发一句很短的话、要一个很短的回答，一般不到一分钱。
+- **模型费用：** 按用量付给你选的服务商。本地模型不收 API 费用。有的服务商有免费额度或新用户赠送额度，以它们官网的价格页为准，价格经常变。“测试”只发一句很短的话、要一个很短的回答，一般不到一分钱。
 
 </details>
 
@@ -104,7 +106,7 @@
 - 建议的质量取决于模型，尤其是改写正文，应用前要看。
 - 批量处理每篇笔记发一次请求，文件夹大，费用就相应多。
 - 回答不是逐字显示的：请求走 Obsidian 的 `requestUrl`，手机能用、不受跨域限制，但回答要整段到齐才显示。测试中用 DeepSeek Flash 整理一篇 10000 字的笔记约 48 秒。
-- 手机访问不到电脑上的本地模型。
+- 手机上的默认 `localhost` 地址连不到电脑上的本地模型。
 
 </details>
 
