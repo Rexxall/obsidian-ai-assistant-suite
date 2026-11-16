@@ -7,7 +7,14 @@ export default defineConfig([
   {
     files: ["src/**/*.js"],
     languageOptions: {
-      parserOptions: { projectService: { allowDefaultProject: ["src/*.js"] } }
+      parserOptions: { projectService: true, tsconfigRootDir: import.meta.dirname }
+    }
+  },
+  {
+    // The shared AI layer (rex-ai-kit), vendored as TypeScript; esbuild bundles it into main.js.
+    files: ["src/**/*.ts"],
+    languageOptions: {
+      parserOptions: { projectService: true, tsconfigRootDir: import.meta.dirname }
     }
   }
 ]);

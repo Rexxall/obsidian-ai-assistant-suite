@@ -1,4 +1,6 @@
-import { apiVersion, Platform, Plugin, Notice, PluginSettingTab, SettingPage, Setting, FuzzySuggestModal, Modal, ItemView, MarkdownRenderer, SecretComponent, Menu, setIcon, parseYaml, stringifyYaml, getLanguage, requestUrl } from 'obsidian';
+import { apiVersion, Platform, Plugin, Notice, PluginSettingTab, SettingPage, Setting, FuzzySuggestModal, Modal, ItemView, MarkdownRenderer, Menu, setIcon, parseYaml, stringifyYaml, getLanguage, requestUrl } from 'obsidian';
+import { AiClient, AiError, ModelCache, getProvider, inferProviderId, migrateKey, nodeCliRunner, requestUrlTransport, resolveProvider, slotFromEndpoint } from './vendor/rex-ai-kit/index';
+import { renderAiSettings } from './vendor/rex-ai-kit/settingsUI';
 
 // 界面主体是中文；命令名跟随 Obsidian 语言，非中文时用英文
 const isChineseInterface = () => {
@@ -48,78 +50,72 @@ function confirmAction(app, message, confirmText) {
 const ASSISTANT_VIEW_TYPE = "ai-assistant-view";
 const ASSISTANT_WORKBENCH_TYPE = "ai-assistant-workbench-view";
 const REDACTED_API_KEY = '[REDACTED]';
-// 服务商、型号和示例地址是专名，按各家原样拼写，界面文字里从这里取。
-// 地址和型号核自各家官方文档（2026-10-29）；国内常用的放前面，默认 DeepSeek。
-const PROVIDERS = {
-    deepseek: { name: ['DeepSeek', 'DeepSeek'], url: 'https://api.deepseek.com/chat/completions',
-        models: [['deepseek-flash', 'DeepSeek Flash'], ['deepseek-v4-pro', 'DeepSeek V4 Pro']], keyPage: 'https://platform.deepseek.com/api_keys' },
-    qwen: { name: ['通义千问（阿里云百炼）', 'Qwen (Alibaba Cloud Model Studio)'], url: 'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions',
-        models: [['qwen-plus', 'Qwen Plus'], ['qwen-max', 'Qwen Max'], ['qwen-flash', 'Qwen Flash']], keyPage: 'https://bailian.console.aliyun.com/' },
-    siliconflow: { name: ['硅基流动', 'SiliconFlow'], url: 'https://api.siliconflow.cn/v1/chat/completions',
-        models: [['deepseek-ai/DeepSeek-V4-Flash', 'DeepSeek V4 Flash'], ['Qwen/Qwen3-32B', 'Qwen3 32B']], keyPage: 'https://cloud.siliconflow.cn/account/ak' },
-    kimi: { name: ['Kimi（月之暗面）', 'Kimi (Moonshot AI)'], url: 'https://api.moonshot.cn/v1/chat/completions',
-        models: [['kimi-k3', 'Kimi K3'], ['kimi-k2.6', 'Kimi K2.6']], keyPage: 'https://platform.kimi.com/' },
-    zhipu: { name: ['智谱 GLM', 'Zhipu GLM'], url: 'https://open.bigmodel.cn/api/paas/v4/chat/completions',
-        models: [['glm-5.3', 'GLM-5.3'], ['glm-5.3-flash', 'GLM-5.3 Flash']], keyPage: 'https://open.bigmodel.cn/' },
-    local: { name: ['本地模型（Ollama、LM Studio）', 'Local model (Ollama, LM Studio)'], url: 'http://localhost:11434/v1/chat/completions', models: [], local: true },
-    gemini: { name: ['Google Gemini', 'Google Gemini'], url: '', models: [['gemini-2.5-flash', 'Gemini 2.5 Flash'], ['gemini-2.5-pro', 'Gemini 2.5 Pro']], keyPage: 'https://aistudio.google.com/apikey' },
-    openai: { name: ['自定义（OpenAI 兼容格式）', 'Custom (OpenAI-compatible)'], url: '', models: [] },
-};
-const providerInfo = (id) => PROVIDERS[id] || PROVIDERS.openai;
+const PLUGIN_SECRET_PREFIX = 'ai-assistant-suite';
+// 服务商、地址、型号和钥匙串名都来自共用的 rex-ai-kit；界面跟着插件语言（中文或英文）
+const aiLang = () => isChineseInterface() ? 'zh' : 'en';
 const hostOf = (url) => /^[a-z]+:\/\/([^/?#]+)/i.exec(String(url || '').trim())?.[1].toLowerCase() || '';
-const presetForUrl = (url) => {
-    const host = hostOf(url);
-    return host ? ['deepseek', 'qwen', 'siliconflow', 'kimi', 'zhipu'].find(id => hostOf(PROVIDERS[id].url) === host) || null : null;
-};
-const providerName = (id) => { const [zh, en] = providerInfo(id).name; return tr(zh, en); };
-// 错误说明和诊断里不能出现密钥：遮掉请求头里的那个值，以及常见的密钥样式
-function redactSecrets(text, headers = {}) {
-    let out = String(text ?? '');
-    const values = [headers.Authorization?.replace(/^Bearer\s+/i, ''), headers['x-goog-api-key']].filter(v => v && v.length >= 6);
-    for (const value of values) out = out.split(value).join('[key]');
-    return out
-        .replace(/Bearer\s+[^\s"',]+/gi, 'Bearer [key]')
-        .replace(/\bsk-[A-Za-z0-9_-]{6,}/g, 'sk-[key]')
-        .replace(/\bAIza[0-9A-Za-z_-]{10,}/g, '[key]')
-        .replace(/([?&](?:key|api_key|apikey|access_token)=)[^&\s"']+/gi, '$1[key]');
+const slotOf = (config) => config?.ai || { provider: 'deepseek', model: '' };
+const providerOf = (config) => resolveProvider(slotOf(config), aiLang());
+const providerLabel = (config) => providerOf(config).name;
+const defaultModelOf = (providerId) => getProvider(providerId)?.picks.find(p => p.scene === 'cheap')?.id || getProvider(providerId)?.picks[0]?.id || '';
+// 新装时先看钥匙串里已经有哪家的密钥（别的插件存过就不用再填）；都没有时用 DeepSeek。笔记是私人内容，不引导去 Gemini 免费档
+const FIRST_RUN_ORDER = ['anthropic', 'openai', 'deepseek', 'gemini', 'qwen', 'kimi', 'zhipu', 'siliconflow', 'openrouter'];
+
+// 旧版（1.8 及以前）一条配置的“服务商 + 地址 + 模型 + 钥匙串名”转成 kit 的 slot；地址是官方的就不留，代理和本地端口照留
+function slotFromLegacyConfig(config) {
+    const legacy = config.apiProvider || 'openai';
+    const url = String(config.apiUrl || '').trim().replace(/\/+$/, '').replace(/\/chat\/completions$/, '');
+    let slot;
+    if (legacy === 'local') {
+        // 旧版本地模型默认走 Ollama；非常见端口的本地服务按 OpenAI 兼容格式走，不要求密钥
+        const address = url || 'http://localhost:11434/v1';
+        slot = slotFromEndpoint({ url: address, provider: inferProviderId(address) === 'ollama' ? 'ollama' : 'lmstudio', model: config.modelName, secretName: config.apiKeySecret });
+    } else if (legacy === 'openai') {
+        slot = slotFromEndpoint({ url, model: config.modelName, secretName: config.apiKeySecret });
+    } else {
+        slot = slotFromEndpoint({ url, provider: legacy, model: config.modelName, secretName: config.apiKeySecret });
+    }
+    if (!slot.model) slot.model = defaultModelOf(slot.provider);
+    return slot;
 }
 
-// 把一次失败归到用户能处理的那一类
+// 把一次失败归到用户能处理的那一类。kit 已经分好大类，这里再把 404 地址错、400 参数错、空回答分出来
 function classifyApiError(error) {
-    if (error?.kind) return error.kind;
     const status = error?.status;
     const text = `${error?.detail || ''} ${error?.message || ''}`;
-    if (status === 401 || status === 403) return 'auth';
-    if (status === 402) return 'quota';
-    if (status === 429) return /quota|balance|insufficient|billing|arrear|余额|欠费|额度/i.test(text) ? 'quota' : 'rate';
-    if (status === 404) return /model/i.test(text) ? 'model' : 'url';
-    if ((status === 400 || status === 422) && /model[^.]*(not|exist|found|invalid)|supported (api )?model|you passed|invalid model|model_not_found|模型不存在|模型.*不支持/i.test(text)) return 'model';
-    if (status === 400 || status === 422) return 'params';
-    if (status >= 500) return 'server';
+    if (error instanceof AiError) {
+        if (error.kind === 'model' && status === 404 && !/model/i.test(error.detail || '')) return 'url';
+        if (error.kind === 'bad-response') return status === 400 || status === 422 ? 'params' : status && status >= 200 && status < 300 ? 'empty' : 'other';
+        return error.kind;
+    }
+    if (error?.kind) return error.kind;
     if (!status && /net::|ERR_|ENOTFOUND|ECONNREFUSED|ECONNRESET|getaddrinfo|Failed to fetch|network|CORS|certificate/i.test(text)) return 'network';
     return 'other';
 }
 
-// 每类失败：一句发生了什么，一个下一步
+// 每类失败：一句发生了什么，一个下一步，能直接点的后台链接
 function describeApiProblem(kind, config = null, error = null) {
-    const name = config ? providerName(config.apiProvider) : '';
-    const keyPage = config ? providerInfo(config.apiProvider).keyPage || '' : '';
+    const provider = config ? providerOf(config) : null;
+    const name = provider?.name || '';
+    const keyPage = provider?.consoleUrl || '';
+    const local = provider?.group === 'local' && !provider.localAgent;
     const detail = error?.detail ? ` ${error.detail}` : '';
     const table = {
         'no-config': [tr('还没有 AI 配置。', 'There is no AI configuration yet.'), tr('在设置里新增一条配置。', 'Add a configuration in settings.')],
-        'no-key': [tr('这条配置还没有填 API 密钥。', 'This configuration has no API key.'), tr(`到${name}后台获取密钥，粘贴到“API 密钥”后点保存。`, `Get a key from ${name}, paste it into API key and save.`)],
-        'no-url': [tr('自定义服务需要填写接口地址。', 'A custom service needs an API URL.'), tr(`填写完整地址，例如 ${API_URL_EXAMPLE}。`, `Enter the full address, for example ${API_URL_EXAMPLE}.`)],
-        'no-model': [tr('还没有填写模型。', 'No model is set.'), tr('在“主模型”里填写服务商给的模型名。', 'Enter the model name from your provider under Main model.')],
-        'auth': [tr(`密钥不对或已失效（HTTP ${error?.status || 401}）。`, `The key was rejected (HTTP ${error?.status || 401}).`), tr('到服务商后台重新复制密钥，确认没有多余空格，并且密钥属于这家服务商。', 'Copy the key again from the provider, check for extra spaces and that the key belongs to this provider.')],
-        'quota': [tr('账户余额或额度不足。', 'The account is out of balance or quota.'), tr('到服务商后台充值或查看额度，然后再测一次。', 'Top up or check the quota with the provider, then test again.')],
+        'no-key': [tr(`还没有选 ${name} 的密钥。`, `No ${name} key is chosen yet.`), tr(`到${name}后台复制密钥，在“API 密钥”里新建一项粘贴进去。`, `Copy a key from ${name}, then create an entry under API key and paste it.`)],
+        'no-url': [tr('“其他（OpenAI 兼容）”需要服务器地址。', '“Other (OpenAI compatible)” needs a server address.'), tr('在“高级”里填地址，例如 https://api.example.com/v1。', 'Enter the address under Advanced, for example https://api.example.com/v1.')],
+        'no-model': [tr('还没有选模型。', 'No model is chosen.'), tr('在“模型”里选一个，或填服务商给的模型名。', 'Pick one under Model, or type the name your provider gives.')],
+        'auth': [tr(`${name} 不认这个密钥（HTTP ${error?.status || 401}）。`, `${name} rejected the key (HTTP ${error?.status || 401}).`), tr('到服务商后台重新复制密钥，确认没有多余空格，并且密钥属于这家服务商。', 'Copy the key again from the provider, check for extra spaces and that the key belongs to this provider.')],
+        'quota': [tr(`${name} 账户余额或额度不足。`, `The ${name} account is out of balance or quota.`), tr('到服务商后台充值或查看额度，然后再测一次；也可以勾一条备用配置。', 'Top up or check the quota with the provider, then test again; or allow a backup configuration.')],
         'rate': [tr('请求太频繁，被服务商限流（HTTP 429）。', 'Too many requests; the provider is rate limiting (HTTP 429).'), tr('等一分钟再试。', 'Wait a minute and try again.')],
-        'model': [tr('服务商不认这个模型名。', 'The provider does not recognise this model name.'), tr('从下拉框里选一个预设模型，或到服务商文档核对型号拼写。', 'Pick a preset model, or check the spelling against the provider\'s docs.')],
-        'url': [tr('接口地址找不到（HTTP 404）。', 'The API URL was not found (HTTP 404).'), tr('检查接口地址；预设服务商可以把地址留空，用官方地址。', 'Check the API URL; for a preset provider you can leave it empty to use the official one.')],
-        'timeout': [tr('等了太久没有回答。', 'No answer in time.'), tr('检查网络和代理；本地模型请确认本地服务已经启动。', 'Check your network and proxy; for a local model make sure the local server is running.')],
-        'network': [tr('连不上服务器。', 'Could not reach the server.'), tr('检查网络、代理和地址拼写；本地模型请确认本地服务已启动，手机上访问不到电脑的 localhost。', 'Check the network, proxy and address; for a local model make sure the server is running. A phone cannot reach your computer\'s localhost.')],
-        'params': [tr(`服务商不接受请求里的参数（HTTP ${error?.status || 400}）。`, `The provider rejected a request parameter (HTTP ${error?.status || 400}).`), tr('关掉“深度思考”再测；自定义服务请确认它兼容 OpenAI 格式。', 'Turn off Deep thinking and test again; for a custom service, check that it is OpenAI-compatible.')],
-        'server': [tr(`服务商那边出错（HTTP ${error?.status || 500}）。`, `The provider had an error (HTTP ${error?.status || 500}).`), tr('稍后再试；一直失败可以加一条备用配置。', 'Try again later; if it keeps failing, add a backup configuration.')],
+        'model': [tr(`${name} 没有这个模型，或你的账户用不了它。`, `${name} does not offer this model, or your account cannot use it.`), tr('在“模型”里从列表选一个；列表旧了点“刷新”。', 'Pick one from the list under Model; press Refresh if the list is old.')],
+        'url': [tr('服务器地址找不到（HTTP 404）。', 'The server address was not found (HTTP 404).'), tr('检查“高级”里的地址；用官方服务时把它清空。', 'Check the address under Advanced; clear it to use the official server.')],
+        'timeout': [tr('等了太久没有回答。', 'No answer in time.'), local ? tr('确认本机的模型服务已经启动，模型已经下载。', 'Make sure the local model server is running and the model is downloaded.') : tr('检查网络和代理后再试；笔记很长时可以先分段处理。', 'Check the network and proxy, then try again; for a very long note, process it in parts.')],
+        'network': [tr('连不上服务器。', 'Could not reach the server.'), local ? tr('确认本机的模型服务已经启动；手机访问不到电脑上的服务。', 'Make sure the local server is running; a phone cannot reach a server on your computer.') : tr('检查网络、代理和地址拼写。', 'Check the network, proxy and address.')],
+        'params': [tr(`${name} 不接受请求里的参数（HTTP ${error?.status || 400}）。`, `${name} rejected a request parameter (HTTP ${error?.status || 400}).`), tr('关掉“深度思考”再测；自定义服务请确认它兼容 OpenAI 格式。', 'Turn off Deep thinking and test again; for a custom service, check that it is OpenAI-compatible.')],
+        'server': [tr(`${name} 那边出错（HTTP ${error?.status || 500}）。`, `${name} had an error (HTTP ${error?.status || 500}).`), tr('稍后再试；一直失败可以勾一条备用配置。', 'Try again later; if it keeps failing, allow a backup configuration.')],
         'empty': [tr('服务商有回答，但没有内容。', 'The provider answered with no content.'), tr('换一个模型再试。', 'Try another model.')],
+        'aborted': [tr('已取消。', 'Cancelled.'), tr('需要时再点一次。', 'Run it again when you need it.')],
         'other': [tr(`连接失败。${detail}`, `Connection failed.${detail}`), tr('复制诊断信息，对照服务商文档检查。', 'Copy the diagnostics and compare them with the provider\'s docs.')],
     };
     const [message, next] = table[kind] || table.other;
@@ -143,12 +139,6 @@ function connectionChecks(kind, status = null, sent = true) {
     }));
 }
 
-const API_URL_EXAMPLE = 'https://api.example.com/v1/chat/completions';
-const LM_STUDIO_URL = 'http://localhost:1234/v1/chat/completions';
-const LOCAL_MODEL_EXAMPLE = 'qwen3:8b';
-const LOCAL_MODEL_DEFAULT_URL = PROVIDERS.local.url;
-
-
 // 1.7 以前的密钥格式：__ENC__:命名空间:密文，口令写死在插件里。只为迁移读一次，不再写
 async function readLegacyKey(value) {
     if (!value.startsWith('__ENC__:')) return value;
@@ -167,22 +157,13 @@ async function readLegacyKey(value) {
     return new TextDecoder().decode(plain);
 }
 
-// 已知服务商的密钥用各插件共用的名字（如 deepseek-api-key），在别的插件里填过就能直接选；
-// 自定义地址和本地服务用本插件自己的名字
-const SHARED_KEY_PROVIDERS = ['deepseek', 'qwen', 'siliconflow', 'kimi', 'zhipu', 'gemini'];
-function secretNamesFor(config) {
+// 旧密钥搬进钥匙串时用的共用名：已知服务商用各插件共用的名字（如 deepseek-api-key）；
+// 自定义服务每条配置一个自己的名字，免得两个不同的服务器抢同一个名字
+function sharedSecretNameFor(config) {
+    const provider = getProvider(slotOf(config).provider);
+    if (provider && provider.id !== 'custom' && provider.secretName) return provider.secretName;
     const id = String(config.id || 'default').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'default';
-    const own = `ai-assistant-suite-${id}-api-key`;
-    return SHARED_KEY_PROVIDERS.includes(config.apiProvider) ? [`${config.apiProvider}-api-key`, own] : [own];
-}
-
-// 存到第一个空着或已是同一个值的名字下，不覆盖别的插件存的密钥
-function storeSecret(storage, names, value) {
-    const last = names[names.length - 1];
-    const candidates = [...names, ...Array.from({ length: 98 }, (_, i) => `${last}-${i + 2}`)];
-    const name = candidates.find(n => { const existing = storage.getSecret(n); return !existing || existing === value; });
-    storage.setSecret(name, value);
-    return name;
+    return `${PLUGIN_SECRET_PREFIX}-${id}-api-key`;
 }
 
 const STRUCTURIZER_DEFAULT_PROMPT = `你是一位非常精准的笔记结构化编辑。你的任务是优化给定文本的结构和可读性，同时严格遵守以下规则。
@@ -526,16 +507,16 @@ const DEFAULT_SETTINGS = {
     apiConfigs: [
         {
             id: 'default',
-            name: 'DeepSeek',
-            apiProvider: 'deepseek',
-            apiUrl: '',
-            modelName: 'deepseek-flash',
+            name: '',
+            ai: { provider: 'deepseek', model: 'deepseek-flash' },
             auxiliaryModelName: '',
             deepseekThinking: false,
             enabled: true,
             allowFallback: false
         }
     ],
+    // 各服务商的模型列表缓存（只在点“检查”或“刷新”时更新）
+    modelCache: undefined,
 
     // Structurizer Settings
     structurizerPrompt: STRUCTURIZER_DEFAULT_PROMPT,
@@ -2430,7 +2411,7 @@ class AssistantView extends ItemView {
         modelStatus.createEl("span", { text: tr("主模型:", 'Main model:'), cls: "status-label" });
         const activeConfig = this.plugin.getActiveApiConfig();
         modelStatus.createEl("span", {
-            text: activeConfig?.modelName || tr("未设置", 'Not set'),
+            text: activeConfig?.ai?.model || tr("未设置", 'Not set'),
             cls: "status-value"
         });
     }
@@ -2902,10 +2883,17 @@ class AiAssistantSuite extends Plugin {
         }
         this.settings.apiConfigs.forEach((config, index) => {
             if (!config.id) config.id = `config_${index}_${Date.now()}`;
-            if (!config.name) config.name = `Config ${index + 1}`;
-            if (!config.apiProvider) config.apiProvider = 'openai';
-            // 旧版只有“OpenAI 兼容”一项：地址是哪家官方的，就认成那家预设，地址和型号原样保留
-            if (config.apiProvider === 'openai') config.apiProvider = presetForUrl(config.apiUrl) || 'openai';
+            // 1.9 起每条配置只存一个 kit slot：{ provider, model, secretName?, baseUrl? }
+            if (!config.ai || typeof config.ai !== 'object') {
+                config.ai = slotFromLegacyConfig(config);
+                // 旧版自动起的名字（“Deepseek”“Gemini”）不算本人起的：清掉，界面跟着服务商名显示
+                const lower = String(config.name || '').trim().toLowerCase();
+                const provider = getProvider(config.ai.provider);
+                if (lower && provider && [provider.id, provider.name.toLowerCase(), provider.name.replace(/^Google\s+/i, '').toLowerCase()].includes(lower)) config.name = '';
+            }
+            for (const key of ['apiProvider', 'apiUrl', 'modelName', 'apiKeySecret']) delete config[key];
+            if (typeof config.ai.model !== 'string') config.ai.model = '';
+            if (config.name === undefined) config.name = '';
             if (config.enabled === undefined) config.enabled = true;
         });
         if (!this.settings.activeConfigId && this.settings.apiConfigs[0]) {
@@ -2928,7 +2916,43 @@ class AiAssistantSuite extends Plugin {
 
     getAuxiliaryModelName() {
         const activeConfig = this.getActiveApiConfig();
-        return activeConfig?.auxiliaryModelName || activeConfig?.modelName || null;
+        return activeConfig?.auxiliaryModelName || activeConfig?.ai?.model || null;
+    }
+
+    // 配置在界面上的名字：本人起过名就用，没起就用服务商名
+    configLabel(config) {
+        return String(config?.name || '').trim() || providerLabel(config);
+    }
+
+    // 只读钥匙串里的名字，不联网。新装时用第一个已经存了密钥的服务商
+    firstRunSlot() {
+        const storage = this.app?.secretStorage;
+        for (const id of FIRST_RUN_ORDER) {
+            const provider = getProvider(id);
+            try {
+                if (provider?.secretName && storage?.getSecret(provider.secretName)?.trim()) return { provider: id, model: defaultModelOf(id) };
+            } catch { /* 钥匙串读不了就当没有 */ }
+        }
+        return { provider: 'deepseek', model: defaultModelOf('deepseek') };
+    }
+
+    // 请求时才建客户端：深度思考这类 kit 不认识的参数，在发出前补进请求体
+    aiClient(bodyPatch = null) {
+        const transport = requestUrlTransport(requestUrl);
+        const patched = bodyPatch ? async (req) => {
+            if (req.body && /\/chat\/completions$/.test(req.url)) {
+                try { req = { ...req, body: JSON.stringify({ ...JSON.parse(req.body), ...bodyPatch }) }; } catch { /* 不是 JSON 就原样发 */ }
+            }
+            return transport(req);
+        } : transport;
+        if (!this.aiCache) this.aiCache = new ModelCache(this.settings?.modelCache);
+        return new AiClient({
+            keys: this.app?.secretStorage,
+            transport: patched,
+            cache: this.aiCache,
+            cli: Platform.isDesktopApp ? nodeCliRunner() : undefined,
+            lang: aiLang(),
+        });
     }
 
     // Try the configuration that last answered first, so one dead provider does not
@@ -2959,13 +2983,14 @@ class AiAssistantSuite extends Plugin {
         const [primary, ...others] = usable;
         const modal = new GlassModal(this.app);
         modal.contentEl.createEl('h2', { text: tr('出错时要改发给别家吗？', 'Send to another service when one fails?') });
+        const label = c => this.configLabel(c);
         modal.contentEl.createEl('p', { text: tr(
-            `以前「${primary.name}」失败时，会自动改发给 ${others.map(c => `「${c.name}」`).join('、')}。现在要你允许才会改发。`,
-            `Before, when "${primary.name}" failed, notes were sent to ${others.map(c => `"${c.name}"`).join(', ')} instead. Now that needs your permission.`) });
+            `以前「${label(primary)}」失败时，会自动改发给 ${others.map(c => `「${label(c)}」`).join('、')}。现在要你允许才会改发。`,
+            `Before, when "${label(primary)}" failed, notes were sent to ${others.map(c => `"${label(c)}"`).join(', ')} instead. Now that needs your permission.`) });
         const buttons = modal.contentEl.createDiv({ cls: 'modal-button-container' });
         const choose = async keep => { await this.applyBackupChoice(keep); modal.close(); };
         buttons.createEl('button', { text: tr('照旧改发', 'Keep sending to them') }).addEventListener('click', () => void choose(true));
-        buttons.createEl('button', { cls: 'mod-cta', text: tr(`只用「${primary.name}」`, `Only use "${primary.name}"`) }).addEventListener('click', () => void choose(false));
+        buttons.createEl('button', { cls: 'mod-cta', text: tr(`只用「${label(primary)}」`, `Only use "${label(primary)}"`) }).addEventListener('click', () => void choose(false));
         modal.open();
     }
 
@@ -2975,44 +3000,66 @@ class AiAssistantSuite extends Plugin {
         return [candidates[index], ...candidates.slice(0, index), ...candidates.slice(index + 1)];
     }
 
-    // 密钥存在 Obsidian 的钥匙串里（本机，不随库同步）；每套配置只记密钥的名字 apiKeySecret
-    getApiKey(config) {
-        const name = config?.apiKeySecret;
-        return (name && this.app?.secretStorage?.getSecret(name)) || '';
-    }
-
+    // 密钥存在 Obsidian 的钥匙串里（本机，不随库同步）；配置里只记名字，发请求时才读
     hasStoredApiKey(config) {
-        return !!this.getApiKey(config);
+        const provider = providerOf(config);
+        if (!provider.needsKey || provider.localAgent) return true;
+        try {
+            return !!this.app?.secretStorage?.getSecret(provider.secretName)?.trim();
+        } catch {
+            return false;
+        }
     }
 
-    // 本地模型（Ollama、LM Studio）不需要密钥；其余服务商必须有密钥
+    // 本地模型不需要密钥；“其他（OpenAI 兼容）”还要有地址
     isConfigUsable(config) {
-        if (config?.apiProvider === 'local') return true;
+        const provider = providerOf(config);
+        if (provider.id === 'custom' && !provider.baseUrl) return false;
         return this.hasStoredApiKey(config);
     }
 
-    // 1.7 以前密钥存在插件数据里（固定口令加密，等于明文）。启动时搬进钥匙串，搬完从数据里删掉；
-    // 读不出的旧值原样留着，不丢
+    // 1.7 以前密钥存在插件数据里（固定口令加密，等于明文）。启动时解开，用 kit 的 migrateKey 存进钥匙串
+    // （不覆盖别的插件存在共用名下的不同密钥），存完从数据里删掉；读不出的旧值原样留着，不丢。
+    // 另外：自己的名字下没有密钥、共用名下有时，改用共用名（别的插件已经存过）
     async moveKeysToSecretStorage() {
         const storage = this.app?.secretStorage;
         if (!storage) return false;
         let moved = false;
         for (const config of this.settings.apiConfigs || []) {
-            if (!('apiKey' in config)) continue;
-            let key = '';
-            if (config.apiKey && config.apiKey !== REDACTED_API_KEY) {
-                try {
-                    key = await readLegacyKey(config.apiKey);
-                } catch (error) {
-                    console.error('AI Assistant Suite: could not read a saved key; it is left in the settings.', error);
-                    continue;
+            if (!config.ai) continue;
+            if ('apiKey' in config) {
+                let key = '';
+                if (config.apiKey && config.apiKey !== REDACTED_API_KEY) {
+                    try {
+                        key = (await readLegacyKey(config.apiKey)).trim();
+                    } catch (error) {
+                        console.error('AI Assistant Suite: could not read a saved key; it is left in the settings.', error);
+                        continue;
+                    }
                 }
+                if (key && !config.ai.secretName) {
+                    const name = migrateKey(storage, sharedSecretNameFor(config), key, PLUGIN_SECRET_PREFIX);
+                    if (name !== getProvider(config.ai.provider)?.secretName) config.ai.secretName = name;
+                }
+                delete config.apiKey;
+                moved = true;
             }
-            if (key && !config.apiKeySecret) config.apiKeySecret = storeSecret(storage, secretNamesFor(config), key);
-            delete config.apiKey;
-            moved = true;
+            const own = config.ai.secretName;
+            const shared = getProvider(config.ai.provider)?.secretName;
+            if (own && shared && own !== shared && !this.readSecret(own) && this.readSecret(shared)) {
+                delete config.ai.secretName;
+                moved = true;
+            }
         }
         return moved;
+    }
+
+    readSecret(name) {
+        try {
+            return this.app?.secretStorage?.getSecret(name)?.trim() || '';
+        } catch {
+            return '';
+        }
     }
 
     redactSettingsForExport(settings) {
@@ -3034,8 +3081,12 @@ class AiAssistantSuite extends Plugin {
         if (Array.isArray(importedSettings.apiConfigs)) {
             merged.apiConfigs = importedSettings.apiConfigs.map(config => {
                 const existing = existingConfigs.get(config.id);
-                if (!config.apiKeySecret && existing?.apiKeySecret) {
-                    return { ...config, apiKeySecret: existing.apiKeySecret };
+                // 导入的设置没有密钥：同一条配置在本机已经选过的钥匙串名照旧用
+                if (config.ai && !config.ai.secretName && existing?.ai?.secretName && existing.ai.provider === config.ai.provider) {
+                    return { ...config, ai: { ...config.ai, secretName: existing.ai.secretName } };
+                }
+                if (!config.ai && !config.apiKeySecret && existing?.ai?.secretName) {
+                    return { ...config, apiKeySecret: existing.ai.secretName };
                 }
                 return config;
             });
@@ -3399,9 +3450,10 @@ class AiAssistantSuite extends Plugin {
     async validateApiConfig(configToTest = null) {
         const config = configToTest || this.getActiveApiConfig();
         if (!config) return { valid: false, ...describeApiProblem('no-config'), checks: connectionChecks('no-config', null, false) };
-        if (!this.isConfigUsable(config)) return { valid: false, ...describeApiProblem('no-key', config), checks: connectionChecks('no-key', null, false) };
-        if (config.apiProvider === 'openai' && !config.apiUrl) return { valid: false, ...describeApiProblem('no-url', config), checks: connectionChecks('no-url', null, false) };
-        if (config.apiProvider !== 'local' && !config.modelName && !providerInfo(config.apiProvider).models.length) {
+        const provider = providerOf(config);
+        if (provider.id === 'custom' && !provider.baseUrl) return { valid: false, ...describeApiProblem('no-url', config), checks: connectionChecks('no-url', null, false) };
+        if (!this.hasStoredApiKey(config)) return { valid: false, ...describeApiProblem('no-key', config), checks: connectionChecks('no-key', null, false) };
+        if (!slotOf(config).model && !defaultModelOf(provider.id)) {
             return { valid: false, ...describeApiProblem('no-model', config), checks: connectionChecks('no-model', null, false) };
         }
         try {
@@ -3410,7 +3462,7 @@ class AiAssistantSuite extends Plugin {
             return { valid: true, kind: 'ok', checks: connectionChecks('ok') };
         } catch (error) {
             const kind = classifyApiError(error);
-            this.lastApiProblem = { kind, status: error?.status || null, at: Date.now(), provider: config.apiProvider };
+            this.lastApiProblem = { kind, status: error?.status || null, at: Date.now(), provider: slotOf(config).provider };
             return { valid: false, ...describeApiProblem(kind, config, error), checks: connectionChecks(kind, error?.status) };
         }
     }
@@ -3507,7 +3559,8 @@ class AiAssistantSuite extends Plugin {
             `Configurations: ${(this.settings.apiConfigs || []).length}, backups allowed: ${(this.settings.apiConfigs || []).filter(c => c.allowFallback === true).length}`,
         ];
         (this.settings.apiConfigs || []).forEach((config, index) => {
-            lines.push(`#${index + 1} provider=${config.apiProvider || 'openai'} host=${hostOf(this.resolveProviderUrl(config)) || '-'} model=${config.modelName || '-'} helper=${config.auxiliaryModelName || '-'} key=${this.hasStoredApiKey(config) ? 'set' : 'none'} enabled=${config.enabled !== false}`);
+            const provider = providerOf(config);
+            lines.push(`#${index + 1} provider=${provider.id} host=${hostOf(provider.baseUrl) || '-'}${slotOf(config).baseUrl ? ' (custom address)' : ''} model=${slotOf(config).model || '-'} helper=${config.auxiliaryModelName || '-'} key=${this.hasStoredApiKey(config) ? 'set' : 'none'} enabled=${config.enabled !== false}`);
         });
         const last = this.lastApiProblem;
         lines.push(last ? `Last test: ${last.kind}${last.status ? ` (HTTP ${last.status})` : ''} at ${new Date(last.at).toISOString()}` : 'Last test: none');
@@ -3596,8 +3649,9 @@ class AiAssistantSuite extends Plugin {
         const bytes = (files || []).reduce((sum, file) => sum + (file?.stat?.size || 0), 0);
         const configs = this.fallbackChain();
         const destinations = configs.map(config => ({
-            name: config.name || config.id || tr('未命名配置', 'Unnamed configuration'),
-            local: config.apiProvider === 'local'
+            name: this.configLabel(config),
+            // 本机的 Claude Code、Codex 也在“本机”分组，但它们会把内容发给各自的云服务
+            local: providerOf(config).group === 'local' && !providerOf(config).localAgent
         }));
         const size = bytes >= 1024 * 1024
             ? `${(bytes / 1024 / 1024).toFixed(1)} MB`
@@ -3660,7 +3714,7 @@ class AiAssistantSuite extends Plugin {
                     throw this.createAbortError();
                 }
                 const config = candidates[i];
-                const label = config.name || config.id;
+                const label = this.configLabel(config);
                 try {
                     const result = await this._callSingleConfig(prompt, modelNameOverride, expectJson, config, requestOptions);
                     this.lastWorkingConfigId = config.id;
@@ -3692,159 +3746,42 @@ class AiAssistantSuite extends Plugin {
         }
     }
 
-    // 预设服务商：留空用官方地址；填基础地址（如 https://api.deepseek.com 或 …/v1）时补上 /chat/completions。
-    // 自定义和本地照填的地址原样用。
-    resolveProviderUrl(config) {
-        const provider = config?.apiProvider || 'openai';
-        const info = providerInfo(provider);
-        const value = (config?.apiUrl || '').trim();
-        if (provider === 'openai') return value;
-        if (provider === 'local') return value || info.url;
-        const url = (value || info.url).replace(/\/+$/, '');
-        return /\/chat\/completions$/.test(url) ? url : `${url}/chat/completions`;
-    }
-
-    resolveDeepSeekUrl(value) {
-        return this.resolveProviderUrl({ apiProvider: 'deepseek', apiUrl: value });
-    }
-
-    defaultModelFor(provider) {
-        return providerInfo(provider).models[0]?.[0] || '';
-    }
-
-    // 对单个 config 执行实际的 API 请求
+    // 对单个配置发一次请求。地址、请求格式、超时和取消都交给 rex-ai-kit；请求一律走 requestUrl（不受跨域限制、手机可用）
     async _callSingleConfig(prompt, modelNameOverride, expectJson, activeConfig, options = {}) {
-        const model = modelNameOverride || activeConfig.modelName || this.defaultModelFor(activeConfig.apiProvider);
-        const provider = activeConfig.apiProvider || 'openai';
-        const apiKey = this.getApiKey(activeConfig);
-
-        if (!apiKey && provider !== 'local') {
-            throw Object.assign(new Error(tr('还没有填写 API 密钥，请在设置里填写。', 'No API key yet. Add one in settings.')), { kind: 'no-key' });
+        const provider = providerOf(activeConfig);
+        const slot = { ...slotOf(activeConfig), model: modelNameOverride || slotOf(activeConfig).model || defaultModelOf(provider.id) };
+        if (provider.id === 'custom' && !provider.baseUrl) {
+            throw Object.assign(new Error(tr('还没有填写服务器地址，请在设置里填写。', 'No server address yet. Add one in settings.')), { kind: 'no-url' });
         }
-
-        let url, requestOptions;
-
-        if (provider === 'gemini') {
-            url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
-            const body = {
-                contents: [{ parts: [{ text: prompt }] }]
-            };
-            if (expectJson) {
-                body.generationConfig = { responseMimeType: "application/json" };
-            }
-            if (options.probe) body.generationConfig = { maxOutputTokens: 16 };
-            requestOptions = {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json",
-                    "x-goog-api-key": apiKey
-                },
-                body: JSON.stringify(body)
-            };
-        } else {
-            url = this.resolveProviderUrl(activeConfig);
-            if (!url) {
-                throw Object.assign(new Error(tr('还没有填写接口地址，请在设置里填写。', 'No API URL yet. Add one in settings.')), { kind: 'no-url' });
-            }
-            const body = {
-                model: model,
-                messages: [{ role: "user", content: prompt }]
-            };
-            if (provider === 'deepseek') body.thinking = { type: activeConfig.deepseekThinking ? 'enabled' : 'disabled' };
-            // 本地模型对 response_format 的支持不一，靠提示词要求 JSON
-            if (expectJson && provider !== 'local') {
-                body.response_format = { type: "json_object" };
-            }
-            if (options.probe) body.max_tokens = 16;
-            const headers = { "Content-Type": "application/json" };
-            if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
-            requestOptions = {
-                method: "POST",
-                headers,
-                body: JSON.stringify(body)
-            };
+        if (!this.hasStoredApiKey(activeConfig)) {
+            throw Object.assign(new Error(tr(`还没有选 ${provider.name} 的密钥，请在设置里选择。`, `No ${provider.name} key is chosen yet. Choose one in settings.`)), { kind: 'no-key' });
         }
-
-        const data = await this.executeJsonRequest(url, requestOptions, options);
+        if (options.signal?.aborted) throw this.createAbortError();
+        // DeepSeek 默认会深度思考；没打开时明确关掉，回答更快
+        const client = this.aiClient(provider.id === 'deepseek' ? { thinking: { type: activeConfig.deepseekThinking ? 'enabled' : 'disabled' } } : null);
+        let result;
+        try {
+            result = await client.complete(slot, {
+                messages: [{ role: 'user', content: prompt }],
+                // 本地服务对 JSON 模式的支持不一，靠提示词要求 JSON
+                json: !!expectJson && provider.group !== 'local',
+                maxTokens: options.probe ? 16 : 8192,
+                signal: options.signal,
+                timeoutMs: options.timeout || 120000,
+            });
+        } catch (error) {
+            if (options.signal?.aborted || error?.kind === 'aborted' || this.isCancellationError(error)) throw this.createAbortError();
+            throw error;
+        }
         // 测试连接只看服务商肯不肯答：回答到了就算通，不看内容
         if (options.probe) return 'OK';
-
-        let resultText = "";
-        if (provider === 'gemini') {
-            resultText = data.candidates?.[0]?.content?.parts?.[0]?.text;
-        } else {
-            resultText = data.choices?.[0]?.message?.content;
-        }
-
+        const resultText = result?.text;
         if (!resultText) {
             // 不把回答原样打到控制台：里面可能有笔记内容
             throw Object.assign(new Error(tr('AI 没有返回内容。', 'The AI returned no content.')), { kind: 'empty' });
         }
-
-        // 请求一律走 requestUrl（不受跨域限制、手机可用），它不能逐段读取，所以结果到齐后一次交给界面
         options.onStream?.(resultText, resultText);
         return resultText;
-    }
-
-    // Wraps the caller's cancel signal with a timeout, so a silent server cannot hang the panel forever.
-    createRequestTimeout(signal, timeoutMs = 120000) {
-        const controller = new AbortController();
-        let timedOut = false;
-        if (signal?.aborted) controller.abort();
-        else signal?.addEventListener?.('abort', () => controller.abort(), { once: true });
-        const timer = window.setTimeout(() => {
-            timedOut = true;
-            controller.abort();
-        }, timeoutMs);
-        return {
-            signal: controller.signal,
-            clear: () => window.clearTimeout(timer),
-            timedOut: () => timedOut,
-            error: () => Object.assign(new Error(tr(`AI 请求超过 ${Math.round(timeoutMs / 1000)} 秒未响应，已停止等待。`, `The AI did not answer within ${Math.round(timeoutMs / 1000)} seconds, so the request was stopped.`)), { kind: 'timeout' })
-        };
-    }
-
-    async executeJsonRequest(url, requestOptions, options = {}) {
-        if (options.signal?.aborted) {
-            throw this.createAbortError();
-        }
-
-        // requestUrl 走 Obsidian 自己的网络层，不受跨域限制，桌面和手机都能用。
-        // 它不能中途取消，所以和超时、手动取消赛跑：谁先到就按谁处理，迟到的回答直接丢掉。
-        const timeout = this.createRequestTimeout(options.signal, options.timeout || 120000);
-        const stopped = new Promise((_, reject) => {
-            const stop = () => reject(timeout.timedOut() ? timeout.error() : this.createAbortError());
-            if (timeout.signal.aborted) stop();
-            else timeout.signal.addEventListener('abort', stop, { once: true });
-        });
-        stopped.catch(() => {});
-        try {
-            const response = await Promise.race([
-                requestUrl({
-                    url,
-                    method: requestOptions.method || 'POST',
-                    headers: requestOptions.headers || {},
-                    body: requestOptions.body,
-                    throw: false
-                }),
-                stopped
-            ]);
-            const text = typeof response.text === 'string' ? response.text : '';
-            if (response.status < 200 || response.status >= 300) {
-                // 服务商的错误说明可能带着密钥片段，先遮掉再显示
-                const detail = redactSecrets(text.substring(0, 200), requestOptions.headers);
-                throw Object.assign(new Error(`HTTP ${response.status}. ${detail}`), { status: response.status, detail });
-            }
-            return JSON.parse(text);
-        } catch (error) {
-            if (timeout.timedOut()) throw timeout.error();
-            if (options.signal?.aborted || this.isCancellationError(error)) {
-                throw this.createAbortError();
-            }
-            throw error;
-        } finally {
-            timeout.clear();
-        }
     }
 
     truncatePreview(content, maxChars = 12000) {
@@ -6130,14 +6067,19 @@ ${content}`)
         this.settings = Object.assign({}, JSON.parse(JSON.stringify(DEFAULT_SETTINGS)), stored);
         if (!Array.isArray(stored.apiConfigs)) delete this.settings.apiConfigs;
         const upgraded = this.migrateLegacySettings();
+        const firstRun = !Array.isArray(this.settings.apiConfigs);
+        const reshaped = Array.isArray(stored.apiConfigs) && stored.apiConfigs.some(c => c && !c.ai);
         this.normalizeSettings();
+        // 从没配过：用钥匙串里已经有的那家；只读名字，不联网
+        if (firstRun) this.settings.apiConfigs[0].ai = this.firstRunSlot();
         const migrated = await this.moveKeysToSecretStorage();
-        if (migrated || upgraded) {
+        if (migrated || upgraded || reshaped) {
             await this.saveSettings();
         }
     }
 
     async saveSettings() {
+        if (this.aiCache) this.settings.modelCache = this.aiCache.toJSON();
         await this.saveData(this.settings);
     }
 
@@ -6157,7 +6099,7 @@ ${content}`)
             version: this.manifest.version,
             history: this.view.history,
             settings: {
-                modelName: this.getActiveApiConfig()?.modelName,
+                modelName: this.getActiveApiConfig()?.ai?.model,
                 auxiliaryModelName: this.getAuxiliaryModelName()
             }
         };
@@ -6268,6 +6210,8 @@ class AiAssistantSettingTab extends PluginSettingTab {
     hide() {
         this.groupEndObserver?.disconnect();
         this.groupEndObserver = null;
+        this.aiUi?.destroy();
+        this.aiUi = null;
         super.hide();
     }
 
@@ -6293,6 +6237,9 @@ class AiAssistantSettingTab extends PluginSettingTab {
     }
 
     renderSettingsBody(containerEl) {
+        // 上一次画的 AI 设置组：取消它还在跑的检查
+        this.aiUi?.destroy();
+        this.aiUi = null;
         this.addSectionHeading(containerEl, tr('连接你的模型', 'Connect your model'));
 
         const activeConfigId = this.plugin.settings.activeConfigId;
@@ -6313,7 +6260,8 @@ class AiAssistantSettingTab extends PluginSettingTab {
             .setName(tr('编辑配置', 'Edit configuration'))
             .addDropdown(dropdown => {
                 apiConfigs.forEach(config => {
-                    const label = config.enabled === false ? tr(`[禁用] ${config.name}`, `[off] ${config.name}`) : config.name;
+                    const name = this.plugin.configLabel(config);
+                    const label = config.enabled === false ? tr(`[禁用] ${name}`, `[off] ${name}`) : name;
                     dropdown.addOption(config.id, label);
                 });
                 dropdown.setValue(activeConfig?.id ?? '');
@@ -6330,10 +6278,8 @@ class AiAssistantSettingTab extends PluginSettingTab {
             const newId = 'config_' + Date.now();
             this.plugin.settings.apiConfigs.push({
                 id: newId,
-                name: providerName('deepseek'),
-                apiProvider: 'deepseek',
-                apiUrl: '',
-                modelName: this.plugin.defaultModelFor('deepseek'),
+                name: '',
+                ai: this.plugin.firstRunSlot(),
                 auxiliaryModelName: '',
                 deepseekThinking: false,
                 enabled: true,
@@ -6413,93 +6359,45 @@ class AiAssistantSettingTab extends PluginSettingTab {
         new Setting(containerEl)
             .setName(tr('配置名称', 'Configuration name'))
             .addText(text => text
-                .setValue(activeConfig.name)
+                .setPlaceholder(providerLabel(activeConfig))
+                .setValue(activeConfig.name || '')
                 .onChange(async (value) => {
-                    activeConfig.name = value || 'Unnamed Config';
+                    activeConfig.name = value.trim();
                     await this.plugin.saveSettings();
                 }));
 
-        // 四项分开填：服务商 → 接口地址 → 模型 → 密钥，最后测试连接
-        const provider = activeConfig.apiProvider || 'openai';
-        const info = providerInfo(provider);
-        new Setting(containerEl)
-            .setName(tr('服务商', 'Provider'))
-            .addDropdown(dropdown => {
-                for (const id of Object.keys(PROVIDERS)) dropdown.addOption(id, providerName(id));
-                return dropdown.setValue(provider).onChange(async (value) => {
-                    // 只替换还是旧预设值的地址和模型；本人改过的照旧保留
-                    const before = providerInfo(activeConfig.apiProvider);
-                    if (!activeConfig.apiUrl || activeConfig.apiUrl === before.url) activeConfig.apiUrl = '';
-                    if (!activeConfig.modelName || before.models.some(([id]) => id === activeConfig.modelName)) {
-                        activeConfig.modelName = this.plugin.defaultModelFor(value);
-                    }
-                    if (!activeConfig.name || Object.keys(PROVIDERS).some(id => providerName(id) === activeConfig.name)) {
-                        activeConfig.name = providerName(value);
-                    }
-                    activeConfig.apiProvider = value;
-                    await this.plugin.saveSettings();
-                    this.refresh();
-                });
-            });
-
-        if (provider !== 'gemini') {
-            const urlDesc = provider === 'openai'
-                ? tr('填写完整的接口地址。', 'Enter the full chat completions address.')
-                : provider === 'local'
-                    ? tr(`留空用默认地址 ${LOCAL_MODEL_DEFAULT_URL}；另一种常见本地服务一般是 ${LM_STUDIO_URL}。笔记只发给你电脑上的模型，不经过云服务。手机访问不到电脑的 localhost。`,
-                        `Leave empty for ${LOCAL_MODEL_DEFAULT_URL}; the other common local server is usually ${LM_STUDIO_URL}. Notes go only to the model on your computer. A phone cannot reach your computer's localhost.`)
-                    : tr(`留空用官方地址 ${info.url}。用代理时填代理地址，基础地址也可以。`, `Leave empty for the official address ${info.url}. For a proxy, enter its address; a base URL works too.`);
-            new Setting(containerEl)
-                .setName(tr('接口地址', 'API URL'))
-                .setDesc(urlDesc)
-                .addText(text => text
-                    .setPlaceholder(provider === 'openai' ? API_URL_EXAMPLE : info.url)
-                    .setValue(activeConfig.apiUrl || '')
-                    .onChange(async (value) => {
-                        activeConfig.apiUrl = value.trim();
-                        await this.plugin.saveSettings();
-                    }));
-        }
-
-        const modelSetting = new Setting(containerEl)
-            .setName(tr('主模型', 'Main model'))
-            .setDesc(info.models.length
-                ? ''
-                : tr(`填写模型名，例如 ${provider === 'local' ? LOCAL_MODEL_EXAMPLE : 'gpt-4o-mini'}。`, `Enter the model name, for example ${provider === 'local' ? LOCAL_MODEL_EXAMPLE : 'gpt-4o-mini'}.`));
-        if (info.models.length) {
-            modelSetting.addDropdown(dropdown => {
-                dropdown.addOption('', tr('手动填写', 'Custom'));
-                for (const [id, label] of info.models) dropdown.addOption(id, label);
-                return dropdown
-                    .setValue(info.models.some(([id]) => id === activeConfig.modelName) ? activeConfig.modelName : '')
-                    .onChange(async value => {
-                        if (!value) return;
-                        activeConfig.modelName = value;
-                        await this.plugin.saveSettings();
-                        this.refresh();
-                    });
-            });
-        }
-        modelSetting.addText(text => text
-            .setPlaceholder(this.plugin.defaultModelFor(provider) || (provider === 'local' ? LOCAL_MODEL_EXAMPLE : ''))
-            .setValue(activeConfig.modelName || '')
-            .onChange(async (value) => {
-                activeConfig.modelName = value.trim();
+        // 服务商、密钥、模型和地址：各插件共用的设置组（rex-ai-kit）。打开设置不联网，点“检查”或“刷新”才请求
+        const providerBefore = slotOf(activeConfig).provider;
+        this.aiUi = renderAiSettings(containerEl, {
+            app: this.app,
+            client: this.plugin.aiClient(),
+            slot: slotOf(activeConfig),
+            scene: 'cheap',
+            lang: aiLang(),
+            heading: false,
+            privateContent: true,
+            allowLocalAgents: true,
+            onChange: async (slot) => {
+                activeConfig.ai = { ...slot };
                 await this.plugin.saveSettings();
-            }));
+                // 换了服务商，下面跟服务商有关的行（深度思考）要重画
+                if (slot.provider !== providerBefore) this.refresh();
+            },
+        });
+        const provider = providerOf(activeConfig);
 
         new Setting(containerEl)
             .setName(tr('辅助模型', 'Helper model'))
             .setDesc(tr('翻译标签这类轻活用它；留空就用主模型。', 'Used for light jobs such as translating tags. Leave empty to use the main model.'))
             .addText(text => text
-                .setPlaceholder(info.models[info.models.length - 1]?.[0] || '')
+                .setPlaceholder(slotOf(activeConfig).model || defaultModelOf(provider.id))
                 .setValue(activeConfig.auxiliaryModelName || '')
                 .onChange(async (value) => {
                     activeConfig.auxiliaryModelName = value.trim();
                     await this.plugin.saveSettings();
                 }));
 
-        if (provider === 'deepseek') {
+        if (provider.id === 'deepseek') {
             new Setting(containerEl).setName(tr('深度思考', 'Deep thinking'))
                 .setDesc(tr('复杂内容效果更好，但要等更久。', 'Better for complex content, but slower.'))
                 .addToggle(toggle => toggle.setValue(!!activeConfig.deepseekThinking).onChange(async value => {
@@ -6507,30 +6405,10 @@ class AiAssistantSettingTab extends PluginSettingTab {
                 }));
         }
 
-        const secretName = activeConfig.apiKeySecret || '';
-        const keySetting = new Setting(containerEl)
-            .setName(tr('API 密钥', 'API key'))
-            .setDesc(provider === 'local'
-                ? tr('本地模型一般不需要密钥，只有你给本地服务设了密钥时才选。', 'Local models usually need no key; choose one only if you set one on the local server.')
-                : secretName && !this.plugin.hasStoredApiKey(activeConfig)
-                    ? tr(`这台设备的钥匙串里没有「${secretName}」，请重新选择或新建。`, `"${secretName}" is not in this device's Keychain. Choose or create a key.`)
-                    : tr('密钥存在本机 Obsidian 的钥匙串里，不随库同步；换设备后在这里重新选一次。', 'Keys live in Obsidian\'s Keychain on this device and do not sync with the vault. On another device, choose the key here again.'))
-            .addComponent(el => new SecretComponent(this.app, el)
-                .setValue(secretName)
-                .onChange(async (value) => {
-                    activeConfig.apiKeySecret = value || '';
-                    await this.plugin.saveSettings();
-                    this.refresh();
-                }));
-        if (info.keyPage) {
-            keySetting.descEl.createEl('br');
-            keySetting.descEl.createEl('a', { text: tr('去服务商后台获取密钥', 'Get a key from the provider'), href: info.keyPage });
-        }
-
         let connectionStatus;
         new Setting(containerEl)
             .setName(tr('测试连接', 'Test connection'))
-            .setDesc(provider === 'local'
+            .setDesc(provider.group === 'local' && !provider.localAgent
                 ? tr('发一句很短的话给本地模型，看它能不能回答。不读笔记，不收费。', 'Sends one short line to the local model to see if it answers. No notes are read; free.')
                 : tr('发一句很短的话，只要求很短的回答，看能不能连通。不读笔记；按服务商价格计费，一般不到一分钱。', 'Sends one short line and asks for a very short answer to check the connection. No notes are read; billed at the provider\'s price, usually a tiny fraction of a cent.'))
             .addButton(button => button.setButtonText(tr('测试', 'Test')).onClick(async () => {

@@ -5,7 +5,7 @@ function fixture(){
  const module={exports:{}};
  const obsidian=Object.fromEntries(['Plugin','PluginSettingTab','Setting','FuzzySuggestModal','Modal','ItemView','TFile'].map(k=>[k,class{}]));
  obsidian.Notice=class{constructor(){}};
- vm.runInNewContext(fs.readFileSync(__dirname+'/main.js','utf8'),{window:{setTimeout,clearTimeout,setInterval,clearInterval,crypto:globalThis.crypto},module,console,AbortController,setTimeout,clearTimeout,TextEncoder,TextDecoder,require:()=>obsidian});
+ vm.runInNewContext(fs.readFileSync(__dirname+'/main.js','utf8'),{URL,window:{setTimeout,clearTimeout,setInterval,clearInterval,crypto:globalThis.crypto},module,console,AbortController,setTimeout,clearTimeout,TextEncoder,TextDecoder,require:()=>obsidian});
  const p=new module.exports();
  p.settings={apiConfigs:[{id:'a',name:'A',apiKeySecret:'k1',enabled:true},{id:'b',name:'B',apiKeySecret:'k2',enabled:true,allowFallback:true}]};
  p.app={secretStorage:{getSecret:id=>'value-of-'+id}};p.beginAiOperation=()=>new AbortController();p.finishAiOperation=()=>{};
@@ -37,7 +37,7 @@ test('only ticked configs are used as backups, in priority order',async()=>{
  assert.equal(await p.makeApiRequest('hi'),'c');assert.deepEqual(tried,['a','c']);
 });
 test('the batch note only promises "stays on this computer" when every destination is local',()=>{
- const p=fixture();const local={id:'l',name:'Laptop',apiProvider:'local'},cloud={id:'c',name:'Cloud',apiProvider:'openai',apiKeySecret:'k'};
+ const p=fixture();const local={id:'l',name:'Laptop',ai:{provider:'ollama',model:'m'}},cloud={id:'c',name:'Cloud',ai:{provider:'openai',model:'m'}};
  const lines=configs=>{p.settings.apiConfigs=configs;p.lastWorkingConfigId=null;return p.batchSendLines(p.describeBatchSend([]).destinations).join(' ');};
  assert.match(lines([local]),/不离开这台电脑/);assert.match(lines([local]),/停下来/);
  assert.match(lines([local,{...cloud}]),/不离开这台电脑/);
