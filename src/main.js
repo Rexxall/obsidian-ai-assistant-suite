@@ -2871,8 +2871,8 @@ class BatchFileSelectionModal extends GlassModal {
 }
 
 const MERGE_BLOCKERS = {
-    footnotes: () => tr('有一篇用了脚注。脚注编号合在一起会撞号，这一版先不合并带脚注的笔记。', 'One of the notes has footnotes. Their numbers would clash, so this version does not merge notes with footnotes.'),
-    empty: () => tr('有一篇是空的，没有可以合并的内容。', 'One of the notes is empty; there is nothing to merge.'),
+    footnotes: name => tr(`「${name}」用了脚注。合在一起编号会撞，这一版先不合并带脚注的笔记。`, `"${name}" has footnotes. Their numbers would clash, so this version does not merge notes with footnotes.`),
+    empty: name => tr(`「${name}」是空的，没有可以合并的内容。`, `"${name}" is empty; there is nothing to merge.`),
     'too-long': () => tr('两篇加起来太长（超过 6 万字）。先把其中一篇拆短，或挑更短的两篇。', 'The two notes are too long together (over 60,000 characters). Shorten one first, or pick shorter notes.'),
 };
 
@@ -2956,7 +2956,7 @@ class MergeDraftModal extends GlassModal {
         if (!scope.config || !this.plugin.isConfigUsable(scope.config)) {
             facts.createDiv({ text: tr('还没有能用的模型连接。', 'No model connection is ready yet.'), cls: 'ai-merge-warn' });
         } else {
-            facts.createDiv({ text: scope.local
+            this.sendLine = facts.createDiv({ text: scope.local
                 ? tr(`两篇全文（约 ${Math.max(1, Math.round(size / 1024))} KB）只发给本机的「${scope.label}」。`, `Both notes in full (about ${Math.max(1, Math.round(size / 1024))} KB) go only to "${scope.label}" on this computer.`)
                 : tr(`两篇全文（约 ${Math.max(1, Math.round(size / 1024))} KB）会发给「${scope.label}」。`, `Both notes in full (about ${Math.max(1, Math.round(size / 1024))} KB) will be sent to "${scope.label}".`) });
         }
@@ -2971,8 +2971,31 @@ class MergeDraftModal extends GlassModal {
         }
         const go = buttons.createEl('button', { text: tr('生成预览', 'Preview'), cls: 'mod-cta' });
         go.onclick = () => void this.generate();
-        window.setTimeout(() => go.focus(), 0);
+        go.disabled = true;
+        // 先在本地看能不能合并（只读两篇，不联网）；不能就当场说明是哪一篇，并给“换一篇”
+        const pair = [this.a, this.b];
+        void this.plugin.mergeBlocker(this.a, this.b).then(blocked => {
+            if (this.state !== 'confirm' || this.a !== pair[0] || this.b !== pair[1]) return;
+            if (!blocked) { go.disabled = false; go.focus(); return; }
+            this.sendLine?.remove();
+            facts.createDiv({ text: blocked.text, cls: 'ai-merge-warn', attr: { role: 'alert' } });
+            go.remove();
+            this.addRepick(buttons, blocked.side).focus();
+        });
     }
+    // 换掉不能合并的那一篇（或第二篇），回到确认页
+    addRepick(buttons, side) {
+        const replace = side === 'A' ? 'a' : 'b';
+        const keep = replace === 'a' ? this.b : this.a;
+        const button = buttons.createEl('button', { text: tr('换一篇', 'Choose another'), cls: 'mod-cta' });
+        button.onclick = () => new MergeNotePicker(this.app, keep, tr(`和「${keep.basename}」合并的另一篇`, `The note to merge with "${keep.basename}"`), file => {
+            this[replace] = file;
+            this.state = 'confirm';
+            this.draw();
+        }).open();
+        return button;
+    }
+
     async generate() {
         this.state = 'running';
         this.controller = new AbortController();
@@ -3032,7 +3055,8 @@ class MergeDraftModal extends GlassModal {
         const buttons = el.createDiv({ cls: 'modal-button-container' });
         buttons.createEl('button', { text: tr('返回', 'Back') }).onclick = () => { this.state = 'confirm'; this.draw(); };
         if (problem?.settings) buttons.createEl('button', { text: tr('打开设置', 'Open settings'), cls: 'mod-cta' }).onclick = () => { this.close(); this.plugin.openSettings(); };
-        else if (this.error?.kind !== 'merge') buttons.createEl('button', { text: tr('再试一次', 'Try again'), cls: 'mod-cta' }).onclick = () => void this.generate();
+        else if (this.error?.kind === 'merge') this.addRepick(buttons, this.error.side);
+        else buttons.createEl('button', { text: tr('再试一次', 'Try again'), cls: 'mod-cta' }).onclick = () => void this.generate();
     }
 }
 
@@ -3700,12 +3724,25 @@ class AiAssistantSuite extends Plugin {
         return { config, label: config ? `${this.configLabel(config)} · ${slotOf(config).model || defaultModelOf(provider.id)}` : '', local: !!provider && provider.group === 'local' && !provider.localAgent };
     }
 
+    // 不能合并的原因，点名是哪一篇；能合并时返回 null。只读两篇，不联网
+    async mergeBlocker(a, b) {
+        if (a.path === b.path) return { text: tr('两次选的是同一篇。', 'Both choices are the same note.'), side: 'B' };
+        const [textA, textB] = await Promise.all([this.app.vault.read(a), this.app.vault.read(b)]);
+        // 每篇单独查（另一边放一个字的占位），才知道是哪一篇的问题
+        for (const [side, file, text] of [['A', a, textA], ['B', b, textB]]) {
+            const why = mergeDraft.blocker(text, 'x');
+            if (why === 'footnotes' || why === 'empty') return { text: MERGE_BLOCKERS[why](file.basename), side };
+        }
+        if (mergeDraft.blocker(textA, textB) === 'too-long') return { text: MERGE_BLOCKERS['too-long'](), side: null };
+        return null;
+    }
+
     // 读两篇、请 AI 分组、拼草稿。不写任何文件
     async generateMergeDraft(a, b, signal) {
         if (a.path === b.path) throw Object.assign(new Error(tr('两次选的是同一篇。', 'Both choices are the same note.')), { kind: 'merge' });
         const [textA, textB] = await Promise.all([this.app.vault.read(a), this.app.vault.read(b)]);
-        const why = mergeDraft.blocker(textA, textB);
-        if (why) throw Object.assign(new Error(MERGE_BLOCKERS[why]()), { kind: 'merge' });
+        const blocked = await this.mergeBlocker(a, b);
+        if (blocked) throw Object.assign(new Error(blocked.text), { kind: 'merge', side: blocked.side });
         const A = mergeDraft.splitFrontmatter(textA), B = mergeDraft.splitFrontmatter(textB);
         const blocks = mergeDraft.prepareBlocks(A.body, B.body);
         const path = this.mergeDraftPath(a, b);

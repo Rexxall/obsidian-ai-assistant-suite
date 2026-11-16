@@ -113,3 +113,10 @@ test('choosing the same note twice is refused',async()=>{
  const v=vault({'One.md':'a'});const p=plugin(v,'{}');
  await assert.rejects(p.generateMergeDraft(v.file('One.md'),v.file('One.md')),e=>e.kind==='merge');
 });
+test('a note that cannot be merged is named before anything is sent',async()=>{
+ const v=vault({'Plan.md':'a[^1]\n\n[^1]: n','Two.md':'b','Empty.md':'---\nx: 1\n---\n'});const p=plugin(v,'{}');let asked=false;p.makeApiRequest=async()=>{asked=true;return '{}';};
+ assert.deepEqual(plain(await p.mergeBlocker(v.file('Plan.md'),v.file('Two.md'))),{text:'"Plan" has footnotes. Their numbers would clash, so this version does not merge notes with footnotes.',side:'A'});
+ assert.equal((await p.mergeBlocker(v.file('Two.md'),v.file('Empty.md'))).side,'B');
+ await assert.rejects(p.generateMergeDraft(v.file('Two.md'),v.file('Empty.md')),e=>e.kind==='merge'&&e.side==='B');
+ assert.equal(asked,false);assert.equal(await p.mergeBlocker(v.file('Two.md'),v.file('Plan.md')).then(r=>r.side),'B');
+});
