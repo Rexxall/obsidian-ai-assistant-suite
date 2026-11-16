@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.9.0 — 2026-11-16
+
+- **Merge two notes into a draft:** pick two notes (command palette, the file menu, or right-click two selected notes) and get one new note beside the first. Contradictions come first, each with both passages and a one-line note from the AI on what differs; then what both notes say, and what only one of them has. Every passage is copied word for word, and its source is named. The two notes are never changed. You see what will be sent and where before anything goes out, and a preview before the note is created. *Undo the last merge draft* moves it to the trash, unless it was edited or another note already links to it. Notes with footnotes, empty notes and pairs over 60,000 characters are named and stopped before sending.
+- **One AI layer shared with the other plugins:** providers, keys and models now use the same settings group as AI Accounting and Japan Work Secretary. OpenAI and Anthropic are new, along with OpenRouter, LM Studio, Claude Code and Codex on this computer, and any OpenAI-compatible server. The model list comes from the provider when you press *Check* or *Refresh list*; nothing is fetched when settings open.
+- **Settings move over by themselves:** each configuration's provider, address, model and key name become the new form on first start. Official addresses are dropped, proxies and local ports are kept, and a key from before 1.7 still in the settings file is moved into the Keychain without overwriting another plugin's key. Names the old version gave by itself, such as "Deepseek", now follow the provider. A fresh install uses the first provider whose key is already in the Keychain (Anthropic, OpenAI, DeepSeek, then the others), with its cheaper model.
+- **Errors say what to do next:** a failed run keeps the reason even after backups were tried, so the panel can say what happened, link the provider console, and offer *Open settings* when a setting has to change or *Generate again* when waiting is enough.
+- **Journal look and serif number:** *Settings → Look* switches between the standard look and the journal look; the count on *Accept all* can be set in a serif italic.
+- **Smaller fixes:** the example note is now a moving plan; the chosen segment stands out in dark themes.
+
 ## 1.8.1 — 2026-11-11
 
 - **Vault rules:** a new settings section. *Standing notes for the AI* are sent with every request, for example how titles are named. *Allowed tag roots* drops suggested tags outside the roots you list. *Keep only the child tag* never suggests a tag together with its parent. *Existing folders only* drops folder paths the model invents.
