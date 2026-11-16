@@ -25,5 +25,6 @@ jobs:
       - run: npm ci
       - run: npm run lint
       - run: npm test
+      - run: node scripts/docs-sync.mjs --check
       - run: npm run build
 

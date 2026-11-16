@@ -22,7 +22,7 @@
 2. Open the assistant (anchor icon in the ribbon). Not connected yet? Click **Load example** (also a command): a demo note with pre-written suggestions, no network and no cost, so you can try ticking, applying and undoing.
 3. To use your own notes, open *Settings → AI Assistant Suite → Connections*: choose a provider (DeepSeek is preselected), choose or create a key, keep the suggested model, and press **Test** to check the connection. Then open a note, pick what you want done and choose **Generate suggestions** to begin.
 
-**Needs** Obsidian 1.13+ on desktop or mobile, and an API key or a local model. **Costs** nothing for the plugin; the model is paid to your provider by usage, and a local model has no API fee.
+**Needs** Obsidian <!-- DOCS-SYNC:START min -->1.13<!-- DOCS-SYNC:END -->+ on desktop or mobile, and an API key or a local model. **Costs** nothing for the plugin; the model is paid to your provider by usage, and a local model has no API fee.
 
 Something not working? [Copy a fix-it prompt](docs/troubleshooting.md) for your AI assistant.
 
@@ -51,7 +51,7 @@ Ask an AI to suggest a title, summary, tags, a folder and tidier text for the no
 <details>
 <summary><b>What it needs and what it costs</b></summary>
 
-- **Needs:** Obsidian 1.13 or later, desktop or mobile, and either an API key from a model provider or a local model (Ollama, LM Studio) on your computer.
+- **Needs:** Obsidian <!-- DOCS-SYNC:START min -->1.13<!-- DOCS-SYNC:END --> or later, desktop or mobile, and either an API key from a model provider or a local model (Ollama, LM Studio) on your computer.
 - **The plugin:** free and open source (MIT). No account with the author, no subscription, no telemetry.
 - **The model:** paid to the provider you choose, by usage. A local model has no API fee. Some providers have free tiers or new-user credit; check their own pricing pages, which change often. **Test** sends one short line and asks for a very short answer, usually a tiny fraction of a cent.
 
