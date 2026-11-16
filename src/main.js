@@ -1,6 +1,7 @@
-import { apiVersion, Platform, Plugin, Notice, PluginSettingTab, SettingPage, Setting, FuzzySuggestModal, Modal, ItemView, MarkdownRenderer, Menu, setIcon, parseYaml, stringifyYaml, getLanguage, requestUrl } from 'obsidian';
+import { apiVersion, Component, Platform, Plugin, Notice, PluginSettingTab, SettingPage, Setting, FuzzySuggestModal, Modal, ItemView, MarkdownRenderer, Menu, setIcon, parseYaml, stringifyYaml, getLanguage, requestUrl } from 'obsidian';
 import { AiClient, AiError, ModelCache, getProvider, inferProviderId, migrateKey, nodeCliRunner, requestUrlTransport, resolveProvider, slotFromEndpoint } from './vendor/rex-ai-kit/index';
 import { renderAiSettings } from './vendor/rex-ai-kit/settingsUI';
+import * as mergeDraft from './merge-draft';
 
 // 界面主体是中文；命令名跟随 Obsidian 语言，非中文时用英文
 const isChineseInterface = () => {
@@ -124,6 +125,7 @@ function describeApiProblem(kind, config = null, error = null) {
 
 // 这些失败要改设置才能好，界面给“打开设置”；其余的（限流、超时、网络、服务商出错）给“再试一次”
 const SETTINGS_KINDS = ['no-config', 'no-key', 'no-url', 'no-model', 'auth', 'quota', 'model', 'url', 'params'];
+const API_PROBLEM_KINDS = [...SETTINGS_KINDS, 'rate', 'timeout', 'network', 'server', 'empty'];
 
 // 测试连接按地址、密钥和账户、模型、参数四项给结果：出错那一项之前的算通过，之后的没检查到
 const CONNECTION_CHECKS = [
@@ -590,6 +592,8 @@ const DEFAULT_SETTINGS = {
     rollbackHistory: [],
     rollbackRedoHistory: [],
     customActions: [],
+    // 生成过的合并草稿（最近 10 篇）：路径和指纹，撤销时用来确认草稿没被改过
+    mergeDrafts: [],
 
 
 
@@ -774,6 +778,7 @@ class AssistantView extends ItemView {
             [tr('批量整理', 'Batch tidy'), () => this.showBatchProcessingModal(), 'files'],
             [tr('任务列表', 'Task list'), () => { this.workbenchPage = 'queue'; this.render(); }, 'list-checks'],
             [tr('自定义动作', 'Custom actions'), () => this.showAtelierCustomActions(), 'wand-sparkles'],
+            [tr('合并两篇笔记', 'Merge two notes'), () => this.plugin.startMergeDraft(this.pinnedFile || this.plugin.app.workspace.getActiveFile()), 'git-merge'],
             [tr('其他工具', 'Other tools'), () => { this.workbenchPage = 'tools'; this.render(); }, 'wrench'],
             [tr('设置', 'Settings'), () => { this.plugin.app.setting.open(); this.plugin.app.setting.openTabById(this.plugin.manifest.id); }, 'settings']
         ];
@@ -781,8 +786,9 @@ class AssistantView extends ItemView {
 
     openMistMenu(event) {
         const menu = new Menu();
-        this.mistSecondaryEntries().forEach(([label, action, icon], index) => {
-            if (index === 5) menu.addSeparator();
+        const entries = this.mistSecondaryEntries();
+        entries.forEach(([label, action, icon], index) => {
+            if (index === entries.length - 1) menu.addSeparator();
             menu.addItem(item => item.setTitle(label).setIcon(icon).onClick(action));
         });
         menu.showAtMouseEvent(event);
@@ -2864,7 +2870,172 @@ class BatchFileSelectionModal extends GlassModal {
     }
 }
 
+const MERGE_BLOCKERS = {
+    footnotes: () => tr('有一篇用了脚注。脚注编号合在一起会撞号，这一版先不合并带脚注的笔记。', 'One of the notes has footnotes. Their numbers would clash, so this version does not merge notes with footnotes.'),
+    empty: () => tr('有一篇是空的，没有可以合并的内容。', 'One of the notes is empty; there is nothing to merge.'),
+    'too-long': () => tr('两篇加起来太长（超过 6 万字）。先把其中一篇拆短，或挑更短的两篇。', 'The two notes are too long together (over 60,000 characters). Shorten one first, or pick shorter notes.'),
+};
+
+const mergeLabels = () => ({
+    draftTitle: tr('合并草稿', 'Merge draft'),
+    draftIntro: (a, b) => tr(`由 ${a} 和 ${b} 生成，两篇原笔记没有改动。每段都是原文，出处标在段落所在的小节。`, `Made from ${a} and ${b}; both notes are unchanged. Every passage is copied word for word; its source is named by its section.`),
+    conflicts: tr('互相矛盾', 'Contradictions'),
+    shared: tr('共同内容', 'Shared'),
+    identical: tr('两篇一字不差', 'Identical in both'),
+    onlyIn: link => tr(`只在 ${link} 里`, `Only in ${link}`),
+    properties: tr('两篇的属性', 'Properties of both notes'),
+    otherWording: link => tr(`${link} 的写法`, `How ${link} puts it`),
+    source: tr('出处：', 'Source:'),
+    aiNote: tr('AI 指出：', 'AI note:'),
+    untitled: tr('未命名', 'Untitled'),
+});
+
+class MergeNotePicker extends GlassFuzzySuggestModal {
+    constructor(app, exclude, placeholder, done) {
+        super(app);
+        this.exclude = exclude;
+        this.done = done;
+        this.setPlaceholder(placeholder);
+    }
+    getItems() {
+        return this.app.vault.getMarkdownFiles().filter(f => f.path !== this.exclude?.path).sort((x, y) => y.stat.mtime - x.stat.mtime);
+    }
+    getItemText(file) {
+        return file.path.replace(/\.md$/, '');
+    }
+    onChooseItem(file) {
+        this.done(file);
+    }
+}
+
+// 合并草稿的确认 → 生成 → 预览 → 建立，全在一个窗口里；关掉窗口就什么都不留
+class MergeDraftModal extends GlassModal {
+    constructor(plugin, a, b) {
+        super(plugin.app);
+        this.plugin = plugin;
+        this.a = a;
+        this.b = b;
+        this.state = 'confirm';
+        this.modalEl.addClass('ai-merge-modal');
+    }
+    onOpen() { this.draw(); }
+    onClose() {
+        this.controller?.abort();
+        this.preview?.unload();
+        this.contentEl.empty();
+    }
+    draw() {
+        const { contentEl } = this;
+        contentEl.empty();
+        this.preview?.unload();
+        this.preview = null;
+        this.titleEl.setText(tr('生成合并草稿', 'Merge into a draft'));
+        if (this.state === 'running') return this.drawRunning(contentEl);
+        if (this.state === 'preview') return this.drawPreview(contentEl);
+        if (this.state === 'error') return this.drawError(contentEl);
+        this.drawConfirm(contentEl);
+    }
+    noteRow(list, file, mark) {
+        const row = list.createDiv({ cls: 'ai-merge-note' });
+        row.createSpan({ text: mark, cls: 'ai-merge-mark' });
+        const text = row.createDiv({ cls: 'ai-merge-note-text' });
+        text.createDiv({ text: file.basename, cls: 'ai-merge-note-name' });
+        text.createDiv({ text: file.parent?.path && file.parent.path !== '/' ? file.parent.path : tr('库根目录', 'Vault root'), cls: 'ai-merge-note-folder' });
+    }
+    drawConfirm(el) {
+        const list = el.createDiv({ cls: 'ai-merge-notes' });
+        this.noteRow(list, this.a, 'A');
+        this.noteRow(list, this.b, 'B');
+        const swap = list.createEl('button', { cls: 'clickable-icon ai-merge-swap', attr: { 'aria-label': tr('对调 A 和 B（草稿放在 A 的文件夹）', 'Swap A and B (the draft goes in A\'s folder)') } });
+        setIcon(swap, 'arrow-up-down');
+        swap.onclick = () => { [this.a, this.b] = [this.b, this.a]; this.draw(); };
+        const scope = this.plugin.mergeDraftScope(this.a, this.b);
+        const size = (this.a.stat?.size || 0) + (this.b.stat?.size || 0);
+        const facts = el.createDiv({ cls: 'ai-merge-facts' });
+        if (!scope.config || !this.plugin.isConfigUsable(scope.config)) {
+            facts.createDiv({ text: tr('还没有能用的模型连接。', 'No model connection is ready yet.'), cls: 'ai-merge-warn' });
+        } else {
+            facts.createDiv({ text: scope.local
+                ? tr(`两篇全文（约 ${Math.max(1, Math.round(size / 1024))} KB）只发给本机的「${scope.label}」。`, `Both notes in full (about ${Math.max(1, Math.round(size / 1024))} KB) go only to "${scope.label}" on this computer.`)
+                : tr(`两篇全文（约 ${Math.max(1, Math.round(size / 1024))} KB）会发给「${scope.label}」。`, `Both notes in full (about ${Math.max(1, Math.round(size / 1024))} KB) will be sent to "${scope.label}".`) });
+        }
+        let path = '';
+        try { path = this.plugin.mergeDraftPath(this.a, this.b); } catch { /* 名字冲突在生成时再报 */ }
+        if (path) facts.createDiv({ text: tr(`新笔记：${path}`, `New note: ${path}`), cls: 'ai-merge-path' });
+        const buttons = el.createDiv({ cls: 'modal-button-container' });
+        buttons.createEl('button', { text: tr('取消', 'Cancel') }).onclick = () => this.close();
+        if (!scope.config || !this.plugin.isConfigUsable(scope.config)) {
+            buttons.createEl('button', { text: tr('打开设置', 'Open settings'), cls: 'mod-cta' }).onclick = () => { this.close(); this.plugin.openSettings(); };
+            return;
+        }
+        const go = buttons.createEl('button', { text: tr('生成预览', 'Preview'), cls: 'mod-cta' });
+        go.onclick = () => void this.generate();
+    }
+    async generate() {
+        this.state = 'running';
+        this.controller = new AbortController();
+        this.draw();
+        try {
+            this.result = await this.plugin.generateMergeDraft(this.a, this.b, this.controller.signal);
+            this.state = 'preview';
+        } catch (error) {
+            if (this.controller?.signal.aborted || this.plugin.isCancellationError(error)) return;
+            this.error = error;
+            this.state = 'error';
+        } finally {
+            this.controller = null;
+        }
+        this.draw();
+    }
+    drawRunning(el) {
+        const box = el.createDiv({ cls: 'ai-merge-running', attr: { role: 'status', 'aria-live': 'polite' } });
+        box.createDiv({ text: tr(`正在比较「${this.a.basename}」和「${this.b.basename}」…`, `Comparing "${this.a.basename}" and "${this.b.basename}"…`) });
+        const buttons = el.createDiv({ cls: 'modal-button-container' });
+        buttons.createEl('button', { text: tr('取消', 'Cancel') }).onclick = () => { this.controller?.abort(); this.state = 'confirm'; this.draw(); };
+    }
+    drawPreview(el) {
+        const { counts } = this.result;
+        const chips = el.createDiv({ cls: 'ai-merge-counts' });
+        const chip = (n, label, cls = '') => { const c = chips.createSpan({ cls: `ai-merge-count ${cls}` }); c.createSpan({ text: String(n), cls: 'ap-sig-num' }); c.appendText(` ${label}`); };
+        chip(counts.conflicts, tr('处矛盾', counts.conflicts === 1 ? 'contradiction' : 'contradictions'), counts.conflicts ? 'is-warn' : '');
+        chip(counts.shared, tr('组共同', 'shared'));
+        chip(counts.onlyA, tr('段只在 A', 'only in A'));
+        chip(counts.onlyB, tr('段只在 B', 'only in B'));
+        const scroll = el.createDiv({ cls: 'ai-merge-preview markdown-rendered' });
+        this.preview = new Component();
+        this.preview.load();
+        void MarkdownRenderer.render(this.app, this.result.text, scroll, this.result.path, this.preview);
+        el.createDiv({ text: tr(`会新建：${this.result.path}`, `Will create: ${this.result.path}`), cls: 'ai-merge-path' });
+        const buttons = el.createDiv({ cls: 'modal-button-container' });
+        buttons.createEl('button', { text: tr('返回', 'Back') }).onclick = () => { this.state = 'confirm'; this.draw(); };
+        const create = buttons.createEl('button', { text: tr('创建草稿', 'Create draft'), cls: 'mod-cta' });
+        create.onclick = async () => {
+            create.disabled = true;
+            try {
+                await this.plugin.createMergeDraft(this.result);
+                this.close();
+            } catch (error) {
+                this.error = error;
+                this.state = 'error';
+                this.draw();
+            }
+        };
+    }
+    drawError(el) {
+        const problem = this.plugin.failureProblem(this.error);
+        const box = el.createDiv({ cls: 'ai-merge-error', attr: { role: 'alert' } });
+        box.createDiv({ text: problem ? problem.message : this.error?.message || String(this.error), cls: 'ai-merge-error-title' });
+        if (problem) box.createDiv({ text: problem.next });
+        if (problem?.keyPage) box.createEl('a', { text: tr('打开服务商后台', 'Open provider console'), href: problem.keyPage });
+        const buttons = el.createDiv({ cls: 'modal-button-container' });
+        buttons.createEl('button', { text: tr('返回', 'Back') }).onclick = () => { this.state = 'confirm'; this.draw(); };
+        if (problem?.settings) buttons.createEl('button', { text: tr('打开设置', 'Open settings'), cls: 'mod-cta' }).onclick = () => { this.close(); this.plugin.openSettings(); };
+        else if (this.error?.kind !== 'merge') buttons.createEl('button', { text: tr('再试一次', 'Try again'), cls: 'mod-cta' }).onclick = () => void this.generate();
+    }
+}
+
 class AiAssistantSuite extends Plugin {
+    static mergeDraft = mergeDraft;
     view = null;
 
     debounceTimers = new Map(); // 添加防抖定时器
@@ -3239,6 +3410,29 @@ class AiAssistantSuite extends Plugin {
         });
 
         this.addCommand({
+            id: 'merge-two-notes',
+            name: tr('把当前笔记和另一篇生成合并草稿', 'Merge the current note with another into a draft'),
+            callback: () => this.startMergeDraft()
+        });
+
+        this.addCommand({
+            id: 'undo-last-merge-draft',
+            name: tr('撤销上次生成的合并草稿', 'Undo the last merge draft'),
+            callback: () => void this.undoMergeDraft()
+        });
+
+        // 文件列表右键：一篇时再挑一篇，选中两篇时直接用这两篇
+        this.registerEvent(this.app.workspace.on('file-menu', (menu, file) => {
+            if (file?.extension !== 'md') return;
+            menu.addItem(item => item.setTitle(tr('与另一篇生成合并草稿…', 'Merge with another note…')).setIcon('git-merge').onClick(() => this.startMergeDraft(file)));
+        }));
+        this.registerEvent(this.app.workspace.on('files-menu', (menu, files) => {
+            const notes = (files || []).filter(f => f?.extension === 'md');
+            if (notes.length !== 2 || files.length !== 2) return;
+            menu.addItem(item => item.setTitle(tr('生成合并草稿', 'Merge into a draft')).setIcon('git-merge').onClick(() => this.startMergeDraft(notes[0], notes[1])));
+        }));
+
+        this.addCommand({
             id: 'load-example',
             name: tr('载入示例（不联网）', 'Load example (no network)'),
             callback: () => this.loadDemo()
@@ -3457,7 +3651,7 @@ class AiAssistantSuite extends Plugin {
     // 一次失败给用户看的话：发生了什么 + 一个下一步。分不出类的照原话
     failureProblem(error) {
         const kind = classifyApiError(error);
-        if (kind === 'other' || kind === 'aborted') return null;
+        if (!API_PROBLEM_KINDS.includes(kind) || kind === 'other' || kind === 'aborted') return null;
         const config = (this.settings.apiConfigs || []).find(c => c.id === error?.configId) || this.getActiveApiConfig();
         return { ...describeApiProblem(kind, config, error), settings: SETTINGS_KINDS.includes(kind) };
     }
@@ -3474,6 +3668,112 @@ class AiAssistantSuite extends Plugin {
     openSettings() {
         this.app.setting.open();
         this.app.setting.openTabById(this.manifest.id);
+    }
+
+    // ---- 合并草稿：两篇 → 一篇新笔记。原笔记不写；AI 只给分组，正文由程序从原文逐字拼 ----
+
+    startMergeDraft(first = null, second = null) {
+        const a = first?.extension === 'md' ? first : null;
+        if (a && second?.extension === 'md') { new MergeDraftModal(this, a, second).open(); return; }
+        const pick = (exclude, title, done) => new MergeNotePicker(this.app, exclude, title, done).open();
+        if (a) pick(a, tr(`和「${a.basename}」合并的另一篇`, `The note to merge with "${a.basename}"`), b => new MergeDraftModal(this, a, b).open());
+        else pick(null, tr('选第一篇笔记', 'Choose the first note'), x => pick(x, tr(`和「${x.basename}」合并的另一篇`, `The note to merge with "${x.basename}"`), y => new MergeDraftModal(this, x, y).open()));
+    }
+
+    // 草稿放在第一篇所在的文件夹；重名时加序号，不覆盖任何文件
+    mergeDraftPath(a, b) {
+        const clean = text => String(text).replace(/[\\/:*?"<>|#^[\]]/g, '-').trim();
+        const folder = a.parent?.path && a.parent.path !== '/' ? a.parent.path : '';
+        const base = clean(`${tr('合并草稿', 'Merge draft')} - ${a.basename} + ${b.basename}`).slice(0, 120);
+        for (let n = 1; n < 100; n++) {
+            const path = `${folder ? folder + '/' : ''}${base}${n > 1 ? ` ${n}` : ''}.md`;
+            if (!this.app.vault.getAbstractFileByPath(path)) return path;
+        }
+        throw new Error(tr('同名草稿太多，请先整理一下。', 'Too many drafts with this name; tidy them first.'));
+    }
+
+    mergeDraftScope(a, b) {
+        const config = this.fallbackChain()[0] || this.getActiveApiConfig();
+        const provider = config ? providerOf(config) : null;
+        return { config, label: config ? `${this.configLabel(config)} · ${slotOf(config).model || defaultModelOf(provider.id)}` : '', local: !!provider && provider.group === 'local' && !provider.localAgent };
+    }
+
+    // 读两篇、请 AI 分组、拼草稿。不写任何文件
+    async generateMergeDraft(a, b, signal) {
+        if (a.path === b.path) throw Object.assign(new Error(tr('两次选的是同一篇。', 'Both choices are the same note.')), { kind: 'merge' });
+        const [textA, textB] = await Promise.all([this.app.vault.read(a), this.app.vault.read(b)]);
+        const why = mergeDraft.blocker(textA, textB);
+        if (why) throw Object.assign(new Error(MERGE_BLOCKERS[why]()), { kind: 'merge' });
+        const A = mergeDraft.splitFrontmatter(textA), B = mergeDraft.splitFrontmatter(textB);
+        const blocks = mergeDraft.prepareBlocks(A.body, B.body);
+        const path = this.mergeDraftPath(a, b);
+        const folder = path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : '';
+        const cache = this.app.metadataCache;
+        const rewrite = (list, source) => list.map(block => ({ ...block, text: mergeDraft.rewriteLinks(block.text, {
+            selfLink: cache.fileToLinktext(source, path, true),
+            selfHref: mergeDraft.relativePath(folder, source.path),
+            resolve: linkpath => cache.getFirstLinkpathDest(linkpath, source.path),
+            linkFor: file => cache.fileToLinktext(file, path, true),
+            relative: file => mergeDraft.relativePath(folder, file.path),
+        }) }));
+        const unpaired = blocks.a.length + blocks.b.length - blocks.identical.length * 2;
+        let groups = [];
+        if (unpaired > 0 && blocks.a.length > blocks.identical.length && blocks.b.length > blocks.identical.length) {
+            const prompt = mergeDraft.buildPrompt({ nameA: a.basename, nameB: b.basename, ...blocks, english: !isChineseInterface() });
+            const reply = await this.makeApiRequest(prompt, null, true, null, { signal, label: tr('合并草稿', 'Merge draft'), timeout: 180000 });
+            groups = mergeDraft.parseGroups(reply, blocks);
+        }
+        const linkTo = file => `[[${cache.fileToLinktext(file, path, true)}]]`;
+        const draft = mergeDraft.assembleDraft({
+            a: rewrite(blocks.a, a), b: rewrite(blocks.b, b), identical: blocks.identical, groups,
+            yamlA: A.yaml, yamlB: B.yaml, link: side => linkTo(side === 'A' ? a : b), labels: mergeLabels(), date: new Date().toISOString().slice(0, 10),
+        });
+        return { ...draft, path, a, b, sourceMarks: [mergeDraft.fingerprint(textA), mergeDraft.fingerprint(textB)] };
+    }
+
+    // 建草稿前再核一次：预览之后两篇都没改，目标位置还空着
+    async createMergeDraft(result) {
+        const [textA, textB] = await Promise.all([this.app.vault.read(result.a), this.app.vault.read(result.b)]);
+        if (mergeDraft.fingerprint(textA) !== result.sourceMarks[0] || mergeDraft.fingerprint(textB) !== result.sourceMarks[1]) {
+            throw new Error(tr('预览之后笔记又改过了，请重新生成。', 'A note changed after the preview. Generate it again.'));
+        }
+        if (this.app.vault.getAbstractFileByPath(result.path)) throw new Error(tr('目标位置已经有同名笔记，请重新生成。', 'A note with that name now exists. Generate it again.'));
+        const file = await this.app.vault.create(result.path, result.text);
+        const record = { id: `merge-${Date.now()}`, path: file.path, hash: mergeDraft.fingerprint(result.text), sources: [result.a.path, result.b.path], at: Date.now() };
+        this.settings.mergeDrafts = [record, ...(this.settings.mergeDrafts || [])].slice(0, 10);
+        await this.saveSettings();
+        await this.app.workspace.getLeaf('tab').openFile(file);
+        const fragment = createFragment(f => {
+            f.appendText(tr('合并草稿已生成，两篇原笔记没有改动。', 'Merge draft created; both notes are unchanged.') + ' ');
+            const undo = f.createEl('a', { text: tr('撤销', 'Undo'), href: '#' });
+            undo.addEventListener('click', event => { event.preventDefault(); void this.undoMergeDraft(record.id); });
+        });
+        new Notice(fragment, 10000);
+        return file;
+    }
+
+    // 撤销只删没被动过的草稿：改过、或已经有别的笔记链接到它，就留着并说明
+    async undoMergeDraft(id = null) {
+        const list = this.settings.mergeDrafts || [];
+        const record = id ? list.find(r => r.id === id) : list[0];
+        if (!record) { new Notice(tr('没有可以撤销的合并草稿。', 'No merge draft to undo.')); return false; }
+        const forget = async () => { this.settings.mergeDrafts = list.filter(r => r.id !== record.id); await this.saveSettings(); };
+        const file = this.app.vault.getAbstractFileByPath(record.path);
+        if (!file || file.children) { await forget(); new Notice(tr('这篇草稿已经不在了。', 'That draft is already gone.')); return false; }
+        const text = await this.app.vault.read(file);
+        if (mergeDraft.fingerprint(text) !== record.hash) {
+            new Notice(tr('草稿生成后改过，没有撤销。不需要的话可以自己删掉。', 'The draft was edited after it was made, so it was kept. Delete it yourself if you no longer need it.'), 8000);
+            return false;
+        }
+        const linked = Object.entries(this.app.metadataCache.resolvedLinks || {}).some(([source, targets]) => source !== record.path && targets?.[record.path]);
+        if (linked) {
+            new Notice(tr('已经有别的笔记链接到这篇草稿，没有撤销。', 'Another note links to this draft, so it was kept.'), 8000);
+            return false;
+        }
+        await this.app.fileManager.trashFile(file);
+        await forget();
+        new Notice(tr('已撤销：草稿移进了回收站，两篇原笔记一直没动。', 'Undone: the draft went to the trash; both notes were never changed.'));
+        return true;
     }
 
     async validateApiConfig(configToTest = null) {
