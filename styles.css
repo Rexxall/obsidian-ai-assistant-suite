@@ -2413,6 +2413,7 @@
 .mist-sidebar .mist-link { background:none; border:0; padding:0; color:var(--mist-mute); font-size:12.5px; }
 .mist-sidebar .mist-link:hover { color:var(--mist-ink); }
 .mist-sidebar .mist-link.is-strong { color:var(--mist-ink); font-weight:600; }
+.mist-sidebar .mist-error-actions { display:flex; flex-wrap:wrap; align-items:center; gap:6px 16px; margin-top:6px; }
 
 .mist-sidebar .mist-state { display:flex; align-items:center; justify-content:space-between; gap:10px; }
 .mist-sidebar .mist-dot { display:inline-flex; align-items:center; gap:6px; color:var(--mist-sage); font-size:12px; }

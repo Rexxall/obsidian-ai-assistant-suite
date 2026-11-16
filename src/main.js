@@ -122,6 +122,9 @@ function describeApiProblem(kind, config = null, error = null) {
     return { kind, message, next, keyPage: kind === 'no-key' || kind === 'auth' || kind === 'quota' ? keyPage : '' };
 }
 
+// 这些失败要改设置才能好，界面给“打开设置”；其余的（限流、超时、网络、服务商出错）给“再试一次”
+const SETTINGS_KINDS = ['no-config', 'no-key', 'no-url', 'no-model', 'auth', 'quota', 'model', 'url', 'params'];
+
 // 测试连接按地址、密钥和账户、模型、参数四项给结果：出错那一项之前的算通过，之后的没检查到
 const CONNECTION_CHECKS = [
     ['url', ['地址', 'Address'], ['url', 'no-url', 'network', 'timeout']],
@@ -1192,9 +1195,13 @@ class AssistantView extends ItemView {
                 [tr('换个功能再试', 'Try other actions'), () => { this.workbenchPage = 'prepare'; this.render(); }]);
         }
         if (error) {
-            const problem = error.content.kind && error.content.kind !== 'other' ? describeApiProblem(error.content.kind, this.plugin.getActiveApiConfig()) : null;
-            body.createEl('p', { text: problem ? `${problem.message} ${problem.next}` : error.content.message, cls: 'mist-caption' });
-            body.createEl('button', { text: tr('重新生成本篇建议', 'Generate again'), cls: 'mist-link is-strong' }).onclick = async () => {
+            const problem = this.plugin.failureProblem({ ...error.content, message: error.content.message });
+            const line = body.createEl('p', { cls: 'mist-caption', attr: { role: 'alert' } });
+            line.setText(problem ? `${problem.message} ${problem.next}` : error.content.message);
+            const actions = body.createDiv({ cls: 'mist-error-actions' });
+            if (problem?.settings) actions.createEl('button', { text: tr('打开设置', 'Open settings'), cls: 'mist-link is-strong' }).onclick = () => this.plugin.openSettings();
+            if (problem?.keyPage) actions.createEl('a', { text: tr('打开服务商后台', 'Open provider console'), href: problem.keyPage, cls: 'mist-link' });
+            actions.createEl('button', { text: problem?.settings ? tr('改好后重新生成', 'Generate again') : tr('重新生成本篇建议', 'Generate again'), cls: problem?.settings ? 'mist-link' : 'mist-link is-strong' }).onclick = async () => {
                 if (this.workbenchRunning) return;
                 this.workbenchRunning = true;
                 try { await this.plugin.runOneClickSmartProcess(group.file); } finally { this.workbenchRunning = false; this.render(); }
@@ -3447,6 +3454,28 @@ class AiAssistantSuite extends Plugin {
     }
 
     // 测试连接：只发一句很短的话，按回答把失败分成几类，每类给一个下一步（不读笔记，不把密钥写进结果）
+    // 一次失败给用户看的话：发生了什么 + 一个下一步。分不出类的照原话
+    failureProblem(error) {
+        const kind = classifyApiError(error);
+        if (kind === 'other' || kind === 'aborted') return null;
+        const config = (this.settings.apiConfigs || []).find(c => c.id === error?.configId) || this.getActiveApiConfig();
+        return { ...describeApiProblem(kind, config, error), settings: SETTINGS_KINDS.includes(kind) };
+    }
+
+    failureText(error) {
+        const problem = this.failureProblem(error);
+        return problem ? `${problem.message} ${problem.next}` : String(error?.message || error);
+    }
+
+    errorContent(file, error) {
+        return { type: 'error', file, message: error?.message || String(error), kind: classifyApiError(error), status: error?.status || null, detail: error?.detail || '', configId: error?.configId || null };
+    }
+
+    openSettings() {
+        this.app.setting.open();
+        this.app.setting.openTabById(this.manifest.id);
+    }
+
     async validateApiConfig(configToTest = null) {
         const config = configToTest || this.getActiveApiConfig();
         if (!config) return { valid: false, ...describeApiProblem('no-config'), checks: connectionChecks('no-config', null, false) };
@@ -3709,6 +3738,7 @@ class AiAssistantSuite extends Plugin {
             }
 
             const errors = [];
+            let lastError = null, lastConfig = null;
             for (let i = 0; i < candidates.length; i++) {
                 if (requestOptions.signal?.aborted) {
                     throw this.createAbortError();
@@ -3728,6 +3758,7 @@ class AiAssistantSuite extends Plugin {
                     }
                     const msg = tr(`配置「${label}」失败: ${err.message}`, `Configuration "${label}" failed: ${err.message}`);
                     errors.push(msg);
+                    lastError = err; lastConfig = config;
                     console.warn(`[AI Assistant] ${msg}`);
                     if (i < candidates.length - 1) {
                         new Notice(tr(`${label} 失败，尝试下一个配置...`, `${label} failed, trying the next configuration…`), 2000);
@@ -3735,10 +3766,12 @@ class AiAssistantSuite extends Plugin {
                 }
             }
 
+            // 分类、状态码和是哪条配置都带上，界面才能给出对应的下一步
+            const carry = error => Object.assign(error, { kind: classifyApiError(lastError), status: lastError?.status, detail: lastError?.detail, configId: lastConfig?.id });
             if (candidates.length === 1) {
-                throw new Error(tr(`${errors[0]}\n没有勾选“允许用作备用”的配置，所以没有改发给其他服务。`, `${errors[0]}\nNo configuration allows backup use, so nothing was sent to another service.`));
+                throw carry(new Error(tr(`${errors[0]}\n没有勾选“允许用作备用”的配置，所以没有改发给其他服务。`, `${errors[0]}\nNo configuration allows backup use, so nothing was sent to another service.`)));
             }
-            throw new Error(tr(`所有 API 配置均失败（共 ${candidates.length} 个）。\n最后错误: ${errors[errors.length - 1]}`, `All ${candidates.length} API configurations failed.\nLast error: ${errors[errors.length - 1]}`));
+            throw carry(new Error(tr(`所有 API 配置均失败（共 ${candidates.length} 个）。\n最后错误: ${errors[errors.length - 1]}`, `All ${candidates.length} API configurations failed.\nLast error: ${errors[errors.length - 1]}`)));
         } finally {
             if (operationController) {
                 this.finishAiOperation(operationController);
@@ -4477,8 +4510,8 @@ class AiAssistantSuite extends Plugin {
                 this.view?.removeTask(taskId);
                 return;
             }
-            new Notice(tr(`处理失败: ${error.message}`, `Failed: ${error.message}`), 0);
-            this.view?.updateTask(taskId, { status: 'displaying', type: 'error', title: tr('这次处理未完成', 'This run did not finish'), content: { type: 'error', file: currentFile, message: error.message } });
+            new Notice(tr(`处理失败：${this.failureText(error)}`, `Failed: ${this.failureText(error)}`), 0);
+            this.view?.updateTask(taskId, { status: 'displaying', type: 'error', title: tr('这次处理未完成', 'This run did not finish'), content: this.errorContent(currentFile, error) });
             console.error("AI Structurizer Error:", error);
         }
     }
@@ -4615,8 +4648,8 @@ class AiAssistantSuite extends Plugin {
                 this.view?.removeTask(taskId);
                 return;
             }
-            new Notice(tr(`处理失败: ${error.message}`, `Failed: ${error.message}`), 0);
-            this.view?.updateTask(taskId, { status: 'displaying', type: 'error', title: tr('这次处理未完成', 'This run did not finish'), content: { type: 'error', file: currentFile, message: error.message } });
+            new Notice(tr(`处理失败：${this.failureText(error)}`, `Failed: ${this.failureText(error)}`), 0);
+            this.view?.updateTask(taskId, { status: 'displaying', type: 'error', title: tr('这次处理未完成', 'This run did not finish'), content: this.errorContent(currentFile, error) });
             console.error("AI Furigana Error:", error);
         }
     }
@@ -4695,7 +4728,7 @@ class AiAssistantSuite extends Plugin {
             if (this.isCancellationError(error)) {
                 return;
             }
-            new Notice(tr(`处理失败: ${error.message}`, `Failed: ${error.message}`), 0);
+            new Notice(tr(`处理失败：${this.failureText(error)}`, `Failed: ${this.failureText(error)}`), 0);
             console.error("aiMover Script Error:", error);
         }
     }
@@ -4828,7 +4861,7 @@ class AiAssistantSuite extends Plugin {
             if (this.isCancellationError(error)) {
                 return;
             }
-            new Notice(tr(`处理失败: ${error.message}`, `Failed: ${error.message}`), 0);
+            new Notice(tr(`处理失败：${this.failureText(error)}`, `Failed: ${this.failureText(error)}`), 0);
             console.error("AI Tagger Error:", error);
         }
     }
@@ -4945,7 +4978,7 @@ class AiAssistantSuite extends Plugin {
             if (this.isCancellationError(error)) {
                 return;
             }
-            new Notice(tr(`处理失败: ${error.message}`, `Failed: ${error.message}`), 0);
+            new Notice(tr(`处理失败：${this.failureText(error)}`, `Failed: ${this.failureText(error)}`), 0);
             console.error("AI Meta Error:", error);
         }
     }
@@ -5197,8 +5230,8 @@ ${contextForPrompt}${this.vaultRulesBlock()}${this.languageHintBlock(contentToPr
                 this.lastCancelled = currentFile.path;
                 return;
             }
-            new Notice(tr(`整理失败：${error.message}`, `Tidying failed: ${error.message}`), 8000);
-            this.view?.addTask({ id: `error-${Date.now()}`, status: 'displaying', type: 'error', title: tr('这次处理未完成', 'This run did not finish'), content: { type: 'error', file: currentFile, message: error.message, kind: classifyApiError(error) } });
+            new Notice(tr(`整理失败：${this.failureText(error)}`, `Tidying failed: ${this.failureText(error)}`), 8000);
+            this.view?.addTask({ id: `error-${Date.now()}`, status: 'displaying', type: 'error', title: tr('这次处理未完成', 'This run did not finish'), content: this.errorContent(currentFile, error) });
             console.error("One Click Process Error:", error);
         }
     }
@@ -5785,7 +5818,7 @@ Make sure the JSON is valid.`) + this.vaultRulesBlock(true) + this.languageHintB
             if (this.isCancellationError(error)) {
                 return;
             }
-            new Notice(tr(`${this.getActionName(action)}失败: ${error.message}`, `${this.getActionName(action)} failed: ${error.message}`), 0);
+            new Notice(tr(`${this.getActionName(action)}失败：${this.failureText(error)}`, `${this.getActionName(action)} failed: ${this.failureText(error)}`), 0);
             console.error("Smart Action Error:", error);
         }
     }
@@ -6051,7 +6084,7 @@ ${content}`)
                 title: tr(`${action.name || '自定义动作'} 失败`, `${action.name || 'Custom action'} failed`),
                 content: { message: error.message, type: 'error' }
             });
-            new Notice(tr(`自定义 Action 失败: ${error.message}`, `Custom action failed: ${error.message}`), 5000);
+            new Notice(tr(`自定义动作失败：${this.failureText(error)}`, `Custom action failed: ${this.failureText(error)}`), 5000);
             console.error('Custom Action Error:', error);
         }
     }

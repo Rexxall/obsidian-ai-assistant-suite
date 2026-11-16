@@ -106,3 +106,13 @@ test('a suggestion much shorter than the note carries a warning before it is app
  assert.equal(p.shrinkWarning({content:{originalContent:long,proposedContent:long.slice(0,400)}}),'');
  assert.equal(p.shrinkWarning({content:{originalContent:'短',proposedContent:''}}),'');
 });
+test('a failed note run keeps the reason, so the panel can say what to do next',async()=>{
+ const p=fixture(async()=>({status:401,text:'bad key'}));
+ p.settings={apiConfigs:[deepseek()],activeConfigId:'d'};p.beginAiOperation=()=>new AbortController();p.finishAiOperation=()=>{};
+ const error=await p.makeApiRequest('hi').catch(e=>e);
+ assert.equal(error.kind,'auth');assert.equal(error.configId,'d');assert.equal(error.status,401);
+ const problem=p.failureProblem(p.errorContent(null,error));
+ assert.equal(problem.settings,true);assert.equal(problem.keyPage,'https://platform.deepseek.com/api_keys');assert.match(p.failureText(error),/DeepSeek/);
+ const busy=fixture(async()=>({status:503,text:'busy'}));busy.settings={apiConfigs:[deepseek()]};busy.beginAiOperation=()=>new AbortController();busy.finishAiOperation=()=>{};
+ const e2=await busy.makeApiRequest('hi').catch(e=>e);assert.equal(busy.failureProblem(e2).settings,false);
+});
