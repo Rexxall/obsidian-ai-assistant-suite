@@ -92,16 +92,20 @@ Return one JSON object: {"groups":[{"type":"same"|"conflict","title":"short titl
 
 - "same": blocks in A and B that say the same thing in different words. Related topics are not enough.
 - "conflict": A and B state different facts about the same thing: numbers, dates, names, conditions, a negation, or opposite opinions. "why" says exactly what differs. Do not decide which one is right.
+- If two blocks are about the same thing but any number, date, amount or condition differs, it is a "conflict", never "same".
 - Every group has at least one A id and one B id. Use each id at most once. Leave out blocks that have no partner.
-- "title": 2–8 words naming the shared subject, in the language of the notes.`
+- "title": 2–8 words naming the shared subject, in the language of the notes.
+- In "why", call the notes A and B; never write block ids such as A3.`
 		: `逐块比较两篇笔记。不要改写任何文字，只引用块编号。
 
 只返回一个 JSON 对象：{"groups":[{"type":"same"|"conflict","title":"短标题","a":["A3"],"b":["B2"],"why":"一句话"}]}
 
 - "same"：A 和 B 里换了说法、意思相同的块。只是话题相关不算。
 - "conflict"：A 和 B 对同一件事说法不一致：数字、日期、名字、条件、否定，或相反的观点。"why" 写清楚哪里不一致。不要判断谁对。
+- 两块讲的是同一件事，但数字、日期、金额或条件有任何不同，就是 "conflict"，不能算 "same"。
 - 每组至少有一个 A 的编号和一个 B 的编号。每个编号最多用一次。找不到对应的块不要写。
-- "title"：2～12 个字，点出两边共同说的事，用笔记本身的语言。`;
+- "title"：2～12 个字，点出两边共同说的事，用笔记本身的语言。
+- "why" 里用 A、B 称呼两篇笔记，不要写 A3 这样的块编号。`;
 	return `${rules}
 
 === A: ${nameA} ===
@@ -134,7 +138,9 @@ export function parseGroups(reply, { a, b, identical }) {
 		if (!ga.length || !gb.length) continue;
 		for (const id of [...ga, ...gb]) used.add(id);
 		const order = (ids, list) => ids.sort((x, y) => list.findIndex(v => v.id === x) - list.findIndex(v => v.id === y));
-		groups.push({ type, title: String(raw.title || '').trim().slice(0, 60), why: String(raw.why || '').trim().slice(0, 300), a: order(ga, a), b: order(gb, b) });
+		// 块编号对读者没有意义：万一模型还是写了，去掉数字只留 A、B
+		const why = String(raw.why || '').replace(/\b([AB])\d+\b/g, '$1').trim().slice(0, 300);
+		groups.push({ type, title: String(raw.title || '').trim().slice(0, 60), why, a: order(ga, a), b: order(gb, b) });
 	}
 	return groups;
 }
@@ -146,6 +152,10 @@ const quote = text => text.split('\n').map(line => (line ? `> ${line}` : '>')).j
  * Order: conflicts first (they need a decision), then shared content, then what only one note has.
  */
 export function assembleDraft({ a, b, identical, groups, yamlA, yamlB, link, labels, date }) {
+	// 原文的标题降三级放进草稿，免得和草稿自己的小节（## 和 ###）混在一起
+	const demote = x => (x.kind === 'heading' ? { ...x, text: x.text.replace(/^(#{1,6})/, m => '#'.repeat(Math.min(6, m.length + 3))) } : x);
+	a = a.map(demote);
+	b = b.map(demote);
 	const byId = new Map([...a, ...b].map(x => [x.id, x]));
 	const texts = ids => ids.map(id => byId.get(id).text).join('\n\n');
 	const inGroup = new Set([...identical.flatMap(p => [p.a, p.b]), ...groups.flatMap(g => [...g.a, ...g.b])]);
@@ -156,22 +166,22 @@ export function assembleDraft({ a, b, identical, groups, yamlA, yamlB, link, lab
 	const out = [];
 	const yamlString = value => `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
 	out.push('---', 'merge-draft: true', 'merged-from:', `  - ${yamlString(link('A'))}`, `  - ${yamlString(link('B'))}`, `merged-at: ${date}`, '---', '');
-	out.push(`> [!info] ${labels.draftTitle}`, `> ${labels.draftIntro(link('A'), link('B'))}`, '');
+	out.push(`> [!info] ${labels.draftTitle}`, `> ${labels.draftIntro(`A ${link('A')}`, `B ${link('B')}`)}`, '');
 	if (conflicts.length) {
-		out.push(`## ${labels.conflicts} (${conflicts.length})`, '');
+		out.push(`## ${labels.conflicts}${labels.count(conflicts.length)}`, '');
 		for (const g of conflicts) {
 			out.push(`### ${g.title || labels.untitled}`, '');
 			if (g.why) out.push(`*${labels.aiNote}* ${g.why}`, '');
-			out.push(`**${link('A')}**`, '', texts(g.a), '', `**${link('B')}**`, '', texts(g.b), '');
+			out.push(`**A · ${link('A')}**`, '', texts(g.a), '', `**B · ${link('B')}**`, '', texts(g.b), '');
 		}
 	}
 	if (same.length || identical.length) {
-		out.push(`## ${labels.shared} (${same.length + identical.length})`, '');
+		out.push(`## ${labels.shared}${labels.count(same.length + identical.length)}`, '');
 		for (const g of same) {
-			out.push(`### ${g.title || labels.untitled}`, '', texts(g.a), '', `> [!quote]- ${labels.otherWording(link('B'))}`, quote(texts(g.b)), '', `<small>${labels.source} ${link('A')} · ${link('B')}</small>`, '');
+			out.push(`### ${g.title || labels.untitled}`, '', texts(g.a), '', `> [!quote]- ${labels.otherWording(link('B'))}`, quote(texts(g.b)), '', `<small>${labels.source}${link('A')} · ${link('B')}</small>`, '');
 		}
 		if (identical.length) {
-			out.push(`### ${labels.identical}`, '', identical.map(p => byId.get(p.a).text).join('\n\n'), '', `<small>${labels.source} ${link('A')} · ${link('B')}</small>`, '');
+			out.push(`### ${labels.identical}`, '', identical.map(p => byId.get(p.a).text).join('\n\n'), '', `<small>${labels.source}${link('A')} · ${link('B')}</small>`, '');
 		}
 	}
 	if (onlyA.length) out.push(`## ${labels.onlyIn(link('A'))}`, '', onlyA.map(x => x.text).join('\n\n'), '');

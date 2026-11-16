@@ -103,14 +103,14 @@ function describeApiProblem(kind, config = null, error = null) {
     const detail = error?.detail ? ` ${error.detail}` : '';
     const table = {
         'no-config': [tr('还没有 AI 配置。', 'There is no AI configuration yet.'), tr('在设置里新增一条配置。', 'Add a configuration in settings.')],
-        'no-key': [tr(`还没有选 ${name} 的密钥。`, `No ${name} key is chosen yet.`), tr(`到${name}后台复制密钥，在“API 密钥”里新建一项粘贴进去。`, `Copy a key from ${name}, then create an entry under API key and paste it.`)],
-        'no-url': [tr('“其他（OpenAI 兼容）”需要服务器地址。', '“Other (OpenAI compatible)” needs a server address.'), tr('在“高级”里填地址，例如 https://api.example.com/v1。', 'Enter the address under Advanced, for example https://api.example.com/v1.')],
+        'no-key': [tr(`还没有选 ${name} 的密钥。`, `No ${name} key is chosen yet.`), tr(`到 ${name} 后台复制密钥，在“API 密钥”里新建一项粘贴进去。`, `Copy a key from ${name}, then create an entry under API key and paste it.`)],
+        'no-url': [tr('“其他（OpenAI 兼容）”需要接口地址。', '“Other (OpenAI compatible)” needs a server address.'), tr('在“高级 → 接口地址”里填，例如 https://api.example.com/v1。', 'Enter it under Advanced → Server address, for example https://api.example.com/v1.')],
         'no-model': [tr('还没有选模型。', 'No model is chosen.'), tr('在“模型”里选一个，或填服务商给的模型名。', 'Pick one under Model, or type the name your provider gives.')],
         'auth': [tr(`${name} 不认这个密钥（HTTP ${error?.status || 401}）。`, `${name} rejected the key (HTTP ${error?.status || 401}).`), tr('到服务商后台重新复制密钥，确认没有多余空格，并且密钥属于这家服务商。', 'Copy the key again from the provider, check for extra spaces and that the key belongs to this provider.')],
         'quota': [tr(`${name} 账户余额或额度不足。`, `The ${name} account is out of balance or quota.`), tr('到服务商后台充值或查看额度，然后再测一次；也可以勾一条备用配置。', 'Top up or check the quota with the provider, then test again; or allow a backup configuration.')],
         'rate': [tr('请求太频繁，被服务商限流（HTTP 429）。', 'Too many requests; the provider is rate limiting (HTTP 429).'), tr('等一分钟再试。', 'Wait a minute and try again.')],
-        'model': [tr(`${name} 没有这个模型，或你的账户用不了它。`, `${name} does not offer this model, or your account cannot use it.`), tr('在“模型”里从列表选一个；列表旧了点“刷新”。', 'Pick one from the list under Model; press Refresh if the list is old.')],
-        'url': [tr('服务器地址找不到（HTTP 404）。', 'The server address was not found (HTTP 404).'), tr('检查“高级”里的地址；用官方服务时把它清空。', 'Check the address under Advanced; clear it to use the official server.')],
+        'model': [tr(`${name} 没有这个模型，或你的账户用不了它。`, `${name} does not offer this model, or your account cannot use it.`), tr('在“模型”里从列表选一个；列表旧了点“刷新列表”。', 'Pick one from the list under Model; press Refresh list if it is old.')],
+        'url': [tr('接口地址找不到（HTTP 404）。', 'The server address was not found (HTTP 404).'), tr('检查“高级 → 接口地址”；用官方服务时把它清空。', 'Check Advanced → Server address; clear it to use the official server.')],
         'timeout': [tr('等了太久没有回答。', 'No answer in time.'), local ? tr('确认本机的模型服务已经启动，模型已经下载。', 'Make sure the local model server is running and the model is downloaded.') : tr('检查网络和代理后再试；笔记很长时可以先分段处理。', 'Check the network and proxy, then try again; for a very long note, process it in parts.')],
         'network': [tr('连不上服务器。', 'Could not reach the server.'), local ? tr('确认本机的模型服务已经启动；手机访问不到电脑上的服务。', 'Make sure the local server is running; a phone cannot reach a server on your computer.') : tr('检查网络、代理和地址拼写。', 'Check the network, proxy and address.')],
         'params': [tr(`${name} 不接受请求里的参数（HTTP ${error?.status || 400}）。`, `${name} rejected a request parameter (HTTP ${error?.status || 400}).`), tr('关掉“深度思考”再测；自定义服务请确认它兼容 OpenAI 格式。', 'Turn off Deep thinking and test again; for a custom service, check that it is OpenAI-compatible.')],
@@ -2885,7 +2885,8 @@ const mergeLabels = () => ({
     onlyIn: link => tr(`只在 ${link} 里`, `Only in ${link}`),
     properties: tr('两篇的属性', 'Properties of both notes'),
     otherWording: link => tr(`${link} 的写法`, `How ${link} puts it`),
-    source: tr('出处：', 'Source:'),
+    source: tr('出处：', 'Source: '),
+    count: n => tr(`（${n}）`, ` (${n})`),
     aiNote: tr('AI 指出：', 'AI note:'),
     untitled: tr('未命名', 'Untitled'),
 });
@@ -2970,6 +2971,7 @@ class MergeDraftModal extends GlassModal {
         }
         const go = buttons.createEl('button', { text: tr('生成预览', 'Preview'), cls: 'mod-cta' });
         go.onclick = () => void this.generate();
+        window.setTimeout(() => go.focus(), 0);
     }
     async generate() {
         this.state = 'running';
@@ -4084,7 +4086,7 @@ class AiAssistantSuite extends Plugin {
         const provider = providerOf(activeConfig);
         const slot = { ...slotOf(activeConfig), model: modelNameOverride || slotOf(activeConfig).model || defaultModelOf(provider.id) };
         if (provider.id === 'custom' && !provider.baseUrl) {
-            throw Object.assign(new Error(tr('还没有填写服务器地址，请在设置里填写。', 'No server address yet. Add one in settings.')), { kind: 'no-url' });
+            throw Object.assign(new Error(tr('还没有填写接口地址，请在设置里填写。', 'No server address yet. Add one in settings.')), { kind: 'no-url' });
         }
         if (!this.hasStoredApiKey(activeConfig)) {
             throw Object.assign(new Error(tr(`还没有选 ${provider.name} 的密钥，请在设置里选择。`, `No ${provider.name} key is chosen yet. Choose one in settings.`)), { kind: 'no-key' });

@@ -32,18 +32,19 @@ test('footnotes, empty notes and very long notes are stopped before anything is 
 });
 test('the AI groups are checked: unknown ids, reused ids and one-sided groups are dropped',()=>{
  const blocks=M.prepareBlocks('a1\n\na2\n\na3','b1\n\nb2');
- const reply='```json\n{"groups":[{"type":"same","title":"T","a":["A2","A1"],"b":["B1"]},{"type":"conflict","a":["A1"],"b":["B2"]},{"type":"same","a":["A9"],"b":["B2"]},{"type":"conflict","a":["A3"],"b":["B2"],"why":"dates differ"},{"type":"maybe","a":["A3"],"b":["B1"]}]}\n```';
+ const reply='```json\n{"groups":[{"type":"same","title":"T","a":["A2","A1"],"b":["B1"]},{"type":"conflict","a":["A1"],"b":["B2"]},{"type":"same","a":["A9"],"b":["B2"]},{"type":"conflict","a":["A3"],"b":["B2"],"why":"A3 and B2: dates differ"},{"type":"maybe","a":["A3"],"b":["B1"]}]}\n```';
  const groups=M.parseGroups(reply,blocks);
- assert.deepEqual(plain(groups),[{type:'same',title:'T',why:'',a:['A1','A2'],b:['B1']},{type:'conflict',title:'',why:'dates differ',a:['A3'],b:['B2']}]);
+ assert.deepEqual(plain(groups),[{type:'same',title:'T',why:'',a:['A1','A2'],b:['B1']},{type:'conflict',title:'',why:'A and B: dates differ',a:['A3'],b:['B2']}]);
  assert.throws(()=>M.parseGroups('no json here',blocks),e=>e.kind==='empty');
 });
 test('the draft copies every block once, word for word, conflicts first, with sources',()=>{
- const A='Move on **March 1**.\n\nBook movers.\n\nShared exactly.';const B='We move on March 3.\n\nShared exactly.\n\nCall the bank.';
+ const A='# Plan\n\nMove on **March 1**.\n\nBook movers.\n\nShared exactly.';const B='We move on March 3.\n\nShared exactly.\n\nCall the bank.';
  const blocks=M.prepareBlocks(A,B);
- const groups=[{type:'conflict',title:'Move date',why:'1 vs 3',a:['A1'],b:['B1']}];
- const labels={draftTitle:'Merge draft',draftIntro:(a,b)=>`From ${a} and ${b}.`,conflicts:'Contradictions',shared:'Shared',identical:'Identical',onlyIn:l=>`Only in ${l}`,properties:'Properties',otherWording:l=>`How ${l} puts it`,source:'Source:',aiNote:'AI note:',untitled:'Untitled'};
+ const groups=[{type:'conflict',title:'Move date',why:'1 vs 3',a:['A2'],b:['B1']}];
+ const labels={draftTitle:'Merge draft',draftIntro:(a,b)=>`From ${a} and ${b}.`,conflicts:'Contradictions',shared:'Shared',identical:'Identical',onlyIn:l=>`Only in ${l}`,properties:'Properties',otherWording:l=>`How ${l} puts it`,source:'Source: ',count:n=>` (${n})`,aiNote:'AI note:',untitled:'Untitled'};
  const d=M.assembleDraft({...blocks,groups,yamlA:'tags: [move]',yamlB:'',link:s=>s==='A'?'[[Plan "A"]]':'[[Notes]]',labels,date:'2026-11-16'});
- assert.deepEqual(plain(d.counts),{conflicts:1,shared:1,onlyA:1,onlyB:1});
+ assert.deepEqual(plain(d.counts),{conflicts:1,shared:1,onlyA:2,onlyB:1});
+ assert.match(d.text,/\n#### Plan\n/,'source headings sit below the draft sections');assert.match(d.text,/## Contradictions \(1\)/);
  for(const piece of ['Move on **March 1**.','Book movers.','We move on March 3.','Call the bank.'])assert.equal(d.text.split(piece).length-1,1,piece);
  assert.equal(d.text.split('Shared exactly.').length-1,1);
  assert.ok(d.text.indexOf('## Contradictions')<d.text.indexOf('## Shared'));
