@@ -1750,8 +1750,8 @@ class AiAssistantSuite extends Plugin {
                 const failed=this.view!.tasks.some(t=>!beforeIds.has(t.id)&&t.type==='error'&&t.content?.file===file);
                 if(failed)errorCount++;else processedCount++;
 
-                // 添加延迟以避免API限制
-                await new Promise(resolve => window.setTimeout(resolve, 1000));
+                // 添加延迟以避免API限制；已经按了中断就不再等
+                if (!this.batchProcessInterrupted) await new Promise(resolve => window.setTimeout(resolve, 1000));
 
             } catch (error) {
                 console.error(tr(`处理文件 ${file.basename} 时出错:`, `Error processing ${file.basename}:`), error);

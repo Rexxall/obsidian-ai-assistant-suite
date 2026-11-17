@@ -1,7 +1,6 @@
 import { Notice, ItemView, MarkdownRenderer, Menu, setIcon } from 'obsidian';
 import type { App, EventRef, TAbstractFile, TFile, TFolder, WorkspaceLeaf } from 'obsidian';
 import { ASSISTANT_VIEW_TYPE, ASSISTANT_WORKBENCH_TYPE, GlassFuzzySuggestModal, GlassModal, confirmAction, isChineseInterface, tr } from './shared';
-import { AiAssistantSettingTab } from './settings-tab';
 import { BatchProcessingModal, FolderSelectionModal } from './file-modals';
 import type AiAssistantSuite from './main';
 import type { AssistantSession, FolderSuggestion, HistoryItem, NoteDraft, NoteGroup, NoteMeta, NoteParts, NoteSuggestions, OneClickActions, StyleProposal, TagSuggestion, Task } from './types';
@@ -81,7 +80,6 @@ export class AssistantView extends ItemView {
     declare sessionCondense: boolean | undefined;
     declare sessionInstruction: string | undefined;
     declare openPart: { path: string; key: string } | null | undefined;
-    declare batchProcessInterrupted: boolean | undefined;
 
     constructor(leaf: WorkspaceLeaf, plugin: AiAssistantSuite, expanded = false) {
         super(leaf);
@@ -209,12 +207,6 @@ export class AssistantView extends ItemView {
         const body = root.createDiv({ cls: 'mist-body' });
         if (!['prepare', 'review'].includes(page)) {
             body.createEl('button', { text: tr('← 回到整理', '← Back to Tidy'), cls: 'mist-back' }).onclick = () => { this.workbenchPage = 'prepare'; this.render(); };
-        }
-        if (page === 'settings') {
-            const settings = new AiAssistantSettingTab(this.plugin.app, this.plugin);
-            settings.containerEl = body.createDiv({ cls: 'mist-settings' });
-            settings.display();
-            return;
         }
         if (page === 'queue') { this.renderNoteQueue(body); return; }
         if (page === 'history') {
@@ -1660,14 +1652,19 @@ export class AssistantView extends ItemView {
         const buttonContainer = card.createDiv({ cls: "ai-assistant-button-container" });
 
         if (content.canInterrupt) {
+            // The batch loop in the plugin reads this flag between notes, so it has to live on the plugin.
+            const stopping = this.plugin.batchProcessInterrupted === true;
             const interruptButton = buttonContainer.createEl("button", {
-                text: tr("🛑 中断处理", 'Stop'),
+                text: stopping ? tr("正在中断...", 'Stopping…') : tr("🛑 中断处理", 'Stop'),
                 cls: "mod-warning interrupt-btn"
             });
+            interruptButton.disabled = stopping;
             interruptButton.addEventListener("click", () => {
-                this.batchProcessInterrupted = true;
+                this.plugin.batchProcessInterrupted = true;
                 interruptButton.disabled = true;
                 interruptButton.textContent = tr("正在中断...", 'Stopping…');
+                // The sidebar and the workbench both show this card; the other one should say Stopping too.
+                this.plugin.refreshAssistantViews?.(this);
             });
         }
 
