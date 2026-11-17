@@ -623,6 +623,7 @@ class AssistantView extends ItemView {
         super(leaf);
         this.plugin = plugin;
         this.expanded = expanded;
+        plugin.view = this;
         plugin.assistantSession ||= { tasks: [] };
         for (const key of ['tasks','workbenchPage','selectedTaskId','sessionActions','sessionPreset','workbenchRunning','workbenchCancelled','workbenchOptionsOpen','pinnedFile','noteApplying']) {
             Object.defineProperty(this, key, { get: () => plugin.assistantSession[key], set: value => { plugin.assistantSession[key] = value; }, configurable: true });
@@ -3421,11 +3422,11 @@ class AiAssistantSuite extends Plugin {
 
         this.registerView(
             ASSISTANT_VIEW_TYPE,
-            (leaf) => (this.view = new AssistantView(leaf, this))
+            (leaf) => new AssistantView(leaf, this)
         );
 
         this.registerView('ai-assistant-note-preview', leaf => new AssistantNotePreview(leaf,this));
-        this.registerView(ASSISTANT_WORKBENCH_TYPE, leaf => (this.view = new AssistantView(leaf, this, true)));
+        this.registerView(ASSISTANT_WORKBENCH_TYPE, leaf => new AssistantView(leaf, this, true));
 
         this.addRibbonIcon("anchor", tr("打开 AI 助手面板", 'Open AI assistant panel'), () => {
             this.activateView();

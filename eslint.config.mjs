@@ -4,6 +4,8 @@ import obsidianmd from "eslint-plugin-obsidianmd";
 export default defineConfig([
   { ignores: ["main.js", "dist/**", "node_modules/**", "scripts/**", "docs/**", "*.test.cjs", "*.mjs"] },
   ...obsidianmd.configs.recommended,
+  // The community review runs this rule even though "recommended" leaves it off.
+  { rules: { "obsidianmd/no-view-references-in-plugin": "error" } },
   {
     files: ["src/**/*.js"],
     languageOptions: {
