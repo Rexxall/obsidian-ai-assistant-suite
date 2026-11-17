@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.9.1 — 2026-11-17
+
+- **Passes the community review:** the panel and the workbench are created the way Obsidian's review asks, so 1.9.0's features can reach the plugin directory. Nothing changes in use.
+
 ## 1.9.0 — 2026-11-16
 
 - **Merge two notes into a draft:** pick two notes (command palette, the file menu, or right-click two selected notes) and get one new note beside the first. Contradictions come first, each with both passages and a one-line note from the AI on what differs; then what both notes say, and what only one of them has. Every passage is copied word for word, and its source is named. The two notes are never changed. You see what will be sent and where before anything goes out, and a preview before the note is created. *Undo the last merge draft* moves it to the trash, unless it was edited or another note already links to it. Notes with footnotes, empty notes and pairs over 60,000 characters are named and stopped before sending.
