@@ -2,7 +2,7 @@ import esbuild from "esbuild";
 
 // The release main.js is this build's output, byte for byte: no minifying, no source map.
 await esbuild.build({
-  entryPoints: ["src/main.js"],
+  entryPoints: ["src/main.ts"],
   bundle: true,
   external: ["obsidian", "electron", "@codemirror/*", "@lezer/*"],
   format: "cjs",
