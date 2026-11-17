@@ -6,7 +6,7 @@
   "description": "AI proposes changes to a note; you review and apply them in Obsidian",
   "scripts": {
     "build": "node esbuild.config.mjs",
-    "lint": "eslint src && stylelint styles.css",
+    "lint": "tsc --noEmit && eslint src && stylelint styles.css",
     "test": "npm run build && node --test *.test.cjs",
     "check": "npm run lint && npm test",
     "package:release": "npm run build && node scripts/package-release.mjs",

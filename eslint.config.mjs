@@ -7,16 +7,18 @@ export default defineConfig([
   // The community review runs this rule even though "recommended" leaves it off.
   { rules: { "obsidianmd/no-view-references-in-plugin": "error" } },
   {
-    files: ["src/**/*.js"],
-    languageOptions: {
-      parserOptions: { projectService: true, tsconfigRootDir: import.meta.dirname }
-    }
-  },
-  {
-    // The shared AI layer (rex-ai-kit), vendored as TypeScript; esbuild bundles it into main.js.
     files: ["src/**/*.ts"],
     languageOptions: {
       parserOptions: { projectService: true, tsconfigRootDir: import.meta.dirname }
+    },
+    // The community scorecard counts these as warnings; keep them at zero so the code stays typed.
+    rules: {
+      "@typescript-eslint/no-explicit-any": "error",
+      "@typescript-eslint/no-unsafe-member-access": "error",
+      "@typescript-eslint/no-unsafe-assignment": "error",
+      "@typescript-eslint/no-unsafe-call": "error",
+      "@typescript-eslint/no-unsafe-argument": "error",
+      "@typescript-eslint/no-unsafe-return": "error"
     }
   }
 ]);
