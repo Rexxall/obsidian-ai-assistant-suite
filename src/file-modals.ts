@@ -1,14 +1,38 @@
 import { Notice } from 'obsidian';
+import type { App, TFile, TFolder } from 'obsidian';
 import { GlassFuzzySuggestModal, GlassModal, tr } from './shared';
+import { at, list as items, str } from './vendor/rex-ai-kit/json';
+
+/** What the batch chooser hands back: picked notes, or the path of one folder. */
+export type BatchChoice = ['files', TFile[]] | ['folder', string];
+
+/** The conditions of the advanced picker; only one is set at a time. */
+export interface FileFilters {
+    folder: string;
+    tags: string;
+    properties: string;
+    missingProperties?: string;
+    customQuery: string;
+    dateRange: { start: string; end: string };
+    fileSize: { min: string; max: string };
+}
+
+/** Frontmatter values come from the note as written, so they are read as unknown. */
+const frontmatterOf = (app: App, file: TFile): Record<string, unknown> => app.metadataCache.getFileCache(file)?.frontmatter || {};
+
+/** `value.toString()`, which throws on null and undefined just as the untyped code did. */
+const toText = (value: unknown): string => (value as { toString(): string }).toString();
 
 // 批量处理选择模态框
 export class BatchProcessingModal extends GlassModal {
-    constructor(app, onChoose) {
+    onChoose: (...choice: BatchChoice) => void;
+
+    constructor(app: App, onChoose: (...choice: BatchChoice) => void) {
         super(app);
         this.onChoose = onChoose;
     }
 
-    onOpen() {
+    onOpen(): void {
         const { contentEl } = this;
         contentEl.empty();
 
@@ -41,16 +65,16 @@ export class BatchProcessingModal extends GlassModal {
         cancelBtn.addEventListener('click', () => this.close());
     }
 
-    showFileSelector() {
+    showFileSelector(): void {
         const modal = new AdvancedFileSelectionModal(this.app, (selectedFiles) => {
             this.onChoose('files', selectedFiles);
         });
         modal.open();
     }
 
-    showFolderSelector() {
+    showFolderSelector(): void {
         const folders = this.app.vault.getAllLoadedFiles()
-            .filter(file => file.children)
+            .filter((file): file is TFolder => 'children' in file && !!file.children)
             .map(folder => folder.path);
 
         const modal = new FolderSelectionModal(this.app, folders, (selectedFolder) => {
@@ -59,7 +83,7 @@ export class BatchProcessingModal extends GlassModal {
         modal.open();
     }
 
-    onClose() {
+    onClose(): void {
         const { contentEl } = this;
         contentEl.empty();
     }
@@ -67,10 +91,20 @@ export class BatchProcessingModal extends GlassModal {
 
 // 高级文件选择模态框 - 支持多种筛选条件
 export class AdvancedFileSelectionModal extends GlassModal {
-    constructor(app, onChoose) {
+    onChoose: (files: TFile[]) => void;
+    selectedFiles: Set<TFile>;
+    allFiles: TFile[];
+    filteredFiles: TFile[];
+    filters: FileFilters;
+    filesByFolder: Map<string, TFile[]>;
+    statsText?: HTMLElement;
+    fileListContainer?: HTMLElement;
+    bottomSelectedCount?: HTMLElement;
+
+    constructor(app: App, onChoose: (files: TFile[]) => void) {
         super(app);
         this.onChoose = onChoose;
-        this.selectedFiles = new Set();
+        this.selectedFiles = new Set<TFile>();
         this.allFiles = this.app.vault.getMarkdownFiles();
         this.filteredFiles = [...this.allFiles];
 
@@ -85,17 +119,17 @@ export class AdvancedFileSelectionModal extends GlassModal {
         };
 
         // 按文件夹分组
-        this.filesByFolder = new Map();
+        this.filesByFolder = new Map<string, TFile[]>();
         this.allFiles.forEach(file => {
             const folderPath = file.parent?.path || '/';
             if (!this.filesByFolder.has(folderPath)) {
                 this.filesByFolder.set(folderPath, []);
             }
-            this.filesByFolder.get(folderPath).push(file);
+            this.filesByFolder.get(folderPath)!.push(file);
         });
     }
 
-    onOpen() {
+    onOpen(): void {
         const { contentEl } = this;
         contentEl.empty();
 
@@ -118,7 +152,7 @@ export class AdvancedFileSelectionModal extends GlassModal {
         this.renderBottomActions(contentEl);
     }
 
-    renderFilterBar(container) {
+    renderFilterBar(container: HTMLElement): void {
         // 筛选类型选择器
         const filterTypeSelect = container.createEl("select", { cls: "ai-assistant-filter-type-select" });
         [
@@ -150,8 +184,8 @@ export class AdvancedFileSelectionModal extends GlassModal {
         let currentFilterType = '';
 
         // 筛选类型变化处理
-        filterTypeSelect.addEventListener('change', (e) => {
-            currentFilterType = e.target.value;
+        filterTypeSelect.addEventListener('change', () => {
+            currentFilterType = filterTypeSelect.value;
             filterInput.placeholder = this.getFilterPlaceholder(currentFilterType);
             filterInput.value = '';
 
@@ -162,8 +196,8 @@ export class AdvancedFileSelectionModal extends GlassModal {
         });
 
         // 筛选值输入处理
-        filterInput.addEventListener('input', (e) => {
-            const value = e.target.value;
+        filterInput.addEventListener('input', () => {
+            const value = filterInput.value;
             this.applySingleFilter(currentFilterType, value);
         });
 
@@ -196,9 +230,11 @@ export class AdvancedFileSelectionModal extends GlassModal {
 
         // 快速筛选按钮事件
         quickFilters.addEventListener('click', (e) => {
-            if (e.target.classList.contains('ai-assistant-quick-filter-btn')) {
-                const type = e.target.dataset.type;
-                let value = e.target.dataset.value;
+            // The buttons hold only text, so a click lands on an element.
+            const target = e.target as HTMLElement;
+            if (target.classList.contains('ai-assistant-quick-filter-btn')) {
+                const type = target.dataset.type!;
+                let value = target.dataset.value!;
 
                 // 处理当前文件夹
                 if (type === 'folder' && value === 'current') {
@@ -220,8 +256,8 @@ export class AdvancedFileSelectionModal extends GlassModal {
         });
     }
 
-    getFilterPlaceholder(type) {
-        const placeholders = {
+    getFilterPlaceholder(type: string): string {
+        const placeholders: Record<string, string> = {
             'folder': tr('输入文件夹路径，支持通配符 * 和 ?', 'Folder path; wildcards * and ? work'),
             'tags': tr('输入标签，多个标签用逗号分隔', 'Tags, separated by commas'),
             'properties': tr('格式: 属性名=值 或 属性名:值', 'Format: name=value or name:value'),
@@ -233,7 +269,7 @@ export class AdvancedFileSelectionModal extends GlassModal {
         return placeholders[type] || tr('输入筛选条件...', 'Enter a filter…');
     }
 
-    updateFilterDropdown(container, type, inputElement) {
+    updateFilterDropdown(container: HTMLElement, type: string, inputElement: HTMLInputElement): void {
         container.empty();
 
         if (!type || !['folder', 'tags', 'properties', 'missing-properties'].includes(type)) {
@@ -243,7 +279,7 @@ export class AdvancedFileSelectionModal extends GlassModal {
 
         container.show();
 
-        let options = [];
+        let options: string[] = [];
 
         switch (type) {
             case 'folder':
@@ -278,17 +314,17 @@ export class AdvancedFileSelectionModal extends GlassModal {
         });
 
         // 下拉选择器变化处理
-        dropdown.addEventListener('change', (e) => {
-            if (e.target.value) {
-                inputElement.value = e.target.value;
+        dropdown.addEventListener('change', () => {
+            if (dropdown.value) {
+                inputElement.value = dropdown.value;
                 // 触发筛选
-                this.applySingleFilter(type, e.target.value);
+                this.applySingleFilter(type, dropdown.value);
             }
         });
 
         // 输入框输入时过滤下拉选项
-        inputElement.addEventListener('input', (e) => {
-            const searchTerm = e.target.value.toLowerCase();
+        inputElement.addEventListener('input', () => {
+            const searchTerm = inputElement.value.toLowerCase();
             const dropdownOptions = dropdown.querySelectorAll('option');
 
             dropdownOptions.forEach(option => {
@@ -303,7 +339,7 @@ export class AdvancedFileSelectionModal extends GlassModal {
             });
 
             // 同时触发筛选
-            this.applySingleFilter(type, e.target.value);
+            this.applySingleFilter(type, inputElement.value);
         });
 
         // 输入框聚焦时显示下拉选择器
@@ -317,8 +353,8 @@ export class AdvancedFileSelectionModal extends GlassModal {
         });
 
         // 点击外部时隐藏下拉选择器
-        const hideDropdown = (e) => {
-            if (!container.contains(e.target) && e.target !== inputElement) {
+        const hideDropdown = (e: MouseEvent) => {
+            if (!container.contains(e.target as Node | null) && e.target !== inputElement) {
                 container.hide();
             }
         };
@@ -329,8 +365,8 @@ export class AdvancedFileSelectionModal extends GlassModal {
         }, 100);
     }
 
-    getAllFolders() {
-        const folders = new Set();
+    getAllFolders(): string[] {
+        const folders = new Set<string>();
         this.allFiles.forEach(file => {
             const folderPath = file.parent?.path || '/';
             if (folderPath !== '/') {
@@ -340,16 +376,16 @@ export class AdvancedFileSelectionModal extends GlassModal {
         return Array.from(folders).sort();
     }
 
-    getAllTags() {
-        const tags = new Set();
+    getAllTags(): string[] {
+        const tags = new Set<string>();
         this.allFiles.forEach(file => {
             try {
                 const cache = this.app.metadataCache.getFileCache(file);
 
                 // 从frontmatter中获取标签
-                const frontmatterTags = cache?.frontmatter?.tags || [];
+                const frontmatterTags: unknown = cache?.frontmatter?.tags || [];
                 if (Array.isArray(frontmatterTags)) {
-                    frontmatterTags.forEach(tag => {
+                    items(frontmatterTags).forEach(tag => {
                         if (typeof tag === 'string') {
                             tags.add(tag.startsWith('#') ? tag : '#' + tag);
                         }
@@ -363,8 +399,9 @@ export class AdvancedFileSelectionModal extends GlassModal {
                 // 从文件内容中搜索标签模式
                 if (cache?.sections) {
                     cache.sections.forEach(section => {
-                        if (section.type === 'paragraph' && section.text) {
-                            const tagMatches = section.text.match(/#[\w\u4e00-\u9fff-]+/g);
+                        const text = str(at(section, 'text'));
+                        if (section.type === 'paragraph' && text) {
+                            const tagMatches = text.match(/#[\w\u4e00-\u9fff-]+/g);
                             if (tagMatches) {
                                 tagMatches.forEach(tag => tags.add(tag));
                             }
@@ -378,12 +415,11 @@ export class AdvancedFileSelectionModal extends GlassModal {
         return Array.from(tags).sort();
     }
 
-    getAllProperties() {
-        const properties = new Set();
+    getAllProperties(): string[] {
+        const properties = new Set<string>();
         this.allFiles.forEach(file => {
             try {
-                const cache = this.app.metadataCache.getFileCache(file);
-                const frontmatter = cache?.frontmatter || {};
+                const frontmatter = frontmatterOf(this.app, file);
                 Object.keys(frontmatter).forEach(key => properties.add(key));
             } catch {
                 // 忽略错误
@@ -392,7 +428,7 @@ export class AdvancedFileSelectionModal extends GlassModal {
         return Array.from(properties).sort();
     }
 
-    applySingleFilter(type, value) {
+    applySingleFilter(type: string, value: string): void {
         // 重置所有筛选条件
         this.filters = {
             folder: '',
@@ -437,7 +473,7 @@ export class AdvancedFileSelectionModal extends GlassModal {
         this.applyFilters();
     }
 
-    parseDateFilter(value) {
+    parseDateFilter(value: string): void {
         if (value.includes(',')) {
             const [start, end] = value.split(',').map(s => s.trim());
             this.filters.dateRange.start = start;
@@ -447,7 +483,7 @@ export class AdvancedFileSelectionModal extends GlassModal {
         }
     }
 
-    parseSizeFilter(value) {
+    parseSizeFilter(value: string): void {
         if (value.includes(',')) {
             const [min, max] = value.split(',').map(s => s.trim());
             this.filters.fileSize.min = min;
@@ -457,10 +493,10 @@ export class AdvancedFileSelectionModal extends GlassModal {
         }
     }
 
-    renderFilePanel(container) {
+    renderFilePanel(container: HTMLElement): void {
         // 文件统计信息
         const statsContainer = container.createDiv({ cls: "ai-assistant-file-stats" });
-        this.statsText = statsContainer.createEl("span", {
+        this.statsText = statsContainer.createSpan({
             text: tr(`显示 ${this.filteredFiles.length} / ${this.allFiles.length} 个文件`, `Showing ${this.filteredFiles.length} of ${this.allFiles.length} files`)
         });
 
@@ -484,14 +520,14 @@ export class AdvancedFileSelectionModal extends GlassModal {
         this.updateFileList();
     }
 
-    updateFileList() {
+    updateFileList(): void {
         if (!this.fileListContainer) return;
 
         this.fileListContainer.empty();
         this.updateSelectionDisplays();
 
         if (this.filteredFiles.length === 0) {
-            this.fileListContainer.createEl("div", {
+            this.fileListContainer.createDiv({
                 text: tr("没有找到匹配的文件", 'No matching files'),
                 cls: "ai-assistant-no-files-message"
             });
@@ -499,22 +535,22 @@ export class AdvancedFileSelectionModal extends GlassModal {
         }
 
         // 按文件夹分组显示
-        const groupedFiles = new Map();
+        const groupedFiles = new Map<string, TFile[]>();
         this.filteredFiles.forEach(file => {
             const folderPath = file.parent?.path || '/';
             if (!groupedFiles.has(folderPath)) {
                 groupedFiles.set(folderPath, []);
             }
-            groupedFiles.get(folderPath).push(file);
+            groupedFiles.get(folderPath)!.push(file);
         });
 
         // 按文件夹路径排序
         const sortedFolders = Array.from(groupedFiles.keys()).sort();
 
         sortedFolders.forEach(folderPath => {
-            const files = groupedFiles.get(folderPath);
+            const files = groupedFiles.get(folderPath)!;
 
-            const folderSection = this.fileListContainer.createDiv({ cls: "ai-assistant-folder-section" });
+            const folderSection = this.fileListContainer!.createDiv({ cls: "ai-assistant-folder-section" });
 
             // 文件夹标题
             const folderHeader = folderSection.createDiv({ cls: "ai-assistant-folder-header" });
@@ -538,7 +574,7 @@ export class AdvancedFileSelectionModal extends GlassModal {
                 } else {
                     files.forEach(file => this.selectedFiles.delete(file));
                 }
-                fileList.querySelectorAll('input[type="checkbox"]').forEach(cb => cb.checked = folderSelectAll.checked);
+                fileList.querySelectorAll<HTMLInputElement>('input[type="checkbox"]').forEach(cb => cb.checked = folderSelectAll.checked);
                 this.updateFolderSelectAllState(folderSection, files);
                 this.updateSelectionDisplays();
             });
@@ -549,7 +585,7 @@ export class AdvancedFileSelectionModal extends GlassModal {
             // 点击文件夹头展开/收起
             folderHeader.addEventListener('click', (event) => {
                 // 跳过点击复选框的情况
-                if (event.target.closest('input[type="checkbox"]')) {
+                if ((event.target as Element).closest('input[type="checkbox"]')) {
                     return;
                 }
                 const isExpanded = fileList.classList.toggle('expanded');
@@ -560,9 +596,10 @@ export class AdvancedFileSelectionModal extends GlassModal {
                 const fileItem = fileList.createDiv({ cls: "ai-assistant-file-item" });
 
                 const checkbox = fileItem.createEl("input", {
-                    type: "checkbox",
-                    checked: this.selectedFiles.has(file)
+                    type: "checkbox"
                 });
+                // createEl has no `checked` option; set it on the element so picked files stay ticked.
+                checkbox.checked = this.selectedFiles.has(file);
 
                 checkbox.addEventListener('change', () => {
                     if (checkbox.checked) {
@@ -583,7 +620,16 @@ export class AdvancedFileSelectionModal extends GlassModal {
         });
     }
 
-    applyFilters() {
+    /** Folder checkbox follows its files: ticked when all are picked, mixed when some are. */
+    updateFolderSelectAllState(section: HTMLElement, files: TFile[]): void {
+        const box = section.querySelector<HTMLInputElement>('.ai-assistant-folder-select-all');
+        if (!box || files.length === 0) return;
+        const count = files.filter(f => this.selectedFiles.has(f)).length;
+        box.checked = count === files.length;
+        box.indeterminate = count > 0 && count < files.length;
+    }
+
+    applyFilters(): void {
         let filtered = [...this.allFiles];
 
         // 文件夹筛选
@@ -604,12 +650,12 @@ export class AdvancedFileSelectionModal extends GlassModal {
                     const cache = this.app.metadataCache.getFileCache(file);
 
                     // 收集所有可能的标签
-                    const allFileTags = new Set();
+                    const allFileTags = new Set<string>();
 
                     // 从frontmatter中获取标签
-                    const frontmatterTags = cache?.frontmatter?.tags || [];
+                    const frontmatterTags: unknown = cache?.frontmatter?.tags || [];
                     if (Array.isArray(frontmatterTags)) {
-                        frontmatterTags.forEach(tag => {
+                        items(frontmatterTags).forEach(tag => {
                             if (typeof tag === 'string') {
                                 allFileTags.add(tag.startsWith('#') ? tag : '#' + tag);
                             }
@@ -623,8 +669,9 @@ export class AdvancedFileSelectionModal extends GlassModal {
                     // 从文件内容中搜索标签模式
                     if (cache?.sections) {
                         cache.sections.forEach(section => {
-                            if (section.type === 'paragraph' && section.text) {
-                                const tagMatches = section.text.match(/#[\w\u4e00-\u9fff-]+/g);
+                            const text = str(at(section, 'text'));
+                            if (section.type === 'paragraph' && text) {
+                                const tagMatches = text.match(/#[\w\u4e00-\u9fff-]+/g);
                                 if (tagMatches) {
                                     tagMatches.forEach(tag => allFileTags.add(tag));
                                 }
@@ -655,8 +702,7 @@ export class AdvancedFileSelectionModal extends GlassModal {
             const propertyPairs = this.filters.properties.split(',').map(pair => pair.trim());
             filtered = filtered.filter(file => {
                 try {
-                    const cache = this.app.metadataCache.getFileCache(file);
-                    const frontmatter = cache?.frontmatter || {};
+                    const frontmatter = frontmatterOf(this.app, file);
 
                     return propertyPairs.every(pair => {
                         const [key, value] = pair.split(/[=:]/).map(s => s.trim());
@@ -666,8 +712,8 @@ export class AdvancedFileSelectionModal extends GlassModal {
                         if (typeof fileValue === 'string') {
                             return fileValue.toLowerCase().includes(value.toLowerCase());
                         } else if (Array.isArray(fileValue)) {
-                            return fileValue.some(v =>
-                                v.toString().toLowerCase().includes(value.toLowerCase())
+                            return items(fileValue).some(v =>
+                                toText(v).toLowerCase().includes(value.toLowerCase())
                             );
                         }
                         return false;
@@ -683,8 +729,7 @@ export class AdvancedFileSelectionModal extends GlassModal {
             const missingProps = this.filters.missingProperties.split(',').map(prop => prop.trim()).filter(prop => prop);
             filtered = filtered.filter(file => {
                 try {
-                    const cache = this.app.metadataCache.getFileCache(file);
-                    const frontmatter = cache?.frontmatter || {};
+                    const frontmatter = frontmatterOf(this.app, file);
 
                     return missingProps.every(prop => {
                         // 检查属性是否不存在或为空
@@ -729,7 +774,7 @@ export class AdvancedFileSelectionModal extends GlassModal {
                 const query = this.filters.customQuery.toLowerCase();
                 filtered = filtered.filter(file => {
                     const cache = this.app.metadataCache.getFileCache(file);
-                    const frontmatter = cache?.frontmatter || {};
+                    const frontmatter: Record<string, unknown> = cache?.frontmatter || {};
                     const tags = cache?.tags?.map(tag => tag.tag) || [];
 
                     // 解析查询条件
@@ -747,8 +792,8 @@ export class AdvancedFileSelectionModal extends GlassModal {
                             if (typeof fileValue === 'string') {
                                 return fileValue.toLowerCase().includes(value);
                             } else if (Array.isArray(fileValue)) {
-                                return fileValue.some(v =>
-                                    v.toString().toLowerCase().includes(value)
+                                return items(fileValue).some(v =>
+                                    toText(v).toLowerCase().includes(value)
                                 );
                             }
                             return false;
@@ -767,7 +812,7 @@ export class AdvancedFileSelectionModal extends GlassModal {
         this.updateFileList();
     }
 
-    clearFilters() {
+    clearFilters(): void {
         this.filters = {
             folder: '',
             tags: '',
@@ -779,17 +824,17 @@ export class AdvancedFileSelectionModal extends GlassModal {
         };
 
         // 清除所有输入框
-        const inputs = this.contentEl.querySelectorAll('.filter-input, .filter-textarea, .date-input, .size-input');
+        const inputs = this.contentEl.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>('.filter-input, .filter-textarea, .date-input, .size-input');
         inputs.forEach(input => input.value = '');
 
         this.filteredFiles = [...this.allFiles];
         this.updateFileList();
     }
 
-    renderBottomActions(container) {
+    renderBottomActions(container: HTMLElement): void {
         const actionsContainer = container.createDiv({ cls: "ai-assistant-bottom-actions" });
 
-        const selectedCount = actionsContainer.createEl("span", {
+        const selectedCount = actionsContainer.createSpan({
             text: tr(`已选择 ${this.selectedFiles.size} 个文件`, `${this.selectedFiles.size} files selected`),
             cls: "ai-assistant-selected-count"
         });
@@ -820,7 +865,7 @@ export class AdvancedFileSelectionModal extends GlassModal {
     /**
      * 更新顶部/底部的选择计数与统计文本，不触发重渲染
      */
-    updateSelectionDisplays() {
+    updateSelectionDisplays(): void {
         if (this.statsText) {
             this.statsText.textContent = tr(`显示 ${this.filteredFiles.length} / ${this.allFiles.length} 个文件，已选择 ${this.selectedFiles.size} 个`, `Showing ${this.filteredFiles.length} of ${this.allFiles.length} files, ${this.selectedFiles.size} selected`);
         }
@@ -829,28 +874,31 @@ export class AdvancedFileSelectionModal extends GlassModal {
         }
     }
 
-    onClose() {
+    onClose(): void {
         const { contentEl } = this;
         contentEl.empty();
     }
 }
 
-export class FolderSelectionModal extends GlassFuzzySuggestModal {
-    constructor(app, folders, onChoose) {
+export class FolderSelectionModal extends GlassFuzzySuggestModal<string> {
+    folders: string[];
+    onChoose: (folder: string) => void;
+
+    constructor(app: App, folders: string[], onChoose: (folder: string) => void) {
         super(app);
         this.folders = folders;
         this.onChoose = onChoose;
     }
 
-    getItems() {
+    getItems(): string[] {
         return this.folders;
     }
 
-    getItemText(folder) {
+    getItemText(folder: string): string {
         return folder;
     }
 
-    onChooseItem(folder) {
+    onChooseItem(folder: string): void {
         this.onChoose(folder);
     }
 }
