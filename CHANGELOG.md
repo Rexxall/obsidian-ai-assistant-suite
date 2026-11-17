@@ -1,7 +1,8 @@
 # Changelog
 
-## Unreleased
+## 1.9.2 — 2026-11-17
 
+- **Stop works in batch tidy:** pressing *Stop* during a batch now stops it after the current note; suggestions already made stay in the list.
 - **Fewer review warnings:** the code is now typed TypeScript, so the community scorecard has nothing to flag as unsafe. Nothing changes in use.
 - **File picker fixes:** in *Batch tidy → Choose several files*, ticking a file or a folder no longer stops with an error, the folder's tick follows what is chosen, and ticked files stay ticked after you filter the list.
 - **Small fixes:** if the AI sends something other than a title and summary, the review leaves that row out instead of offering an empty title; *Reset settings* and *Delete* use Obsidian's red button style.
