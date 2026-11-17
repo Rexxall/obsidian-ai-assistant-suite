@@ -7,7 +7,7 @@
   <img src="assets/readme/hero-light.svg" width="100%" alt="AI Assistant Suite：書き散らしたノートを整理します。書き込む項目は自分で選びます。">
 </picture>
 
-<p align="center"><a href="https://community.obsidian.md/plugins/ai-assistant-suite"><b>Obsidian からインストール</b></a></p>
+<p align="center"><a href="https://community.obsidian.md/plugins/ai-assistant-suite"><b>Obsidian からインストール</b></a> · <a href="https://rexxall.github.io/#ai-assistant-suite">使い方を見る</a></p>
 
 <img src="assets/readme/demo.webp" width="100%" alt="未整理の会議メモから、実際のモデルでタイトル、タグ、要約、整理した本文を生成します。確認リストでフォルダー移動のチェックを外し、残りを適用すると、ノートの本文とプロパティが更新されます。">
 

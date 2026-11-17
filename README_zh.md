@@ -7,7 +7,7 @@
   <img src="assets/readme/hero-zh-light.svg" width="100%" alt="AI Assistant Suite：乱笔记进去，整齐笔记出来。写进什么，由你勾选。">
 </picture>
 
-<p align="center"><a href="https://community.obsidian.md/plugins/ai-assistant-suite"><b>在 Obsidian 里安装</b></a></p>
+<p align="center"><a href="https://community.obsidian.md/plugins/ai-assistant-suite"><b>在 Obsidian 里安装</b></a> · <a href="https://rexxall.github.io/#ai-assistant-suite">看它怎么用</a></p>
 
 <img src="assets/readme/demo.webp" width="100%" alt="一篇乱糟糟的会议笔记。助手用真实模型生成标题、标签、摘要和整理后的正文；在审核清单里取消“移动到文件夹”，其余应用，笔记变整齐，属性也填好了。">
 

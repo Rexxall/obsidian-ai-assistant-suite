@@ -7,7 +7,7 @@
   <img src="assets/readme/hero-light.svg" width="100%" alt="AI Assistant Suite: messy note in, tidy note out. You tick what gets written.">
 </picture>
 
-<p align="center"><a href="https://community.obsidian.md/plugins/ai-assistant-suite"><b>Install from Obsidian</b></a></p>
+<p align="center"><a href="https://community.obsidian.md/plugins/ai-assistant-suite"><b>Install from Obsidian</b></a> · <a href="https://rexxall.github.io/#ai-assistant-suite">See how it works</a></p>
 
 <img src="assets/readme/demo.webp" width="100%" alt="A messy meeting note. The assistant generates a title, tags, a summary and tidier text with a real model. In the review list the folder move is unticked, the rest is applied, and the note comes back tidy with its properties filled in.">
 
