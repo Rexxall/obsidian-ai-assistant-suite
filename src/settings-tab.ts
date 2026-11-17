@@ -1,10 +1,17 @@
 import { Notice, PluginSettingTab, SettingPage, Setting, setIcon } from 'obsidian';
+import type { App, SettingDefinitionItem } from 'obsidian';
 import { renderAiSettings } from './vendor/rex-ai-kit/settingsUI';
 import { DEFAULT_SETTINGS, aiLang, confirmAction, defaultModelOf, providerLabel, providerOf, slotOf, tr } from './shared';
 import { PromptEditModal } from './modals';
+import { at } from './vendor/rex-ai-kit/json';
+import type AiAssistantSuite from './main';
+import type { Settings } from './types';
+
+/** Free-text style settings drawn by one shared row builder. */
+type StyleTextKey = 'styleSubtitleClass' | 'styleCardClass' | 'styleCardFolders' | 'styleAgedRules';
 
 // 给每组最后一行加 .ap-group-end，让它圆角收尾；CSS 不用 :has 就看不到“下一行是标题或说明”。分页局部重画时也跟着更新。
-export function watchSettingGroupEnds(rootEl) {
+export function watchSettingGroupEnds(rootEl: HTMLElement): MutationObserver {
     const mark = () => {
         for (const item of Array.from(rootEl.querySelectorAll('.setting-item:not(.setting-item-heading)'))) {
             const next = item.nextElementSibling;
@@ -18,29 +25,32 @@ export function watchSettingGroupEnds(rootEl) {
 }
 
 export class AiAssistantSettingTab extends PluginSettingTab {
-    plugin;
+    plugin: AiAssistantSuite;
+    currentPage: SettingPage | null = null;
+    groupEndObserver: MutationObserver | null = null;
+    aiUi: { destroy(): void } | null = null;
 
-    constructor(app, plugin) {
+    constructor(app: App, plugin: AiAssistantSuite) {
         super(app, plugin);
         this.plugin = plugin;
         this.containerEl.addClass('ap', 'ap-settings', 'assistant-settings-morning');
     }
 
-    addSectionHeading(containerEl, name) {
+    addSectionHeading(containerEl: HTMLElement, name: string): Setting {
         const heading = new Setting(containerEl).setName(name).setHeading();
         heading.settingEl.addClass('ai-assistant-settings-section');
         return heading;
     }
 
     // Obsidian 1.13 起设置页由定义渲染：四个分页各是一个 SettingPage，内容沿用下面的渲染代码
-    static PAGES = [
+    static PAGES: { name: string; aliases: string[] }[] = [
         { name: tr('模型连接', 'Connections'), aliases: ['API', tr('密钥', 'Key'), tr('模型', 'Model'), tr('备用', 'Backup'), 'DeepSeek', 'Gemini', 'OpenAI', 'Ollama'] },
         { name: tr('处理偏好', 'Preferences'), aliases: [tr('标签', 'Tags'), tr('归档', 'Folder'), tr('忽略文件夹', 'Ignored folders'), tr('翻译', 'Translation')] },
         { name: tr('动作与提示词', 'Actions and prompts'), aliases: [tr('自定义动作', 'Custom actions'), tr('提示词', 'Prompts')] },
         { name: tr('备份与恢复', 'Backup and restore'), aliases: [tr('导出', 'Export'), tr('导入', 'Import'), tr('重置', 'Reset')] }
     ];
 
-    getSettingDefinitions() {
+    getSettingDefinitions(): SettingDefinitionItem[] {
         return AiAssistantSettingTab.PAGES.map((page, index) => ({
             type: 'page',
             name: page.name,
@@ -49,9 +59,11 @@ export class AiAssistantSettingTab extends PluginSettingTab {
         }));
     }
 
-    createPage(index, title) {
+    createPage(index: number, title: string): SettingPage {
         class AssistantSettingsPage extends SettingPage {
-            constructor(owner) {
+            owner: AiAssistantSettingTab;
+
+            constructor(owner: AiAssistantSettingTab) {
                 super();
                 this.owner = owner;
                 this.title = title;
@@ -77,11 +89,11 @@ export class AiAssistantSettingTab extends PluginSettingTab {
         super.hide();
     }
 
-    renderPage(containerEl, index) {
+    renderPage(containerEl: HTMLElement, index: number) {
         containerEl.empty();
         containerEl.addClass('ap', 'ap-settings', 'plugin-settings-workspace', 'assistant-settings-morning');
         this.renderSettingsBody(containerEl);
-        const isSection = el => el.classList?.contains('ai-assistant-settings-section');
+        const isSection = (el: Element) => el.classList?.contains('ai-assistant-settings-section');
         let page = -1, section = -1;
         for (const el of Array.from(containerEl.children)) {
             if (isSection(el)) {
@@ -98,7 +110,7 @@ export class AiAssistantSettingTab extends PluginSettingTab {
         this.groupEndObserver = watchSettingGroupEnds(containerEl);
     }
 
-    renderSettingsBody(containerEl) {
+    renderSettingsBody(containerEl: HTMLElement) {
         // 上一次画的 AI 设置组：取消它还在跑的检查
         this.aiUi?.destroy();
         this.aiUi = null;
@@ -165,7 +177,7 @@ export class AiAssistantSettingTab extends PluginSettingTab {
         }
 
         // 优先级调整按钮
-        const currentIdx = apiConfigs.indexOf(activeConfig);
+        const currentIdx = activeConfig ? apiConfigs.indexOf(activeConfig) : -1;
         const upBtn = actionsContainer.createEl('button', { text: tr('↑ 提高优先级', '↑ Raise priority') });
         upBtn.disabled = currentIdx <= 0;
         upBtn.onclick = async () => {
@@ -267,7 +279,7 @@ export class AiAssistantSettingTab extends PluginSettingTab {
                 }));
         }
 
-        let connectionStatus;
+        let connectionStatus: HTMLElement;
         new Setting(containerEl)
             .setName(tr('测试连接', 'Test connection'))
             .setDesc(provider.group === 'local' && !provider.localAgent
@@ -304,7 +316,7 @@ export class AiAssistantSettingTab extends PluginSettingTab {
                 await navigator.clipboard.writeText(this.plugin.buildDiagnostics());
                 new Notice(tr('诊断信息已复制，里面没有密钥和笔记内容。', 'Diagnostics copied. They contain no key and no note text.'));
             }));
-        connectionStatus = containerEl.createEl('div', { cls: 'atelier-connection-status', attr: { role: 'status', 'aria-live': 'polite' } });
+        connectionStatus = containerEl.createDiv({ cls: 'atelier-connection-status', attr: { role: 'status', 'aria-live': 'polite' } });
 
         this.addSectionHeading(containerEl, tr('功能参数设置', 'Action settings'));
 
@@ -314,7 +326,7 @@ export class AiAssistantSettingTab extends PluginSettingTab {
             .setName(tr('建议数量', 'Number of suggestions'))
             .addText(text => text
                 .setPlaceholder('4')
-                .setValue(this.plugin.settings.moverSuggestionsCount)
+                .setValue(String(this.plugin.settings.moverSuggestionsCount))
                 .onChange(async (value) => {
                     this.plugin.settings.moverSuggestionsCount = parseInt(value, 10) || 4;
                     await this.plugin.saveSettings();
@@ -347,7 +359,7 @@ export class AiAssistantSettingTab extends PluginSettingTab {
             .setName(tr('建议数量', 'Number of suggestions'))
             .addText(text => text
                 .setPlaceholder('12')
-                .setValue(this.plugin.settings.taggerSuggestionsCount)
+                .setValue(String(this.plugin.settings.taggerSuggestionsCount))
                 .onChange(async (value) => {
                     this.plugin.settings.taggerSuggestionsCount = parseInt(value, 10) || 12;
                     await this.plugin.saveSettings();
@@ -399,7 +411,7 @@ export class AiAssistantSettingTab extends PluginSettingTab {
                 .setName(tr('触发翻译的最小长度', 'Minimum length to translate'))
                 .addText(text => text
                     .setPlaceholder('16')
-                    .setValue(this.plugin.settings.taggerTranslationMinLength)
+                    .setValue(String(this.plugin.settings.taggerTranslationMinLength))
                     .onChange(async (value) => {
                         this.plugin.settings.taggerTranslationMinLength = parseInt(value, 10) || 16;
                         await this.plugin.saveSettings();
@@ -423,7 +435,7 @@ export class AiAssistantSettingTab extends PluginSettingTab {
             .setDesc(tr('按生成的标题重命名时使用。', 'Used when renaming to the generated title.'))
             .addText(text => text
                 .setPlaceholder('100')
-                .setValue(this.plugin.settings.metaFileNameMaxLength)
+                .setValue(String(this.plugin.settings.metaFileNameMaxLength))
                 .onChange(async (value) => {
                     this.plugin.settings.metaFileNameMaxLength = parseInt(value, 10) || 100;
                     await this.plugin.saveSettings();
@@ -487,7 +499,7 @@ export class AiAssistantSettingTab extends PluginSettingTab {
             });
         new Setting(containerEl)
             .setName(tr('一篇最多几张纸片', 'Most cards per note'))
-            .addSlider(slider => slider.setLimits(1, 10, 1).setValue(Number(this.plugin.settings.structurizerMaxCards) || 4).setDynamicTooltip()
+            .addSlider(slider => slider.setLimits(1, 10, 1).setValue(Number(this.plugin.settings.structurizerMaxCards) || 4)
                 .onChange(async (value) => { this.plugin.settings.structurizerMaxCards = value; await this.plugin.saveSettings(); }));
 
         new Setting(containerEl)
@@ -497,7 +509,7 @@ export class AiAssistantSettingTab extends PluginSettingTab {
                 .onChange(async (value) => { this.plugin.settings.structurizerCondense = value; await this.plugin.saveSettings(); }));
 
         new Setting(containerEl).setName(tr('样式类', 'Style classes')).setHeading();
-        const styleText = (name, desc, key, placeholder) => new Setting(containerEl).setName(name).setDesc(desc)
+        const styleText = (name: string, desc: string, key: StyleTextKey, placeholder: string) => new Setting(containerEl).setName(name).setDesc(desc)
             .addTextArea(text => text.setPlaceholder(placeholder).setValue(this.plugin.settings[key] || '')
                 .onChange(async (value) => { this.plugin.settings[key] = value.trim(); await this.plugin.saveSettings(); }));
         styleText(tr('副题类', 'Subtitle class'), tr('填了就提议把一句话总结放进正文第一行的 span。类名来自你的主题；留空不提议。', 'If set, offers to put the one-line summary in a span on the first line. The class comes from your theme; leave empty to skip.'), 'styleSubtitleClass', tr('例如 subtitle', 'For example, subtitle'));
@@ -619,7 +631,7 @@ export class AiAssistantSettingTab extends PluginSettingTab {
                 .setName(tr('删除', 'Delete'))
                 .addButton(button => button
                     .setButtonText(tr('删除', 'Delete'))
-                    .setWarning()
+                    .setDestructive()
                     .onClick(async () => {
                         this.plugin.settings.customActions = customActions.filter(item => item.id !== action.id);
                         await this.plugin.saveSettings();
@@ -712,9 +724,9 @@ export class AiAssistantSettingTab extends PluginSettingTab {
             .setName(tr('重置设置', 'Reset settings'))
             .addButton(button => {
                 button.setButtonText(tr('重置设置', 'Reset settings'))
-                    .setWarning()
+                    .setDestructive()
                     .onClick(() => {
-                        this.resetSettings();
+                        void this.resetSettings();
                     });
             });
     }
@@ -725,7 +737,7 @@ export class AiAssistantSettingTab extends PluginSettingTab {
         const blob = new Blob([settingsJson], { type: 'application/json' });
         const url = URL.createObjectURL(blob);
 
-        const a = document.createElement('a');
+        const a = createEl('a');
         a.href = url;
         a.download = 'ai-assistant-suite-settings.json';
         document.body.appendChild(a);
@@ -738,16 +750,16 @@ export class AiAssistantSettingTab extends PluginSettingTab {
 
     // 导入设置
     importSettings() {
-        const input = document.createElement('input');
+        const input = createEl('input');
         input.type = 'file';
         input.accept = '.json';
-        input.onchange = async (e) => {
-            const file = e.target.files[0];
+        input.onchange = async () => {
+            const file = input.files![0];
             if (!file) return;
 
             try {
                 const text = await file.text();
-                const importedSettings = JSON.parse(text);
+                const importedSettings: unknown = JSON.parse(text);
 
                 // 验证导入的设置
                 if (typeof importedSettings !== 'object') {
@@ -765,7 +777,8 @@ export class AiAssistantSettingTab extends PluginSettingTab {
 
                 new Notice(tr('设置导入成功！', 'Settings imported.'), 3000);
             } catch (error) {
-                new Notice(tr(`导入失败: ${error.message}`, `Import failed: ${error.message}`), 5000);
+                const message = String(at(error, 'message'));
+                new Notice(tr(`导入失败: ${message}`, `Import failed: ${message}`), 5000);
             }
         };
         input.click();
@@ -775,7 +788,8 @@ export class AiAssistantSettingTab extends PluginSettingTab {
     async resetSettings() {
         const confirmed = await confirmAction(this.app, tr('确定要重置所有设置为默认值吗？此操作不可撤销。', 'Reset every setting to its default? This cannot be undone.'), tr('重置', 'Reset'));
         if (confirmed) {
-            this.plugin.settings = JSON.parse(JSON.stringify(DEFAULT_SETTINGS));
+            // 深拷贝默认值，结构就是 Settings
+            this.plugin.settings = JSON.parse(JSON.stringify(DEFAULT_SETTINGS)) as Settings;
             await this.plugin.saveSettings();
             this.refresh();
             new Notice(tr('设置已重置为默认值！', 'Settings reset to defaults.'), 3000);

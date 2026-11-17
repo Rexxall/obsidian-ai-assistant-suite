@@ -1,8 +1,28 @@
 import { Component, Notice, Setting, MarkdownRenderer, setIcon } from 'obsidian';
+import type { App, TextAreaComponent, TFile } from 'obsidian';
 import { GlassFuzzySuggestModal, GlassModal, tr } from './shared';
+import { at, str } from './vendor/rex-ai-kit/json';
+import type { MergeLabels } from './merge-draft';
+import type AiAssistantSuite from './main';
+
+/** The prompt settings PromptEditModal can edit. */
+export type PromptSettingKey = 'structurizerPrompt' | 'moverPrompt' | 'taggerPrompt' | 'metaPrompt' | 'translationPrompt' | 'furiganaPrompt';
+
+type MergeDraftResult = Awaited<ReturnType<AiAssistantSuite['generateMergeDraft']>>;
 
 export class PromptEditModal extends GlassModal {
-    constructor(app, plugin, settingName, title) {
+    plugin: AiAssistantSuite;
+    settingName: PromptSettingKey;
+    title: string;
+    saved: boolean;
+    isPreviewMode: boolean;
+    contentContainer!: HTMLElement;
+    editContainer!: HTMLElement;
+    previewContainer!: HTMLElement;
+    previewContent!: HTMLElement;
+    textArea!: TextAreaComponent;
+
+    constructor(app: App, plugin: AiAssistantSuite, settingName: PromptSettingKey, title: string) {
         super(app);
         this.plugin = plugin;
         this.settingName = settingName;
@@ -52,13 +72,13 @@ export class PromptEditModal extends GlassModal {
             text: tr('保存', 'Save'),
             cls: 'mod-cta'
         });
-        saveBtn.addEventListener('click', async () => {
+        saveBtn.addEventListener('click', () => void (async () => {
             if (this.saved) {
                 await this.plugin.saveSettings();
                 new Notice(tr('Prompt 已保存!', 'Prompt saved.'));
             }
             this.close();
-        });
+        })());
 
         const cancelBtn = buttonContainer.createEl('button', { text: tr('取消', 'Cancel') });
         cancelBtn.addEventListener('click', () => this.close());
@@ -105,7 +125,7 @@ export class PromptEditModal extends GlassModal {
         this.editContainer.show();
     }
 
-    updatePreview(content) {
+    updatePreview(content: string) {
         // 使用Obsidian的MarkdownRenderer来渲染Markdown
         this.previewContent.empty();
 
@@ -135,7 +155,11 @@ export class PromptEditModal extends GlassModal {
 
 // 批量文件选择模态框
 export class BatchFileSelectionModal extends GlassModal {
-    constructor(app, files, onChoose) {
+    files: TFile[];
+    onChoose: (files: TFile[] | null) => void;
+    selectedFiles: TFile[];
+
+    constructor(app: App, files: TFile[], onChoose: (files: TFile[] | null) => void) {
         super(app);
         this.files = files;
         this.onChoose = onChoose;
@@ -152,14 +176,14 @@ export class BatchFileSelectionModal extends GlassModal {
 
         const selectAllBtn = buttonContainer.createEl('button', { text: tr('全选', 'Select all') });
         selectAllBtn.onclick = () => {
-            const checkboxes = contentEl.querySelectorAll('input[type="checkbox"]');
+            const checkboxes = contentEl.querySelectorAll<HTMLInputElement>('input[type="checkbox"]');
             checkboxes.forEach(cb => cb.checked = true);
             this.selectedFiles = [...this.files];
         };
 
         const deselectAllBtn = buttonContainer.createEl('button', { text: tr('取消全选', 'Select none') });
         deselectAllBtn.onclick = () => {
-            const checkboxes = contentEl.querySelectorAll('input[type="checkbox"]');
+            const checkboxes = contentEl.querySelectorAll<HTMLInputElement>('input[type="checkbox"]');
             checkboxes.forEach(cb => cb.checked = false);
             this.selectedFiles = [];
         };
@@ -182,7 +206,7 @@ export class BatchFileSelectionModal extends GlassModal {
                 }
             };
 
-            const fileName = fileItem.createEl('span', { text: file.path });
+            const fileName = fileItem.createSpan({ text: file.path });
             fileName.addClass('ai-assistant-u-file-name');
         });
 
@@ -205,12 +229,12 @@ export class BatchFileSelectionModal extends GlassModal {
 }
 
 export const MERGE_BLOCKERS = {
-    footnotes: name => tr(`「${name}」用了脚注。合在一起编号会撞，这一版先不合并带脚注的笔记。`, `"${name}" has footnotes. Their numbers would clash, so this version does not merge notes with footnotes.`),
-    empty: name => tr(`「${name}」是空的，没有可以合并的内容。`, `"${name}" is empty; there is nothing to merge.`),
+    footnotes: (name: string) => tr(`「${name}」用了脚注。合在一起编号会撞，这一版先不合并带脚注的笔记。`, `"${name}" has footnotes. Their numbers would clash, so this version does not merge notes with footnotes.`),
+    empty: (name: string) => tr(`「${name}」是空的，没有可以合并的内容。`, `"${name}" is empty; there is nothing to merge.`),
     'too-long': () => tr('两篇加起来太长（超过 6 万字）。先把其中一篇拆短，或挑更短的两篇。', 'The two notes are too long together (over 60,000 characters). Shorten one first, or pick shorter notes.'),
 };
 
-export const mergeLabels = () => ({
+export const mergeLabels = (): MergeLabels => ({
     draftTitle: tr('合并草稿', 'Merge draft'),
     draftIntro: (a, b) => tr(`由 ${a} 和 ${b} 生成，两篇原笔记没有改动。每段都是原文，出处标在段落所在的小节。`, `Made from ${a} and ${b}; both notes are unchanged. Every passage is copied word for word; its source is named by its section.`),
     conflicts: tr('互相矛盾', 'Contradictions'),
@@ -225,27 +249,40 @@ export const mergeLabels = () => ({
     untitled: tr('未命名', 'Untitled'),
 });
 
-export class MergeNotePicker extends GlassFuzzySuggestModal {
-    constructor(app, exclude, placeholder, done) {
+export class MergeNotePicker extends GlassFuzzySuggestModal<TFile> {
+    exclude: TFile | null;
+    done: (file: TFile) => void;
+
+    constructor(app: App, exclude: TFile | null, placeholder: string, done: (file: TFile) => void) {
         super(app);
         this.exclude = exclude;
         this.done = done;
         this.setPlaceholder(placeholder);
     }
-    getItems() {
+    getItems(): TFile[] {
         return this.app.vault.getMarkdownFiles().filter(f => f.path !== this.exclude?.path).sort((x, y) => y.stat.mtime - x.stat.mtime);
     }
-    getItemText(file) {
+    getItemText(file: TFile): string {
         return file.path.replace(/\.md$/, '');
     }
-    onChooseItem(file) {
+    onChooseItem(file: TFile): void {
         this.done(file);
     }
 }
 
 // 合并草稿的确认 → 生成 → 预览 → 建立，全在一个窗口里；关掉窗口就什么都不留
 export class MergeDraftModal extends GlassModal {
-    constructor(plugin, a, b) {
+    plugin: AiAssistantSuite;
+    a: TFile;
+    b: TFile;
+    state: 'confirm' | 'running' | 'preview' | 'error';
+    controller: AbortController | null = null;
+    preview: Component | null = null;
+    sendLine: HTMLElement | null = null;
+    result!: MergeDraftResult;
+    error: unknown;
+
+    constructor(plugin: AiAssistantSuite, a: TFile, b: TFile) {
         super(plugin.app);
         this.plugin = plugin;
         this.a = a;
@@ -270,14 +307,14 @@ export class MergeDraftModal extends GlassModal {
         if (this.state === 'error') return this.drawError(contentEl);
         this.drawConfirm(contentEl);
     }
-    noteRow(list, file, mark) {
+    noteRow(list: HTMLElement, file: TFile, mark: string) {
         const row = list.createDiv({ cls: 'ai-merge-note' });
         row.createSpan({ text: mark, cls: 'ai-merge-mark' });
         const text = row.createDiv({ cls: 'ai-merge-note-text' });
         text.createDiv({ text: file.basename, cls: 'ai-merge-note-name' });
         text.createDiv({ text: file.parent?.path && file.parent.path !== '/' ? file.parent.path : tr('库根目录', 'Vault root'), cls: 'ai-merge-note-folder' });
     }
-    drawConfirm(el) {
+    drawConfirm(el: HTMLElement) {
         const list = el.createDiv({ cls: 'ai-merge-notes' });
         this.noteRow(list, this.a, 'A');
         this.noteRow(list, this.b, 'B');
@@ -318,8 +355,8 @@ export class MergeDraftModal extends GlassModal {
         });
     }
     // 换掉不能合并的那一篇（或第二篇），回到确认页
-    addRepick(buttons, side) {
-        const replace = side === 'A' ? 'a' : 'b';
+    addRepick(buttons: HTMLElement, side: string | null | undefined) {
+        const replace: 'a' | 'b' = side === 'A' ? 'a' : 'b';
         const keep = replace === 'a' ? this.b : this.a;
         const button = buttons.createEl('button', { text: tr('换一篇', 'Choose another'), cls: 'mod-cta' });
         button.onclick = () => new MergeNotePicker(this.app, keep, tr(`和「${keep.basename}」合并的另一篇`, `The note to merge with "${keep.basename}"`), file => {
@@ -346,16 +383,16 @@ export class MergeDraftModal extends GlassModal {
         }
         this.draw();
     }
-    drawRunning(el) {
+    drawRunning(el: HTMLElement) {
         const box = el.createDiv({ cls: 'ai-merge-running', attr: { role: 'status', 'aria-live': 'polite' } });
         box.createDiv({ text: tr(`正在比较「${this.a.basename}」和「${this.b.basename}」…`, `Comparing "${this.a.basename}" and "${this.b.basename}"…`) });
         const buttons = el.createDiv({ cls: 'modal-button-container' });
         buttons.createEl('button', { text: tr('取消', 'Cancel') }).onclick = () => { this.controller?.abort(); this.state = 'confirm'; this.draw(); };
     }
-    drawPreview(el) {
+    drawPreview(el: HTMLElement) {
         const { counts } = this.result;
         const chips = el.createDiv({ cls: 'ai-merge-counts' });
-        const chip = (n, label, cls = '') => { const c = chips.createSpan({ cls: `ai-merge-count ${cls}` }); c.createSpan({ text: String(n), cls: 'ap-sig-num' }); c.appendText(` ${label}`); };
+        const chip = (n: number, label: string, cls = '') => { const c = chips.createSpan({ cls: `ai-merge-count ${cls}` }); c.createSpan({ text: String(n), cls: 'ap-sig-num' }); c.appendText(` ${label}`); };
         chip(counts.conflicts, tr('处矛盾', counts.conflicts === 1 ? 'contradiction' : 'contradictions'), counts.conflicts ? 'is-warn' : '');
         chip(counts.shared, tr('组共同', 'shared'));
         chip(counts.onlyA, tr('段只在 A', 'only in A'));
@@ -380,16 +417,16 @@ export class MergeDraftModal extends GlassModal {
             }
         };
     }
-    drawError(el) {
+    drawError(el: HTMLElement) {
         const problem = this.plugin.failureProblem(this.error);
         const box = el.createDiv({ cls: 'ai-merge-error', attr: { role: 'alert' } });
-        box.createDiv({ text: problem ? problem.message : this.error?.message || String(this.error), cls: 'ai-merge-error-title' });
+        box.createDiv({ text: problem ? problem.message : str(at(this.error, 'message')) || String(this.error), cls: 'ai-merge-error-title' });
         if (problem) box.createDiv({ text: problem.next });
         if (problem?.keyPage) box.createEl('a', { text: tr('打开服务商后台', 'Open provider console'), href: problem.keyPage });
         const buttons = el.createDiv({ cls: 'modal-button-container' });
         buttons.createEl('button', { text: tr('返回', 'Back') }).onclick = () => { this.state = 'confirm'; this.draw(); };
         if (problem?.settings) buttons.createEl('button', { text: tr('打开设置', 'Open settings'), cls: 'mod-cta' }).onclick = () => { this.close(); this.plugin.openSettings(); };
-        else if (this.error?.kind === 'merge') this.addRepick(buttons, this.error.side);
+        else if (at(this.error, 'kind') === 'merge') this.addRepick(buttons, str(at(this.error, 'side')));
         else buttons.createEl('button', { text: tr('再试一次', 'Try again'), cls: 'mod-cta' }).onclick = () => void this.generate();
     }
 }

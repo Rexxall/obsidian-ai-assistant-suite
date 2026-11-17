@@ -1,25 +1,29 @@
 import { FuzzySuggestModal, Modal, getLanguage } from 'obsidian';
+import type { App } from 'obsidian';
 import { AiError, getProvider, inferProviderId, resolveProvider, slotFromEndpoint } from './vendor/rex-ai-kit/index';
+import type { AiSlot, Provider } from './vendor/rex-ai-kit/index';
+import { at, num, str } from './vendor/rex-ai-kit/json';
+import type { ApiConfig, Settings } from './types';
 
 // 界面主体是中文；命令名跟随 Obsidian 语言，非中文时用英文
-export const isChineseInterface = () => {
+export const isChineseInterface = (): boolean => {
     try {
         return (typeof getLanguage === 'function' ? getLanguage() : 'zh').toLowerCase().startsWith('zh');
     } catch {
         return true;
     }
 };
-export const tr = (zh, en) => isChineseInterface() ? zh : en;
+export const tr = (zh: string, en: string): string => isChineseInterface() ? zh : en;
 
 // 弹窗统一用玻璃风（apple-kit.css 的 .ap-modal）
 export class GlassModal extends Modal {
-    constructor(app) {
+    constructor(app: App) {
         super(app);
         this.modalEl?.addClass?.('ap', 'ap-modal');
     }
 }
-export class GlassFuzzySuggestModal extends FuzzySuggestModal {
-    constructor(app) {
+export abstract class GlassFuzzySuggestModal<T> extends FuzzySuggestModal<T> {
+    constructor(app: App) {
         super(app);
         this.modalEl?.addClass?.('ap', 'ap-modal');
     }
@@ -27,11 +31,11 @@ export class GlassFuzzySuggestModal extends FuzzySuggestModal {
 
 // 审核一篇笔记的建议：标签、每个属性、移动、正文各占一行，逐项勾选后一次应用
 // Obsidian 风格的确认框，代替浏览器自带的 confirm()
-export function confirmAction(app, message, confirmText) {
-    return new Promise(resolve => {
+export function confirmAction(app: App, message: string, confirmText: string): Promise<boolean> {
+    return new Promise<boolean>(resolve => {
         const modal = new GlassModal(app);
         let answered = false;
-        const finish = value => {
+        const finish = (value: boolean) => {
             if (answered) return;
             answered = true;
             resolve(value);
@@ -51,20 +55,20 @@ export const ASSISTANT_WORKBENCH_TYPE = "ai-assistant-workbench-view";
 export const REDACTED_API_KEY = '[REDACTED]';
 export const PLUGIN_SECRET_PREFIX = 'ai-assistant-suite';
 // 服务商、地址、型号和钥匙串名都来自共用的 rex-ai-kit；界面跟着插件语言（中文或英文）
-export const aiLang = () => isChineseInterface() ? 'zh' : 'en';
-export const hostOf = (url) => /^[a-z]+:\/\/([^/?#]+)/i.exec(String(url || '').trim())?.[1].toLowerCase() || '';
-export const slotOf = (config) => config?.ai || { provider: 'deepseek', model: '' };
-export const providerOf = (config) => resolveProvider(slotOf(config), aiLang());
-export const providerLabel = (config) => providerOf(config).name;
-export const defaultModelOf = (providerId) => getProvider(providerId)?.picks.find(p => p.scene === 'cheap')?.id || getProvider(providerId)?.picks[0]?.id || '';
+export const aiLang = (): 'zh' | 'en' => isChineseInterface() ? 'zh' : 'en';
+export const hostOf = (url: string | null | undefined): string => /^[a-z]+:\/\/([^/?#]+)/i.exec(String(url || '').trim())?.[1].toLowerCase() || '';
+export const slotOf = (config: ApiConfig | null | undefined): AiSlot => config?.ai || { provider: 'deepseek', model: '' };
+export const providerOf = (config: ApiConfig | null | undefined): Provider => resolveProvider(slotOf(config), aiLang());
+export const providerLabel = (config: ApiConfig | null | undefined): string => providerOf(config).name;
+export const defaultModelOf = (providerId: string): string => getProvider(providerId)?.picks.find(p => p.scene === 'cheap')?.id || getProvider(providerId)?.picks[0]?.id || '';
 // 新装时先看钥匙串里已经有哪家的密钥（别的插件存过就不用再填）；都没有时用 DeepSeek。笔记是私人内容，不引导去 Gemini 免费档
 export const FIRST_RUN_ORDER = ['anthropic', 'openai', 'deepseek', 'gemini', 'qwen', 'kimi', 'zhipu', 'siliconflow', 'openrouter'];
 
 // 旧版（1.8 及以前）一条配置的“服务商 + 地址 + 模型 + 钥匙串名”转成 kit 的 slot；地址是官方的就不留，代理和本地端口照留
-export function slotFromLegacyConfig(config) {
+export function slotFromLegacyConfig(config: ApiConfig): AiSlot {
     const legacy = config.apiProvider || 'openai';
     const url = String(config.apiUrl || '').trim().replace(/\/+$/, '').replace(/\/chat\/completions$/, '');
-    let slot;
+    let slot: AiSlot;
     if (legacy === 'local') {
         // 旧版本地模型默认走 Ollama；非常见端口的本地服务按 OpenAI 兼容格式走，不要求密钥
         const address = url || 'http://localhost:11434/v1';
@@ -79,40 +83,43 @@ export function slotFromLegacyConfig(config) {
 }
 
 // 把一次失败归到用户能处理的那一类。kit 已经分好大类，这里再把 404 地址错、400 参数错、空回答分出来
-export function classifyApiError(error) {
-    const status = error?.status;
-    const text = `${error?.detail || ''} ${error?.message || ''}`;
+export function classifyApiError(error: unknown): string {
+    const status = num(at(error, 'status'));
+    const text = `${str(at(error, 'detail')) || ''} ${str(at(error, 'message')) || ''}`;
     if (error instanceof AiError) {
         if (error.kind === 'model' && status === 404 && !/model/i.test(error.detail || '')) return 'url';
         if (error.kind === 'bad-response') return status === 400 || status === 422 ? 'params' : status && status >= 200 && status < 300 ? 'empty' : 'other';
         return error.kind;
     }
-    if (error?.kind) return error.kind;
+    const kind = str(at(error, 'kind'));
+    if (kind) return kind;
     if (!status && /net::|ERR_|ENOTFOUND|ECONNREFUSED|ECONNRESET|getaddrinfo|Failed to fetch|network|CORS|certificate/i.test(text)) return 'network';
     return 'other';
 }
 
 // 每类失败：一句发生了什么，一个下一步，能直接点的后台链接
-export function describeApiProblem(kind, config = null, error = null) {
+export function describeApiProblem(kind: string, config: ApiConfig | null = null, error: unknown = null): { kind: string; message: string; next: string; keyPage: string } {
     const provider = config ? providerOf(config) : null;
     const name = provider?.name || '';
     const keyPage = provider?.consoleUrl || '';
     const local = provider?.group === 'local' && !provider.localAgent;
-    const detail = error?.detail ? ` ${error.detail}` : '';
-    const table = {
+    const errorDetail = str(at(error, 'detail'));
+    const detail = errorDetail ? ` ${errorDetail}` : '';
+    const errorStatus = num(at(error, 'status'));
+    const table: Record<string, [string, string]> = {
         'no-config': [tr('还没有 AI 配置。', 'There is no AI configuration yet.'), tr('在设置里新增一条配置。', 'Add a configuration in settings.')],
         'no-key': [tr(`还没有选 ${name} 的密钥。`, `No ${name} key is chosen yet.`), tr(`到 ${name} 后台复制密钥，在“API 密钥”里新建一项粘贴进去。`, `Copy a key from ${name}, then create an entry under API key and paste it.`)],
         'no-url': [tr('“其他（OpenAI 兼容）”需要接口地址。', '“Other (OpenAI compatible)” needs a server address.'), tr('在“高级 → 接口地址”里填，例如 https://api.example.com/v1。', 'Enter it under Advanced → Server address, for example https://api.example.com/v1.')],
         'no-model': [tr('还没有选模型。', 'No model is chosen.'), tr('在“模型”里选一个，或填服务商给的模型名。', 'Pick one under Model, or type the name your provider gives.')],
-        'auth': [tr(`${name} 不认这个密钥（HTTP ${error?.status || 401}）。`, `${name} rejected the key (HTTP ${error?.status || 401}).`), tr('到服务商后台重新复制密钥，确认没有多余空格，并且密钥属于这家服务商。', 'Copy the key again from the provider, check for extra spaces and that the key belongs to this provider.')],
+        'auth': [tr(`${name} 不认这个密钥（HTTP ${errorStatus || 401}）。`, `${name} rejected the key (HTTP ${errorStatus || 401}).`), tr('到服务商后台重新复制密钥，确认没有多余空格，并且密钥属于这家服务商。', 'Copy the key again from the provider, check for extra spaces and that the key belongs to this provider.')],
         'quota': [tr(`${name} 账户余额或额度不足。`, `The ${name} account is out of balance or quota.`), tr('到服务商后台充值或查看额度，然后再测一次；也可以勾一条备用配置。', 'Top up or check the quota with the provider, then test again; or allow a backup configuration.')],
         'rate': [tr('请求太频繁，被服务商限流（HTTP 429）。', 'Too many requests; the provider is rate limiting (HTTP 429).'), tr('等一分钟再试。', 'Wait a minute and try again.')],
         'model': [tr(`${name} 没有这个模型，或你的账户用不了它。`, `${name} does not offer this model, or your account cannot use it.`), tr('在“模型”里从列表选一个；列表旧了点“刷新列表”。', 'Pick one from the list under Model; press Refresh list if it is old.')],
         'url': [tr('接口地址找不到（HTTP 404）。', 'The server address was not found (HTTP 404).'), tr('检查“高级 → 接口地址”；用官方服务时把它清空。', 'Check Advanced → Server address; clear it to use the official server.')],
         'timeout': [tr('等了太久没有回答。', 'No answer in time.'), local ? tr('确认本机的模型服务已经启动，模型已经下载。', 'Make sure the local model server is running and the model is downloaded.') : tr('检查网络和代理后再试；笔记很长时可以先分段处理。', 'Check the network and proxy, then try again; for a very long note, process it in parts.')],
         'network': [tr('连不上服务器。', 'Could not reach the server.'), local ? tr('确认本机的模型服务已经启动；手机访问不到电脑上的服务。', 'Make sure the local server is running; a phone cannot reach a server on your computer.') : tr('检查网络、代理和地址拼写。', 'Check the network, proxy and address.')],
-        'params': [tr(`${name} 不接受请求里的参数（HTTP ${error?.status || 400}）。`, `${name} rejected a request parameter (HTTP ${error?.status || 400}).`), tr('关掉“深度思考”再测；自定义服务请确认它兼容 OpenAI 格式。', 'Turn off Deep thinking and test again; for a custom service, check that it is OpenAI-compatible.')],
-        'server': [tr(`${name} 那边出错（HTTP ${error?.status || 500}）。`, `${name} had an error (HTTP ${error?.status || 500}).`), tr('稍后再试；一直失败可以勾一条备用配置。', 'Try again later; if it keeps failing, allow a backup configuration.')],
+        'params': [tr(`${name} 不接受请求里的参数（HTTP ${errorStatus || 400}）。`, `${name} rejected a request parameter (HTTP ${errorStatus || 400}).`), tr('关掉“深度思考”再测；自定义服务请确认它兼容 OpenAI 格式。', 'Turn off Deep thinking and test again; for a custom service, check that it is OpenAI-compatible.')],
+        'server': [tr(`${name} 那边出错（HTTP ${errorStatus || 500}）。`, `${name} had an error (HTTP ${errorStatus || 500}).`), tr('稍后再试；一直失败可以勾一条备用配置。', 'Try again later; if it keeps failing, allow a backup configuration.')],
         'empty': [tr('服务商有回答，但没有内容。', 'The provider answered with no content.'), tr('换一个模型再试。', 'Try another model.')],
         'aborted': [tr('已取消。', 'Cancelled.'), tr('需要时再点一次。', 'Run it again when you need it.')],
         'other': [tr(`连接失败。${detail}`, `Connection failed.${detail}`), tr('复制诊断信息，对照服务商文档检查。', 'Copy the diagnostics and compare them with the provider\'s docs.')],
@@ -122,17 +129,17 @@ export function describeApiProblem(kind, config = null, error = null) {
 }
 
 // 这些失败要改设置才能好，界面给“打开设置”；其余的（限流、超时、网络、服务商出错）给“再试一次”
-export const SETTINGS_KINDS = ['no-config', 'no-key', 'no-url', 'no-model', 'auth', 'quota', 'model', 'url', 'params'];
-export const API_PROBLEM_KINDS = [...SETTINGS_KINDS, 'rate', 'timeout', 'network', 'server', 'empty'];
+export const SETTINGS_KINDS: string[] = ['no-config', 'no-key', 'no-url', 'no-model', 'auth', 'quota', 'model', 'url', 'params'];
+export const API_PROBLEM_KINDS: string[] = [...SETTINGS_KINDS, 'rate', 'timeout', 'network', 'server', 'empty'];
 
 // 测试连接按地址、密钥和账户、模型、参数四项给结果：出错那一项之前的算通过，之后的没检查到
-export const CONNECTION_CHECKS = [
+export const CONNECTION_CHECKS: [string, [string, string], string[]][] = [
     ['url', ['地址', 'Address'], ['url', 'no-url', 'network', 'timeout']],
     ['auth', ['密钥和账户', 'Key and account'], ['auth', 'no-key', 'quota', 'no-config']],
     ['model', ['模型', 'Model'], ['model', 'no-model']],
     ['params', ['参数', 'Parameters'], ['params']],
 ];
-export function connectionChecks(kind, status = null, sent = true) {
+export function connectionChecks(kind: string, status: number | null = null, sent = true): { id: string; label: string; state: 'ok' | 'fail' | 'skip' }[] {
     const failed = CONNECTION_CHECKS.findIndex(([, , kinds]) => kinds.includes(kind));
     // 归不到某一项的失败（限流、服务商出错、没有内容）：有 HTTP 回答就说明地址通了，其余没检查到。请求没发出去时一项都没检查
     const reached = !sent ? 0 : kind === 'ok' ? CONNECTION_CHECKS.length : failed >= 0 ? failed : (status ? 1 : 0);
@@ -143,10 +150,10 @@ export function connectionChecks(kind, status = null, sent = true) {
 }
 
 // 1.7 以前的密钥格式：__ENC__:命名空间:密文，口令写死在插件里。只为迁移读一次，不再写
-export async function readLegacyKey(value) {
+export async function readLegacyKey(value: string): Promise<string> {
     if (!value.startsWith('__ENC__:')) return value;
     const payload = value.split(':').slice(2).join(':');
-    const bytesOf = base64 => Uint8Array.from(atob(base64), c => c.charCodeAt(0));
+    const bytesOf = (base64: string) => Uint8Array.from(atob(base64), c => c.charCodeAt(0));
     if (payload.startsWith('plain:')) return new TextDecoder().decode(bytesOf(payload.slice(6)));
     const subtle = window.crypto?.subtle;
     if (!subtle) throw new Error('Web Crypto is not available');
@@ -162,7 +169,7 @@ export async function readLegacyKey(value) {
 
 // 旧密钥搬进钥匙串时用的共用名：已知服务商用各插件共用的名字（如 deepseek-api-key）；
 // 自定义服务每条配置一个自己的名字，免得两个不同的服务器抢同一个名字
-export function sharedSecretNameFor(config) {
+export function sharedSecretNameFor(config: ApiConfig): string {
     const provider = getProvider(slotOf(config).provider);
     if (provider && provider.id !== 'custom' && provider.secretName) return provider.secretName;
     const id = String(config.id || 'default').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'default';
@@ -495,7 +502,7 @@ Note:
 {{content}}
 ---`;
 
-export const PROMPT_DEFAULTS = {
+export const PROMPT_DEFAULTS: Record<string, [string, string]> = {
     structurizerPrompt: [STRUCTURIZER_DEFAULT_PROMPT, STRUCTURIZER_DEFAULT_PROMPT_EN],
     moverPrompt: [MOVER_DEFAULT_PROMPT, MOVER_DEFAULT_PROMPT_EN],
     taggerPrompt: [TAGGER_DEFAULT_PROMPT, TAGGER_DEFAULT_PROMPT_EN],
@@ -504,7 +511,7 @@ export const PROMPT_DEFAULTS = {
     furiganaPrompt: [FURIGANA_DEFAULT_PROMPT, FURIGANA_DEFAULT_PROMPT_EN],
 };
 
-export const DEFAULT_SETTINGS = {
+export const DEFAULT_SETTINGS: Settings = {
     // General API Settings
     activeConfigId: 'default',
     apiConfigs: [
