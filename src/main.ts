@@ -2642,8 +2642,9 @@ ${contextForPrompt}${this.vaultRulesBlock()}${this.languageHintBlock(contentToPr
                 content: {
                     originalContent: noteOriginalContent,
                     suggestions: {
-                        // The AI's own object, with title, summary and one-liner filled in above.
-                        meta: at(parsedContent, 'meta') as NoteMeta | undefined,
+                        // The AI's own object, with title, summary and one-liner filled in above. Anything else
+                        // (a string, a list) is not a title to offer, so the section stays hidden.
+                        meta: isRecord(at(parsedContent, 'meta')) ? at(parsedContent, 'meta') as NoteMeta : undefined,
                         tags: tagSuggestions.length > 0 ? tagSuggestions : null,
                         mover: moverSuggestions.length ? moverSuggestions : null,
                     },
