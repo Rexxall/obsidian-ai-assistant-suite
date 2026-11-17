@@ -3,6 +3,7 @@ class Element {
  constructor(tag='div',options={}){this.tag=tag;this.options=options;this.children=[];this.style={};this.events={};}
  createEl(tag,options){const child=new Element(tag,options);this.children.push(child);return child;}
  createDiv(options){return this.createEl('div',options);}
+ createSpan(options){return this.createEl('span',options);}
  addEventListener(event,callback){this.events[event]=callback;}
  addClass(...names){(this.classes??=[]).push(...names);}
 }
